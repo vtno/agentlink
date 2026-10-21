@@ -189,7 +189,7 @@ defmodule Acp.PlaneTest do
     assert %{"method" => "session/update"} = client_reply!(other)
   end
 
-  test "the first permission answer wins and the other phone is told" do
+  test "a permission goes only to the phone that prompted" do
     id = Acp.Plane.register(self())
     agent!("lab")
     open_session!(id, "ses_1")
@@ -198,6 +198,11 @@ defmodule Acp.PlaneTest do
     assert {:agent, %{"id" => load_id}} = from_agent!()
     Acp.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}}))
     client_reply!(other)
+
+    call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => [%{"type" => "text", "text" => "go"}]}, 2)
+    assert %{"method" => "session/update"} = reply!()
+    assert %{"method" => "session/update"} = client_reply!(other)
+    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
 
     Acp.Plane.agent_frame("lab", Jason.encode!(%{
       "jsonrpc" => "2.0",
@@ -206,45 +211,41 @@ defmodule Acp.PlaneTest do
       "params" => %{"sessionId" => "ses_1", "toolCall" => %{"title" => "run"}, "options" => []}
     }))
     mine = reply!()
-    theirs = client_reply!(other)
-
-    Acp.Plane.client_frame(id, Jason.encode!(%{"jsonrpc" => "2.0", "id" => mine["id"], "result" => %{"outcome" => "allow"}}))
-    assert {:agent, %{"id" => "perm", "result" => %{"outcome" => "allow"}}} = from_agent!()
-
-    Acp.Plane.client_frame(other_id, Jason.encode!(%{"jsonrpc" => "2.0", "id" => theirs["id"], "result" => %{"outcome" => "no"}}))
-    assert %{"error" => %{"message" => "already answered"}} = client_reply!(other)
-  end
-
-  test "an answer from the wrong phone drops the question" do
-    id = Acp.Plane.register(self())
-    agent!("lab")
-    open_session!(id, "ses_1")
-    {other, other_id} = spawn_client()
-    call(other_id, "session/load", %{"sessionId" => "ses_1", "cwd" => "/tmp", "mcpServers" => []}, 1)
-    assert {:agent, %{"id" => load_id}} = from_agent!()
-    Acp.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}}))
-    client_reply!(other)
-
-    Acp.Plane.agent_frame("lab", Jason.encode!(%{
-      "jsonrpc" => "2.0",
-      "id" => "perm",
-      "method" => "session/request_permission",
-      "params" => %{"sessionId" => "ses_1"}
-    }))
-    mine = reply!()
-    _theirs = client_reply!(other)
+    refute_receive {^other, {:send, _}}, 50
 
     Acp.Plane.client_frame(other_id, Jason.encode!(%{"jsonrpc" => "2.0", "id" => mine["id"], "result" => %{"outcome" => "stolen"}}))
     refute_receive {:agent, _}, 50
 
     Acp.Plane.client_frame(id, Jason.encode!(%{"jsonrpc" => "2.0", "id" => mine["id"], "result" => %{"outcome" => "allow"}}))
-    refute_receive {:agent, _}, 50
+    assert {:agent, %{"id" => "perm", "result" => %{"outcome" => "allow"}}} = from_agent!()
   end
 
-  test "an error answer is forwarded, and a permission with nobody listening is declined" do
+  test "a permission during load goes only to the phone that is loading" do
     id = Acp.Plane.register(self())
     agent!("lab")
     open_session!(id, "ses_1")
+    {other, other_id} = spawn_client()
+    call(other_id, "session/load", %{"sessionId" => "ses_9", "cwd" => "/tmp", "mcpServers" => []}, 1)
+    assert {:agent, %{"method" => "session/load"}} = from_agent!()
+
+    Acp.Plane.agent_frame("lab", Jason.encode!(%{
+      "jsonrpc" => "2.0",
+      "id" => "perm",
+      "method" => "session/request_permission",
+      "params" => %{"sessionId" => "ses_9"}
+    }))
+    assert %{"method" => "session/request_permission"} = client_reply!(other)
+    refute_receive {:send, _}, 50
+  end
+
+  test "an error answer is forwarded, and a permission with no issuer is declined" do
+    id = Acp.Plane.register(self())
+    agent!("lab")
+    open_session!(id, "ses_1")
+    call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => [%{"type" => "text", "text" => "go"}]}, 1)
+    assert %{"method" => "session/update"} = reply!()
+    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+
     Acp.Plane.agent_frame("lab", Jason.encode!(%{
       "jsonrpc" => "2.0",
       "id" => "perm",
@@ -336,6 +337,30 @@ defmodule Acp.PlaneTest do
     Process.sleep(30)
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 2)
     assert %{"error" => %{"message" => "runtime is down"}} = reply!()
+  end
+
+  test "a permission for a dead issuer is declined" do
+    agent!("lab")
+    {pid, id} = spawn_client()
+    call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
+    {:agent, %{"id" => agent_id}} = from_agent!()
+    Acp.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{"sessionId" => "ses_1"}}))
+    assert %{"result" => %{"sessionId" => "ses_1"}} = client_reply!(pid)
+
+    call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => [%{"type" => "text", "text" => "go"}]}, 2)
+    assert %{"method" => "session/update"} = client_reply!(pid)
+    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+
+    Process.exit(pid, :kill)
+    Process.sleep(30)
+
+    Acp.Plane.agent_frame("lab", Jason.encode!(%{
+      "jsonrpc" => "2.0",
+      "id" => "perm",
+      "method" => "session/request_permission",
+      "params" => %{"sessionId" => "ses_1"}
+    }))
+    assert {:agent, %{"id" => "perm", "error" => %{"message" => "no app is attached to this session"}}} = from_agent!()
   end
 
   defp agent!(name) do

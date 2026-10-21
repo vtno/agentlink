@@ -9,7 +9,6 @@ defmodule Acp.AgentSlot do
     :name,
     agent_pending: %{},
     fan_pending: %{},
-    groups: %{},
     prompt_queue: :queue.new(),
     prompt_inflight: false,
     next_agent_id: 1_000_000,
@@ -24,7 +23,8 @@ defmodule Acp.Plane do
   @moduledoc """
   WebSocket proxy for ACP stdio. `initialize` is cached per agent. Every other
   method is forwarded. Clients on the same `{agent, sessionId}` share live
-  updates. One agent process runs one prompt at a time.
+  updates. An agent question goes only to the client whose prompt or load is
+  in flight. One agent process runs one prompt at a time.
   """
 
   use GenServer
@@ -285,7 +285,7 @@ defmodule Acp.Plane do
           deliver(state, %{slot | agent_pending: agent_pending}, pending, message)
 
         is_binary(message["method"]) and not is_nil(message["id"]) ->
-          fan_out(state, slot, message)
+          ask_issuer(state, slot, message)
 
         true ->
           {route_notice(state, slot, message), slot}
@@ -377,64 +377,72 @@ defmodule Acp.Plane do
 
   defp load_in_flight(_slot, _session_id), do: nil
 
-  defp fan_out(state, slot, message) do
-    peers = peers(state, slot.name, session_of(message))
+  defp ask_issuer(state, slot, message) do
+    case issuer(slot, session_of(message)) do
+      client_id when is_binary(client_id) ->
+        case state.clients[client_id] do
+          %{pid: _pid} ->
+            fan_id = slot.next_fan_id
+            state = push(state, client_id, Map.put(message, "id", fan_id))
 
-    if peers == [] do
-      write_agent(slot, %{
-        "jsonrpc" => "2.0",
-        "id" => message["id"],
-        "error" => %{"code" => -32000, "message" => "no app is attached to this session"}
-      })
+            {state,
+             %{
+               slot
+               | next_fan_id: fan_id + 1,
+                 fan_pending: Map.put(slot.fan_pending, fan_id, %{agent_id: message["id"], client_id: client_id})
+             }}
 
-      {state, slot}
-    else
-      group = make_ref()
-      slot = %{slot | groups: Map.put(slot.groups, group, false)}
+          _ ->
+            decline_action(state, slot, message)
+        end
 
-      Enum.reduce(peers, {state, slot}, fn {client_id, _client}, {state, slot} ->
-        fan_id = slot.next_fan_id
-        state = push(state, client_id, Map.put(message, "id", fan_id))
-
-        {state,
-         %{
-           slot
-           | next_fan_id: fan_id + 1,
-             fan_pending:
-               Map.put(slot.fan_pending, fan_id, %{agent_id: message["id"], client_id: client_id, group: group})
-         }}
-      end)
+      _ ->
+        decline_action(state, slot, message)
     end
   end
 
+  defp decline_action(state, slot, message) do
+    write_agent(slot, %{
+      "jsonrpc" => "2.0",
+      "id" => message["id"],
+      "error" => %{"code" => -32000, "message" => "no app is attached to this session"}
+    })
+
+    {state, slot}
+  end
+
+  defp issuer(slot, session_id) do
+    matches =
+      Enum.filter(slot.agent_pending, fn {_id, pending} ->
+        pending.kind in [:prompt, :session_load] and session_match?(pending, session_id)
+      end)
+
+    case matches do
+      [{_id, pending}] -> pending.client_id
+      _ -> nil
+    end
+  end
+
+  defp session_match?(_pending, nil), do: true
+  defp session_match?(pending, session_id), do: pending.session_id == session_id
+
   defp on_client_response(state, slot, client_id, message) do
-    case Map.pop(slot.fan_pending, message["id"]) do
-      {nil, _} ->
+    case Map.get(slot.fan_pending, message["id"]) do
+      %{client_id: owner} = fan when owner == client_id ->
+        slot = %{slot | fan_pending: Map.delete(slot.fan_pending, message["id"])}
+
+        payload =
+          if message["error"] do
+            %{"jsonrpc" => "2.0", "id" => fan.agent_id, "error" => message["error"]}
+          else
+            %{"jsonrpc" => "2.0", "id" => fan.agent_id, "result" => message["result"]}
+          end
+
+        write_agent(slot, payload)
         {state, slot}
 
-      {fan, fan_pending} when fan.client_id != client_id ->
-        {state, %{slot | fan_pending: fan_pending}}
-
-      {fan, fan_pending} ->
-        slot = %{slot | fan_pending: fan_pending}
-
-        if Map.get(slot.groups, fan.group) do
-          {push(state, client_id, %{
-             "jsonrpc" => "2.0",
-             "id" => message["id"],
-             "error" => %{"code" => -32600, "message" => "already answered"}
-           }), slot}
-        else
-          payload =
-            if message["error"] do
-              %{"jsonrpc" => "2.0", "id" => fan.agent_id, "error" => message["error"]}
-            else
-              %{"jsonrpc" => "2.0", "id" => fan.agent_id, "result" => message["result"]}
-            end
-
-          write_agent(slot, payload)
-          {state, %{slot | groups: Map.put(slot.groups, fan.group, true)}}
-        end
+      _ ->
+        {state, slot}
     end
   end
 
