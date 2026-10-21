@@ -1,31 +1,12 @@
 # Bridge
 
-Elixir conventions for `lib/acp`. The app UI is outside this directory.
+Elixir control plane and sidecar that proxy ACP between apps and agent runtimes. The web UI is not in this directory.
 
-## Structs
+Mix. `mix test` skips `:integration`. The OpenCode test is `mix test --only integration`.
 
-Use a struct when the shape is ours and more than one function relies on it. GenServer and WebSock state is a struct. `Acp.Link` is a struct because `Uplink` reads it.
+Read the matching file when the task touches that area:
 
-A struct is data, not a behaviour. Behaviour is `@behaviour` and `@callback`.
-
-Keep a map at a boundary we do not own. `Jason.decode` returns a map with string keys. Build our struct from the fields we need. ACP messages, a pending call, and a fan-out answer stay maps: they are built in one place, or the other side defines the keys.
-
-## GenServers
-
-Put the client function immediately above the callback it triggers. `start_link` sits above `init`.
-
-Elixir will not allow another function between two clauses of the same callback. Shortcuts that share a callback stay together, in the same order as the clauses under them.
-
-`@doc` says what the call does and why. Do not name the callback (`handle_cast`, `init/1`) in that doc.
-
-WebSock modules have no separate shortcut. Bandit calls `init` and `handle_in` directly, so the `@doc` sits on those callbacks.
-
-## Names
-
-`owner` is the pid that receives inbound ACP. It is not a supervisor. Do not call that field `parent`.
-
-A module that belongs to one side is prefixed `Client` or `Agent`. The app connection is `Acp.ClientSocket`. The sidecar connection is `Acp.AgentSocket`. `Acp.Client` is one app on the plane. `Acp.AgentSlot` is one agent on the plane.
-
-## Harness
-
-Sidecar does not spawn OpenCode itself. It opens the agent through `Acp.Harness`. Production is `Acp.OpenCode`. Tests set `:acp, :harness` to a fake so the suite never starts the binary. Stdout still arrives as `{ref, {:data, binary}}`.
+- [Structs](docs/structs.md) when a value has a fixed shape
+- [GenServers](docs/genservers.md) when adding a client call or a callback
+- [Names](docs/names.md) when adding a module or a pid field
+- [Harness](docs/harness.md) when the sidecar opens an agent
