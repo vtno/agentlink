@@ -1,6 +1,6 @@
-defmodule Acp.Socket do
+defmodule Acp.ClientSocket do
   @moduledoc """
-  One app connection. Registers with the plane, then forwards each text frame.
+  One client connection. Registers with the plane, then forwards each text frame.
   """
 
   @behaviour WebSock
@@ -14,7 +14,7 @@ defmodule Acp.Socket do
     {:ok, %__MODULE__{id: id}}
   end
 
-  @doc "One text frame from the app. Hand it to the plane as a client frame."
+  @doc "One text frame from the client. Hand it to the plane as a client frame."
   @impl true
   def handle_in({text, [opcode: :text]}, %__MODULE__{} = state) when is_binary(text) do
     Acp.Plane.client_frame(state.id, text)
@@ -23,7 +23,7 @@ defmodule Acp.Socket do
 
   def handle_in(_frame, state), do: {:ok, state}
 
-  @doc "The plane has a JSON message for this app."
+  @doc "The plane has a JSON message for this client."
   @impl true
   def handle_info({:send, json}, state) when is_binary(json) do
     {:push, [{:text, json}], state}

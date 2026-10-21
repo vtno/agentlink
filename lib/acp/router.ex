@@ -22,7 +22,7 @@ defmodule Acp.Router do
 
   get "/acp" do
     conn
-    |> WebSockAdapter.upgrade(Acp.Socket, [], timeout: :infinity)
+    |> WebSockAdapter.upgrade(Acp.ClientSocket, [], timeout: :infinity)
     |> halt()
   end
 

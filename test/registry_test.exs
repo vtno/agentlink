@@ -1,0 +1,68 @@
+defmodule Acp.RegistryTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    start_supervised!(Acp.Registry)
+    :ok
+  end
+
+  test "register, list, and pid" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = Acp.Registry.register(pid, "lab", "Bench")
+    assert Acp.Registry.pid("lab") == pid
+    assert [%{"name" => "lab", "label" => "Bench", "connected_at" => at}] = Acp.Registry.list()
+    assert is_integer(at)
+  end
+
+  test "rejects a bad name and a missing name" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    assert {:error, "runtime name must be a short slug"} = Acp.Registry.register(pid, "Has Space", "x")
+    assert {:error, "runtime name must be a short slug"} = Acp.Registry.register(pid, 1, "x")
+    assert Acp.Registry.list() == []
+    assert Acp.Registry.pid("nope") == nil
+  end
+
+  test "an empty label uses the name, and a long label is cut" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    :ok = Acp.Registry.register(pid, "lab", "  ")
+    assert [%{"label" => "lab"}] = Acp.Registry.list()
+
+    :ok = Acp.Registry.register(pid, "lab", String.duplicate("n", 100))
+    assert [%{"label" => label}] = Acp.Registry.list()
+    assert String.length(label) == 80
+  end
+
+  test "a new socket with the same name replaces the old one" do
+    parent = self()
+    first = spawn(fn -> receive do: (:replaced -> send(parent, :replaced)) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    :ok = Acp.Registry.register(first, "lab", "a")
+    :ok = Acp.Registry.register(second, "lab", "b")
+    assert Acp.Registry.pid("lab") == second
+    assert_receive :replaced
+  end
+
+  test "a dead socket is removed, and an unknown down is ignored" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    :ok = Acp.Registry.register(pid, "lab", "a")
+    Process.exit(pid, :kill)
+    Process.sleep(30)
+    assert Acp.Registry.list() == []
+
+    send(Acp.Registry, {:DOWN, make_ref(), :process, pid, :killed})
+    other = spawn(fn -> Process.sleep(:infinity) end)
+    :ok = Acp.Registry.register(other, "lab", "b")
+    send(Acp.Registry, {:DOWN, make_ref(), :process, self(), :killed})
+    assert [%{"name" => "lab"}] = Acp.Registry.list()
+  end
+
+  test "when the name was already replaced, down does not delete the new row" do
+    first = spawn(fn -> receive do: (:replaced -> Process.sleep(:infinity)) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    :ok = Acp.Registry.register(first, "lab", "a")
+    :ok = Acp.Registry.register(second, "lab", "b")
+    Process.exit(first, :kill)
+    Process.sleep(50)
+    assert Acp.Registry.pid("lab") == second
+  end
+end

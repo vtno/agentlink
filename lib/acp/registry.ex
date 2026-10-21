@@ -1,8 +1,8 @@
 defmodule Acp.Registry do
   @moduledoc """
-  Live runtimes. The table outlives a single Plane message: a socket is the
+  Live runtimes. The table outlives a single Plane message: an agent socket is the
   source of truth, and a restart of the plane process can read who is still
-  connected. A dead socket is removed by the monitor.
+  connected. A dead agent socket is removed by the monitor.
   """
 
   use GenServer
@@ -23,7 +23,7 @@ defmodule Acp.Registry do
     {:ok, %__MODULE__{}}
   end
 
-  @doc "An uplink said hello. Claim this name, and replace a previous socket that held it."
+  @doc "An uplink said hello. Claim this name, and replace a previous agent socket that held it."
   def register(pid, name, label) when is_pid(pid) do
     GenServer.call(__MODULE__, {:register, pid, name, label})
   end
@@ -75,7 +75,7 @@ defmodule Acp.Registry do
     |> Enum.sort_by(& &1["name"])
   end
 
-  @doc "The socket pid registered under this name, or nil."
+  @doc "The agent socket pid registered under this name, or nil."
   def pid(name) when is_binary(name) do
     case :ets.lookup(@table, name) do
       [{^name, _label, pid, _at}] -> pid

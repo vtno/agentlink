@@ -3,7 +3,7 @@ defmodule Acp.Client do
   defstruct [:pid, runtime: nil, session_id: nil]
 end
 
-defmodule Acp.Slot do
+defmodule Acp.AgentSlot do
   @moduledoc false
   defstruct [
     :name,
@@ -31,7 +31,7 @@ defmodule Acp.Plane do
 
   defstruct clients: %{}, monitors: %{}, slots: %{}
 
-  @doc "Start the named broker. One plane owns every app and every agent socket."
+  @doc "Start the named broker. One plane owns every client socket and every agent socket."
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -39,7 +39,7 @@ defmodule Acp.Plane do
   @impl true
   def init(_opts), do: {:ok, %__MODULE__{}}
 
-  @doc "An app socket connected. Remember it and hand back its id."
+  @doc "A client socket connected. Remember it and hand back its id."
   def register(pid) when is_pid(pid), do: GenServer.call(__MODULE__, {:register, pid})
 
   @impl true
@@ -438,7 +438,7 @@ defmodule Acp.Plane do
     end
   end
 
-  defp pump(state, %Acp.Slot{prompt_inflight: true} = slot), do: {state, slot}
+  defp pump(state, %Acp.AgentSlot{prompt_inflight: true} = slot), do: {state, slot}
 
   defp pump(state, slot) do
     case :queue.out(slot.prompt_queue) do
@@ -629,5 +629,5 @@ defmodule Acp.Plane do
 
   defp prompt_text(_), do: ""
 
-  defp new_slot(name), do: %Acp.Slot{name: name}
+  defp new_slot(name), do: %Acp.AgentSlot{name: name}
 end
