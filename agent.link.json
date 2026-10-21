@@ -1,0 +1,5 @@
+{
+  "name": "opencode",
+  "label": "this machine",
+  "plane_url": "ws://127.0.0.1:8090/agent"
+}

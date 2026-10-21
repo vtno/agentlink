@@ -1,0 +1,38 @@
+defmodule Acp.MixProject do
+  use Mix.Project
+
+  def project do
+    [
+      app: :acp,
+      version: "0.1.0",
+      elixir: "~> 1.17",
+      start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
+      deps: deps()
+    ]
+  end
+
+  def application do
+    extras = [extra_applications: [:logger]]
+
+    if Mix.env() == :test do
+      extras
+    else
+      Keyword.put(extras, :mod, {Acp.Application, []})
+    end
+  end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
+  defp deps do
+    [
+      {:bandit, "~> 1.6"},
+      {:websock_adapter, "~> 0.5"},
+      {:jason, "~> 1.4"},
+      {:plug, "~> 1.16"},
+      {:mint, "~> 1.6"},
+      {:mint_web_socket, "~> 1.0"}
+    ]
+  end
+end
