@@ -8,6 +8,7 @@ defmodule Pont.OpenCodeTest do
 
   test "a relative symlink is resolved" do
     dir = Path.join(System.tmp_dir!(), "acp-bin-#{System.unique_integer([:positive])}")
+    File.rm_rf!(dir)
     File.mkdir_p!(dir)
     target = Path.join(dir, "real")
     link = Path.join(dir, "link")

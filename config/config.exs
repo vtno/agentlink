@@ -8,8 +8,8 @@ mode =
   end
 
 config :pont,
-  opencode_bin: System.get_env("OPENCODE_BIN") || "/workspace/node_modules/.bin/opencode",
-  workdir: System.get_env("PONT_WORKDIR") || "/workspace/agent-workdir",
+  opencode_bin: System.get_env("OPENCODE_BIN"),
+  workdir: System.get_env("PONT_WORKDIR"),
   port: String.to_integer(System.get_env("PONT_PORT") || "8090"),
   mode: mode,
   plane_url: System.get_env("PONT_PLANE_URL") || "ws://127.0.0.1:8090/agent",

@@ -5,15 +5,14 @@ defmodule Pont.Link do
   override it for a machine that injects them from the environment.
   """
 
-  @path "/workspace/bridge/agent.link.json"
-
   defstruct name: "opencode", label: "this machine", plane_url: "ws://127.0.0.1:8090/agent"
 
   @doc "Where the link file lives."
-  def path, do: @path
+  def path, do: Pont.Paths.link()
 
   @doc "The link this machine dials with. Environment variables override the file."
-  def read(path \\ @path) do
+  def read(path \\ nil) do
+    path = path || path()
     raw = read_json(path)
     label = present(raw["label"]) || present(raw["name"]) || "this machine"
     name = slug(System.get_env("PONT_RUNTIME_NAME") || raw["name"] || label)

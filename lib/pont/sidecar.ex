@@ -20,7 +20,7 @@ defmodule Pont.Sidecar do
   @impl true
   def init(_opts) do
     Process.flag(:trap_exit, true)
-    cwd = Application.fetch_env!(:pont, :workdir)
+    cwd = Pont.Paths.workdir()
     File.mkdir_p!(cwd)
     harness = Application.get_env(:pont, :harness, Pont.OpenCode)
     {:ok, agent} = harness.open(self(), cwd)

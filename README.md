@@ -34,7 +34,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 
 ## Link file
 
-`Pont.Link` reads `/workspace/bridge/agent.link.json` before the sidecar dials.
+`Pont.Link` reads `$HOME/.pont/agent.link.json`.
 
 ```json
 {
@@ -56,8 +56,8 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 | `PONT_PORT` | `8090` |
 | `PONT_PLANE_URL` | `ws://127.0.0.1:8090/agent` |
 | `PONT_RUNTIME_NAME` | `opencode`, or `name` from the link file |
-| `PONT_WORKDIR` | `/workspace/agent-workdir` |
-| `OPENCODE_BIN` | `/workspace/node_modules/.bin/opencode` |
+| `PONT_WORKDIR` | `$HOME/.pont/workspace` |
+| `OPENCODE_BIN` | `opencode` on `PATH`, otherwise `$HOME/.local/bin/opencode` |
 
 `OPENCODE_BIN` is the `opencode` executable. The sidecar runs it as `opencode acp`.
 

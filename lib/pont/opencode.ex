@@ -28,7 +28,7 @@ defmodule Pont.OpenCode do
 
   @doc "The executable Sidecar will spawn, with a relative symlink resolved."
   def bin do
-    configured = Application.fetch_env!(:pont, :opencode_bin)
+    configured = Pont.Paths.opencode_bin()
 
     case File.read_link(configured) do
       {:ok, relative} ->
