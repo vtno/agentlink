@@ -1,5 +1,7 @@
 # Pont
 
+> Pont means bridge in French.
+
 Pont proxies [Agent Client Protocol](https://agentclientprotocol.com) traffic between a client and one agent. The plane accepts the client. The sidecar runs the agent and dials the plane.
 
 ACP is JSON-RPC. The agent writes JSONL on its standard output. Pont sends one JSON value in each WebSocket text frame.
