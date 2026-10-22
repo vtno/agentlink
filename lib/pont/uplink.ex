@@ -1,4 +1,4 @@
-defmodule Acp.Uplink do
+defmodule Pont.Uplink do
   @moduledoc """
   Sidecar side of the plane socket. Outbound text frames are one JSON object.
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
@@ -26,7 +26,7 @@ defmodule Acp.Uplink do
 
   @impl true
   def init(opts) do
-    link = Acp.Link.read()
+    link = Pont.Link.read()
     send(self(), :connect)
     Process.send_after(self(), :watch, 1_000)
 
@@ -59,7 +59,7 @@ defmodule Acp.Uplink do
   @impl true
   def handle_info(:connect, %__MODULE__{} = state) do
     close_conn(state)
-    link = Acp.Link.read()
+    link = Pont.Link.read()
     {ws_scheme, http_scheme, host, port, path} = endpoint(link.plane_url)
 
     case Mint.HTTP.connect(http_scheme, host, port, protocols: [:http1], mode: :passive, timeout: 3_000) do
@@ -97,7 +97,7 @@ defmodule Acp.Uplink do
   end
 
   def handle_info(:watch, %__MODULE__{} = state) do
-    link = Acp.Link.read()
+    link = Pont.Link.read()
 
     if state.conn && (link.name != state.name or link.label != state.label or link.plane_url != state.url) do
       Logger.info("agent link changed, redialing as #{link.name}")
@@ -267,7 +267,7 @@ defmodule Acp.Uplink do
   defp uplink_hello(link) do
     %{
       "jsonrpc" => "2.0",
-      "method" => "acp.uplink",
+      "method" => "pont.uplink",
       "params" => %{"name" => link.name, "label" => link.label}
     }
   end

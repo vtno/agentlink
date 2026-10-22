@@ -1,4 +1,4 @@
-defmodule Acp.Link do
+defmodule Pont.Link do
   @moduledoc """
   The sidecar's link configuration. The name in this file is what the uplink
   sends when it dials the plane. `ACP_RUNTIME_NAME` and `ACP_PLANE_URL` still

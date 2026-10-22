@@ -1,6 +1,6 @@
-defmodule Acp.FakeHarness do
+defmodule Pont.FakeHarness do
   @moduledoc false
-  @behaviour Acp.Harness
+  @behaviour Pont.Harness
   use GenServer
 
   def emit(agent, data) when is_pid(agent), do: send(agent, {:emit, data})
@@ -10,7 +10,7 @@ defmodule Acp.FakeHarness do
   @impl true
   def open(owner, cwd) do
     {:ok, pid} = GenServer.start_link(__MODULE__, owner)
-    if listener = Application.get_env(:acp, :harness_listener), do: send(listener, {:harness_opened, pid, cwd})
+    if listener = Application.get_env(:pont, :harness_listener), do: send(listener, {:harness_opened, pid, cwd})
     {:ok, pid}
   end
 
@@ -40,7 +40,7 @@ defmodule Acp.FakeHarness do
   def handle_call({:write, _data}, _from, %{refuse: true} = state), do: {:reply, :closed, state}
 
   def handle_call({:write, data}, _from, state) do
-    if listener = Application.get_env(:acp, :harness_listener), do: send(listener, {:harness_write, data})
+    if listener = Application.get_env(:pont, :harness_listener), do: send(listener, {:harness_write, data})
     {:reply, :ok, state}
   end
 

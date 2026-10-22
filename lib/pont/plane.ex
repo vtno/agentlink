@@ -1,9 +1,9 @@
-defmodule Acp.Client do
+defmodule Pont.Client do
   @moduledoc false
   defstruct [:pid, runtime: nil, session_id: nil]
 end
 
-defmodule Acp.AgentSlot do
+defmodule Pont.AgentSlot do
   @moduledoc false
   defstruct [
     :name,
@@ -19,7 +19,7 @@ defmodule Acp.AgentSlot do
   ]
 end
 
-defmodule Acp.Plane do
+defmodule Pont.Plane do
   @moduledoc """
   WebSocket proxy for ACP stdio. `initialize` is cached per agent. Every other
   method is forwarded. Clients on the same `{agent, sessionId}` share live
@@ -49,7 +49,7 @@ defmodule Acp.Plane do
 
     state = %{
       state
-      | clients: Map.put(state.clients, id, %Acp.Client{pid: pid}),
+      | clients: Map.put(state.clients, id, %Pont.Client{pid: pid}),
         monitors: Map.put(state.monitors, ref, id)
     }
 
@@ -167,7 +167,7 @@ defmodule Acp.Plane do
   end
 
   defp on_runtime(state, client_id, %{"method" => "runtime/list", "id" => id}) do
-    reply(state, client_id, id, {:ok, %{"runtimes" => Acp.Registry.list()}})
+    reply(state, client_id, id, {:ok, %{"runtimes" => Pont.Registry.list()}})
   end
 
   defp on_runtime(state, client_id, %{"method" => "runtime/select", "id" => id} = message) do
@@ -177,12 +177,12 @@ defmodule Acp.Plane do
       not is_binary(name) ->
         reply(state, client_id, id, {:error, "runtime name is required"})
 
-      is_nil(Acp.Registry.pid(name)) ->
+      is_nil(Pont.Registry.pid(name)) ->
         reply(state, client_id, id, {:error, "runtime is not connected"})
 
       true ->
         clients = Map.update!(state.clients, client_id, &%{&1 | runtime: name})
-        row = Enum.find(Acp.Registry.list(), &(&1["name"] == name))
+        row = Enum.find(Pont.Registry.list(), &(&1["name"] == name))
         reply(%{state | clients: clients}, client_id, id, {:ok, row})
     end
   end
@@ -213,7 +213,7 @@ defmodule Acp.Plane do
         {:ok, state, name}
 
       _ ->
-        case Acp.Registry.list() do
+        case Pont.Registry.list() do
           [%{"name" => name}] ->
             clients = Map.update!(state.clients, client_id, &%{&1 | runtime: name})
             {:ok, %{state | clients: clients}, name}
@@ -446,7 +446,7 @@ defmodule Acp.Plane do
     end
   end
 
-  defp pump(state, %Acp.AgentSlot{prompt_inflight: true} = slot), do: {state, slot}
+  defp pump(state, %Pont.AgentSlot{prompt_inflight: true} = slot), do: {state, slot}
 
   defp pump(state, slot) do
     case :queue.out(slot.prompt_queue) do
@@ -532,7 +532,7 @@ defmodule Acp.Plane do
   end
 
   defp write_agent(slot, message) do
-    case Acp.Registry.pid(slot.name) do
+    case Pont.Registry.pid(slot.name) do
       pid when is_pid(pid) ->
         send(pid, {:send, Jason.encode!(message)})
         :ok
@@ -637,5 +637,5 @@ defmodule Acp.Plane do
 
   defp prompt_text(_), do: ""
 
-  defp new_slot(name), do: %Acp.AgentSlot{name: name}
+  defp new_slot(name), do: %Pont.AgentSlot{name: name}
 end

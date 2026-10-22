@@ -1,10 +1,10 @@
-defmodule Acp.Sidecar do
+defmodule Pont.Sidecar do
   @moduledoc """
   Supervised owner of one agent harness.
 
   Stdout is ACP JSONL. The harness is linked to this process: when the agent
-  exits, this process stops and `Acp.Supervisor` starts another one. Production
-  uses `Acp.OpenCode`. The module comes from `:acp, :harness`.
+  exits, this process stops and `Pont.Supervisor` starts another one. Production
+  uses `Pont.OpenCode`. The module comes from `:pont, :harness`.
   """
 
   use GenServer
@@ -20,12 +20,12 @@ defmodule Acp.Sidecar do
   @impl true
   def init(_opts) do
     Process.flag(:trap_exit, true)
-    cwd = Application.fetch_env!(:acp, :workdir)
+    cwd = Application.fetch_env!(:pont, :workdir)
     File.mkdir_p!(cwd)
-    harness = Application.get_env(:acp, :harness, Acp.OpenCode)
+    harness = Application.get_env(:pont, :harness, Pont.OpenCode)
     {:ok, agent} = harness.open(self(), cwd)
     Logger.info("sidecar supervising #{inspect(harness)} cwd=#{cwd} agent=#{inspect(agent)}")
-    {:ok, _} = Acp.Uplink.start_link(owner: self())
+    {:ok, _} = Pont.Uplink.start_link(owner: self())
 
     {:ok, %__MODULE__{agent: agent, harness: harness}}
   end
@@ -55,7 +55,7 @@ defmodule Acp.Sidecar do
       if line != "" do
         case Jason.decode(line) do
           {:ok, message} when is_map(message) ->
-            Acp.Uplink.send_message(message)
+            Pont.Uplink.send_message(message)
 
           _ ->
             Logger.warning("sidecar dropped non-json stdout")
@@ -83,7 +83,7 @@ defmodule Acp.Sidecar do
 
   def handle_info({:EXIT, pid, reason}, %__MODULE__{agent: agent} = state) when pid != agent do
     Logger.error("uplink exit #{inspect(reason)}")
-    {:ok, _} = Acp.Uplink.start_link(owner: self())
+    {:ok, _} = Pont.Uplink.start_link(owner: self())
     {:noreply, state}
   end
 

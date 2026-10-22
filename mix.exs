@@ -1,9 +1,9 @@
-defmodule Acp.MixProject do
+defmodule Pont.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :acp,
+      app: :pont,
       version: "0.1.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
@@ -18,7 +18,7 @@ defmodule Acp.MixProject do
     if Mix.env() == :test do
       extras
     else
-      Keyword.put(extras, :mod, {Acp.Application, []})
+      Keyword.put(extras, :mod, {Pont.Application, []})
     end
   end
 

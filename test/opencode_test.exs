@@ -1,9 +1,9 @@
-defmodule Acp.OpenCodeTest do
+defmodule Pont.OpenCodeTest do
   use ExUnit.Case, async: false
 
   test "write and close on something that is not a port" do
-    assert Acp.OpenCode.write(self(), "hi") == :closed
-    assert Acp.OpenCode.close(self()) == :ok
+    assert Pont.OpenCode.write(self(), "hi") == :closed
+    assert Pont.OpenCode.close(self()) == :ok
   end
 
   test "a relative symlink is resolved" do
@@ -13,16 +13,16 @@ defmodule Acp.OpenCodeTest do
     link = Path.join(dir, "link")
     File.write!(target, "")
     File.ln_s!("real", link)
-    previous = Application.get_env(:acp, :opencode_bin)
-    Application.put_env(:acp, :opencode_bin, link)
-    on_exit(fn -> Application.put_env(:acp, :opencode_bin, previous) end)
-    assert Acp.OpenCode.bin() == target
+    previous = Application.get_env(:pont, :opencode_bin)
+    Application.put_env(:pont, :opencode_bin, link)
+    on_exit(fn -> Application.put_env(:pont, :opencode_bin, previous) end)
+    assert Pont.OpenCode.bin() == target
   end
 
   test "a plain path is left as it is" do
-    previous = Application.get_env(:acp, :opencode_bin)
-    Application.put_env(:acp, :opencode_bin, "/tmp/opencode-not-a-link")
-    on_exit(fn -> Application.put_env(:acp, :opencode_bin, previous) end)
-    assert Acp.OpenCode.bin() == "/tmp/opencode-not-a-link"
+    previous = Application.get_env(:pont, :opencode_bin)
+    Application.put_env(:pont, :opencode_bin, "/tmp/opencode-not-a-link")
+    on_exit(fn -> Application.put_env(:pont, :opencode_bin, previous) end)
+    assert Pont.OpenCode.bin() == "/tmp/opencode-not-a-link"
   end
 end

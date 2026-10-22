@@ -1,4 +1,4 @@
-defmodule Acp.Registry do
+defmodule Pont.Registry do
   @moduledoc """
   Live runtimes. The table outlives a single Plane message: an agent socket is the
   source of truth, and a restart of the plane process can read who is still
@@ -8,7 +8,7 @@ defmodule Acp.Registry do
   use GenServer
   require Logger
 
-  @table :acp_runtimes
+  @table :pont_runtimes
 
   defstruct pids: %{}
 
@@ -37,7 +37,7 @@ defmodule Acp.Registry do
       ref = Process.monitor(pid)
       :ets.insert(@table, {name, label, pid, System.system_time(:second)})
       Logger.info("runtime registered name=#{name} label=#{label}")
-      Acp.Plane.runtime_reset(name)
+      Pont.Plane.runtime_reset(name)
       {:reply, :ok, %{state | pids: Map.put(state.pids, pid, {ref, name})}}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -55,7 +55,7 @@ defmodule Acp.Registry do
           [{^name, _, ^pid, _}] ->
             :ets.delete(@table, name)
             Logger.warning("runtime down name=#{name} #{inspect(reason)}")
-            Acp.Plane.runtime_down(name)
+            Pont.Plane.runtime_down(name)
 
           _ ->
             :ok

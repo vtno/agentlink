@@ -1,6 +1,6 @@
-defmodule Acp.AgentSocket do
+defmodule Pont.AgentSocket do
   @moduledoc """
-  One sidecar uplink. The first frame is `acp.uplink` and lands in the registry.
+  One sidecar uplink. The first frame is `pont.uplink` and lands in the registry.
   Later frames are ACP from that runtime.
   """
 
@@ -14,14 +14,14 @@ defmodule Acp.AgentSocket do
   def init(_opts), do: {:ok, %__MODULE__{}}
 
   @doc """
-  The first text frame must be acp.uplink. That claims the runtime name.
+  The first text frame must be pont.uplink. That claims the runtime name.
   Later frames are ACP from that runtime.
   """
   @impl true
   def handle_in({text, [opcode: :text]}, %__MODULE__{name: nil} = state) when is_binary(text) do
     case Jason.decode(text) do
-      {:ok, %{"method" => "acp.uplink", "params" => params}} when is_map(params) ->
-        case Acp.Registry.register(self(), params["name"], params["label"]) do
+      {:ok, %{"method" => "pont.uplink", "params" => params}} when is_map(params) ->
+        case Pont.Registry.register(self(), params["name"], params["label"]) do
           :ok -> {:ok, %{state | name: params["name"]}}
           {:error, reason} -> {:stop, reason, state}
         end
@@ -32,7 +32,7 @@ defmodule Acp.AgentSocket do
   end
 
   def handle_in({text, [opcode: :text]}, %__MODULE__{name: name} = state) when is_binary(text) do
-    Acp.Plane.agent_frame(name, text)
+    Pont.Plane.agent_frame(name, text)
     {:ok, state}
   end
 

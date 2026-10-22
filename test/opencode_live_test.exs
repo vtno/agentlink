@@ -1,4 +1,4 @@
-defmodule Acp.OpenCodeLiveTest do
+defmodule Pont.OpenCodeLiveTest do
   use ExUnit.Case, async: false
 
   @moduletag :integration
@@ -8,23 +8,23 @@ defmodule Acp.OpenCodeLiveTest do
   test "a client asks the running agent for a landing page" do
     dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "opencode.json"), ~s({"$schema":"https://opencode.ai/config.json","model":"opencode/big-pickle"}))
+    File.write!(Path.join(dir, "opencode.json"), ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"}))
 
     previous = %{
       plane: System.get_env("ACP_PLANE_URL"),
       name: System.get_env("ACP_RUNTIME_NAME"),
-      harness: Application.get_env(:acp, :harness),
-      mode: Application.get_env(:acp, :mode),
-      port: Application.get_env(:acp, :port),
-      workdir: Application.get_env(:acp, :workdir)
+      harness: Application.get_env(:pont, :harness),
+      mode: Application.get_env(:pont, :mode),
+      port: Application.get_env(:pont, :port),
+      workdir: Application.get_env(:pont, :workdir)
     }
 
     System.put_env("ACP_PLANE_URL", "ws://127.0.0.1:#{@port}/agent")
     System.put_env("ACP_RUNTIME_NAME", "opencode")
-    Application.put_env(:acp, :harness, Acp.OpenCode)
-    Application.put_env(:acp, :mode, :all)
-    Application.put_env(:acp, :port, @port)
-    Application.put_env(:acp, :workdir, dir)
+    Application.put_env(:pont, :harness, Pont.OpenCode)
+    Application.put_env(:pont, :mode, :all)
+    Application.put_env(:pont, :port, @port)
+    Application.put_env(:pont, :workdir, dir)
 
     on_exit(fn ->
       stop_app()
@@ -32,19 +32,19 @@ defmodule Acp.OpenCodeLiveTest do
       File.rm_rf(dir)
     end)
 
-    assert {:ok, _} = Acp.Application.start(:normal, [])
+    assert {:ok, _} = Pont.Application.start(:normal, [])
     assert :ok = wait_runtime()
 
-    {:ok, client} = Acp.LiveClient.start(@port)
+    {:ok, client} = Pont.LiveClient.start(@port)
 
     assert {:ok, %{"result" => %{"runtimes" => [%{"name" => "opencode"}]}}} =
-             Acp.LiveClient.request(client, "runtime/list", %{})
+             Pont.LiveClient.request(client, "runtime/list", %{})
 
     assert {:ok, %{"result" => %{"name" => "opencode"}}} =
-             Acp.LiveClient.request(client, "runtime/select", %{"name" => "opencode"})
+             Pont.LiveClient.request(client, "runtime/select", %{"name" => "opencode"})
 
     assert {:ok, %{"result" => %{}}} =
-             Acp.LiveClient.request(client, "initialize", %{
+             Pont.LiveClient.request(client, "initialize", %{
                "protocolVersion" => 1,
                "clientCapabilities" => %{
                  "fs" => %{"readTextFile" => false, "writeTextFile" => false},
@@ -54,16 +54,16 @@ defmodule Acp.OpenCodeLiveTest do
              })
 
     assert {:ok, %{"result" => %{"sessionId" => session_id}}} =
-             Acp.LiveClient.request(client, "session/new", %{"cwd" => dir, "mcpServers" => []})
+             Pont.LiveClient.request(client, "session/new", %{"cwd" => dir, "mcpServers" => []})
 
-    _ = Acp.LiveClient.request(client, "session/set_config_option", %{
+    _ = Pont.LiveClient.request(client, "session/set_config_option", %{
       "sessionId" => session_id,
       "configId" => "model",
-      "value" => "opencode/big-pickle"
+      "value" => "xai/grok-4.20-0309-non-reasoning"
     })
 
     assert {:ok, %{"result" => %{"stopReason" => "end_turn"}}} =
-             Acp.LiveClient.request(
+             Pont.LiveClient.request(
                client,
                "session/prompt",
                %{
@@ -124,7 +124,7 @@ defmodule Acp.OpenCodeLiveTest do
   end
 
   defp stop_app do
-    case Process.whereis(Acp.Supervisor) do
+    case Process.whereis(Pont.Supervisor) do
       nil ->
         :ok
 
@@ -139,17 +139,17 @@ defmodule Acp.OpenCodeLiveTest do
   defp restore_env(previous) do
     put_or_delete("ACP_PLANE_URL", previous.plane)
     put_or_delete("ACP_RUNTIME_NAME", previous.name)
-    Application.put_env(:acp, :harness, previous.harness)
-    Application.put_env(:acp, :mode, previous.mode)
-    Application.put_env(:acp, :port, previous.port)
-    Application.put_env(:acp, :workdir, previous.workdir)
+    Application.put_env(:pont, :harness, previous.harness)
+    Application.put_env(:pont, :mode, previous.mode)
+    Application.put_env(:pont, :port, previous.port)
+    Application.put_env(:pont, :workdir, previous.workdir)
   end
 
   defp put_or_delete(key, nil), do: System.delete_env(key)
   defp put_or_delete(key, value), do: System.put_env(key, value)
 end
 
-defmodule Acp.LiveClient do
+defmodule Pont.LiveClient do
   @moduledoc false
   use GenServer
 

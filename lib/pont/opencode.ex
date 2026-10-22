@@ -1,9 +1,9 @@
-defmodule Acp.OpenCode do
+defmodule Pont.OpenCode do
   @moduledoc """
   Production harness. Runs `opencode acp` and leaves stderr off the ACP stream.
   """
 
-  @behaviour Acp.Harness
+  @behaviour Pont.Harness
 
   @impl true
   def open(_owner, cwd) do
@@ -28,7 +28,7 @@ defmodule Acp.OpenCode do
 
   @doc "The executable Sidecar will spawn, with a relative symlink resolved."
   def bin do
-    configured = Application.fetch_env!(:acp, :opencode_bin)
+    configured = Application.fetch_env!(:pont, :opencode_bin)
 
     case File.read_link(configured) do
       {:ok, relative} ->

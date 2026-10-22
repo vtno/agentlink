@@ -1,4 +1,4 @@
-defmodule Acp.Router do
+defmodule Pont.Router do
   use Plug.Router
 
   plug :match
@@ -11,8 +11,8 @@ defmodule Acp.Router do
   get "/status" do
     body =
       Jason.encode!(%{
-        "plane" => "127.0.0.1:#{Application.fetch_env!(:acp, :port)}",
-        "runtimes" => Acp.Registry.list()
+        "plane" => "127.0.0.1:#{Application.fetch_env!(:pont, :port)}",
+        "runtimes" => Pont.Registry.list()
       })
 
     conn
@@ -22,13 +22,13 @@ defmodule Acp.Router do
 
   get "/acp" do
     conn
-    |> WebSockAdapter.upgrade(Acp.ClientSocket, [], timeout: :infinity)
+    |> WebSockAdapter.upgrade(Pont.ClientSocket, [], timeout: :infinity)
     |> halt()
   end
 
   get "/agent" do
     conn
-    |> WebSockAdapter.upgrade(Acp.AgentSocket, [], timeout: :infinity)
+    |> WebSockAdapter.upgrade(Pont.AgentSocket, [], timeout: :infinity)
     |> halt()
   end
 

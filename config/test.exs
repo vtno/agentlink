@@ -1,9 +1,9 @@
 import Config
 
-config :acp,
-  harness: Acp.FakeHarness,
+config :pont,
+  harness: Pont.FakeHarness,
   mode: :plane,
   port: 18_090,
-  workdir: "/tmp/acp-test-workdir"
+  workdir: "/tmp/pont-test-workdir"
 
 config :logger, level: :warning

@@ -1,10 +1,10 @@
-defmodule Acp.RouterTest do
+defmodule Pont.RouterTest do
   use ExUnit.Case, async: false
 
   setup do
-    start_supervised!(Acp.Registry)
-    start_supervised!(Acp.Plane)
-    start_supervised!({Bandit, plug: Acp.Router, scheme: :http, port: 18_091, ip: {127, 0, 0, 1}})
+    start_supervised!(Pont.Registry)
+    start_supervised!(Pont.Plane)
+    start_supervised!({Bandit, plug: Pont.Router, scheme: :http, port: 18_091, ip: {127, 0, 0, 1}})
     :ok
   end
 
@@ -12,7 +12,7 @@ defmodule Acp.RouterTest do
     assert request("GET", "/health") == {200, "ok"}
     {200, body} = request("GET", "/status")
     decoded = Jason.decode!(body)
-    assert decoded["plane"] == "127.0.0.1:#{Application.fetch_env!(:acp, :port)}"
+    assert decoded["plane"] == "127.0.0.1:#{Application.fetch_env!(:pont, :port)}"
     assert decoded["runtimes"] == []
     assert {404, "not found"} = request("GET", "/nope")
   end
@@ -20,12 +20,12 @@ defmodule Acp.RouterTest do
   test "the app and agent paths upgrade to a websocket" do
     assert {:ok, _conn, _ref, _ws} = upgrade("/acp")
     assert {:ok, conn, ref, websocket} = upgrade("/agent")
-    hello = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "acp.uplink", "params" => %{"name" => "lab", "label" => "Bench"}})
+    hello = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "pont.uplink", "params" => %{"name" => "lab", "label" => "Bench"}})
     {:ok, _websocket, data} = Mint.WebSocket.encode(websocket, {:text, hello})
     {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)
     {:ok, _conn} = Mint.HTTP.set_mode(conn, :active)
     Process.sleep(100)
-    assert Acp.Registry.pid("lab")
+    assert Pont.Registry.pid("lab")
     Mint.HTTP.close(conn)
   end
 
