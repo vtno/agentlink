@@ -39,10 +39,10 @@ defmodule Pont.UplinkTest do
   end
 
   setup do
-    previous = System.get_env("ACP_PLANE_URL")
+    previous = System.get_env("PONT_PLANE_URL")
 
     on_exit(fn ->
-      restore("ACP_PLANE_URL", previous)
+      restore("PONT_PLANE_URL", previous)
       if pid = Process.whereis(Pont.Uplink), do: Process.exit(pid, :kill)
     end)
 
@@ -50,7 +50,7 @@ defmodule Pont.UplinkTest do
   end
 
   test "a message waits in the outbox while the plane is down" do
-    System.put_env("ACP_PLANE_URL", "ws://127.0.0.1:1/agent")
+    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:1/agent")
     start_supervised!({Pont.Uplink, owner: self()})
     Pont.Uplink.send_message(%{"method" => "ping"})
     Process.sleep(50)
@@ -62,7 +62,7 @@ defmodule Pont.UplinkTest do
 
   test "a handshake that is not a websocket is retried" do
     start_supervised!({Bandit, plug: HttpPlain, scheme: :http, port: 18_094, ip: {127, 0, 0, 1}})
-    System.put_env("ACP_PLANE_URL", "ws://127.0.0.1:18094/agent")
+    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:18094/agent")
     start_supervised!({Pont.Uplink, owner: self()})
     Process.sleep(200)
     assert Process.alive?(Process.whereis(Pont.Uplink))
@@ -71,7 +71,7 @@ defmodule Pont.UplinkTest do
 
   test "a connected uplink sends, receives, and redials when the link changes" do
     start_supervised!({Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_095, ip: {127, 0, 0, 1}})
-    System.put_env("ACP_PLANE_URL", "ws://127.0.0.1:18095/agent")
+    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:18095/agent")
     start_supervised!({Pont.Uplink, owner: self()})
 
     assert_receive {:socket, socket}
@@ -92,7 +92,7 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, out}
     assert %{"method" => "out"} = Jason.decode!(out)
 
-    System.put_env("ACP_PLANE_URL", "ws://127.0.0.1:1/agent")
+    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:1/agent")
     send(Pont.Uplink, :watch)
     Process.sleep(200)
     assert :sys.get_state(Pont.Uplink).websocket == nil

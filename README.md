@@ -1,6 +1,6 @@
-# ACP bridge
+# Pont
 
-An Elixir control plane and sidecar for [Agent Client Protocol](https://agentclientprotocol.com). An ACP client talks to the plane. The plane forwards that session to a named agent. The sidecar owns the agent process and dials the plane.
+Pont is an Elixir control plane and sidecar for [Agent Client Protocol](https://agentclientprotocol.com). An ACP client talks to Pont. Pont forwards that session to a named agent. The sidecar owns the agent process and dials the plane.
 
 The plane and the sidecar can share one BEAM, or run as two BEAM nodes. They still use the same WebSocket either way. The plane listens on `127.0.0.1` only, so a second machine cannot reach it until that bind changes.
 
@@ -20,10 +20,10 @@ Requires Elixir 1.17 and an `opencode` binary for the agent mode.
 
 ```sh
 mix deps.get
-ACP_MODE=all mix run --no-halt
+PONT_MODE=all mix run --no-halt
 ```
 
-`all` starts both in one BEAM. The sidecar still connects to the plane over the WebSocket. `ACP_MODE=plane` starts only the proxy. `ACP_MODE=agent` starts only the sidecar, which dials `ACP_PLANE_URL`.
+`all` starts both in one BEAM. The sidecar still connects to the plane over the WebSocket. `PONT_MODE=plane` starts only the proxy. `PONT_MODE=agent` starts only the sidecar, which dials `PONT_PLANE_URL`.
 
 ## Connect
 
@@ -54,11 +54,11 @@ The sidecar reads `agent.link.json` when it dials:
 
 | Variable | Default | Used by |
 |---|---|---|
-| `ACP_MODE` | `all` | `plane`, `agent`, or `all` |
-| `ACP_PORT` | `8090` | Plane listen port |
-| `ACP_PLANE_URL` | `ws://127.0.0.1:8090/agent` | Sidecar dial address. Overrides `plane_url` in the link file. |
-| `ACP_RUNTIME_NAME` | from the link file, else `opencode` | Agent id. Overrides `name` in the link file. |
-| `ACP_WORKDIR` | `/workspace/agent-workdir` | Working directory of the agent process. |
+| `PONT_MODE` | `all` | `plane`, `agent`, or `all` |
+| `PONT_PORT` | `8090` | Plane listen port |
+| `PONT_PLANE_URL` | `ws://127.0.0.1:8090/agent` | Sidecar dial address. Overrides `plane_url` in the link file. |
+| `PONT_RUNTIME_NAME` | from the link file, else `opencode` | Agent id. Overrides `name` in the link file. |
+| `PONT_WORKDIR` | `/workspace/agent-workdir` | Working directory of the agent process. |
 | `OPENCODE_BIN` | `/workspace/node_modules/.bin/opencode` | The `opencode` executable. The sidecar runs it as `opencode acp`. |
 
 ## Tests

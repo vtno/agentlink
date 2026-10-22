@@ -1,7 +1,7 @@
 defmodule Pont.Link do
   @moduledoc """
   The sidecar's link configuration. The name in this file is what the uplink
-  sends when it dials the plane. `ACP_RUNTIME_NAME` and `ACP_PLANE_URL` still
+  sends when it dials the plane. `PONT_RUNTIME_NAME` and `PONT_PLANE_URL` still
   override it for a machine that injects them from the environment.
   """
 
@@ -16,13 +16,13 @@ defmodule Pont.Link do
   def read(path \\ @path) do
     raw = read_json(path)
     label = present(raw["label"]) || present(raw["name"]) || "this machine"
-    name = slug(System.get_env("ACP_RUNTIME_NAME") || raw["name"] || label)
+    name = slug(System.get_env("PONT_RUNTIME_NAME") || raw["name"] || label)
     name = if name == "", do: "opencode", else: name
 
     %__MODULE__{
       name: name,
       label: label,
-      plane_url: System.get_env("ACP_PLANE_URL") || raw["plane_url"] || "ws://127.0.0.1:8090/agent"
+      plane_url: System.get_env("PONT_PLANE_URL") || raw["plane_url"] || "ws://127.0.0.1:8090/agent"
     }
   end
 

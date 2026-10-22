@@ -1,6 +1,6 @@
-# Bridge
+# Pont
 
-Elixir control plane and sidecar that proxy ACP between apps and agent runtimes. The web UI is not in this directory.
+Pont is the control plane and sidecar. It proxies ACP between apps and agent runtimes. The web UI is not in this directory.
 
 Mix. `mix test` skips `:integration`. The OpenCode test is `mix test --only integration`.
 

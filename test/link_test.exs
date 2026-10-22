@@ -2,11 +2,11 @@ defmodule Pont.LinkTest do
   use ExUnit.Case, async: false
 
   setup do
-    name = System.get_env("ACP_RUNTIME_NAME")
-    url = System.get_env("ACP_PLANE_URL")
-    on_exit(fn -> restore("ACP_RUNTIME_NAME", name); restore("ACP_PLANE_URL", url) end)
-    System.delete_env("ACP_RUNTIME_NAME")
-    System.delete_env("ACP_PLANE_URL")
+    name = System.get_env("PONT_RUNTIME_NAME")
+    url = System.get_env("PONT_PLANE_URL")
+    on_exit(fn -> restore("PONT_RUNTIME_NAME", name); restore("PONT_PLANE_URL", url) end)
+    System.delete_env("PONT_RUNTIME_NAME")
+    System.delete_env("PONT_PLANE_URL")
     :ok
   end
 
@@ -43,8 +43,8 @@ defmodule Pont.LinkTest do
 
   test "environment overrides the file" do
     path = write!(~s({"name":"file","plane_url":"ws://file/agent"}))
-    System.put_env("ACP_RUNTIME_NAME", "From Env")
-    System.put_env("ACP_PLANE_URL", "ws://env/agent")
+    System.put_env("PONT_RUNTIME_NAME", "From Env")
+    System.put_env("PONT_PLANE_URL", "ws://env/agent")
     link = Pont.Link.read(path)
     assert link.name == "from-env"
     assert link.plane_url == "ws://env/agent"

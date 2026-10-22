@@ -1,8 +1,8 @@
 defmodule Pont.Application do
   @moduledoc """
-  `ACP_MODE=all` runs the plane and the sidecar in one BEAM. They still talk
+  `PONT_MODE=all` runs the plane and the sidecar in one BEAM. They still talk
   over the agent WebSocket, so `plane` and `agent` can later be split onto
-  two VMs with `ACP_PLANE_URL`.
+  two VMs with `PONT_PLANE_URL`.
   """
 
   use Application

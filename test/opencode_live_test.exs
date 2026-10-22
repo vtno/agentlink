@@ -11,16 +11,16 @@ defmodule Pont.OpenCodeLiveTest do
     File.write!(Path.join(dir, "opencode.json"), ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"}))
 
     previous = %{
-      plane: System.get_env("ACP_PLANE_URL"),
-      name: System.get_env("ACP_RUNTIME_NAME"),
+      plane: System.get_env("PONT_PLANE_URL"),
+      name: System.get_env("PONT_RUNTIME_NAME"),
       harness: Application.get_env(:pont, :harness),
       mode: Application.get_env(:pont, :mode),
       port: Application.get_env(:pont, :port),
       workdir: Application.get_env(:pont, :workdir)
     }
 
-    System.put_env("ACP_PLANE_URL", "ws://127.0.0.1:#{@port}/agent")
-    System.put_env("ACP_RUNTIME_NAME", "opencode")
+    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:#{@port}/agent")
+    System.put_env("PONT_RUNTIME_NAME", "opencode")
     Application.put_env(:pont, :harness, Pont.OpenCode)
     Application.put_env(:pont, :mode, :all)
     Application.put_env(:pont, :port, @port)
@@ -50,7 +50,7 @@ defmodule Pont.OpenCodeLiveTest do
                  "fs" => %{"readTextFile" => false, "writeTextFile" => false},
                  "terminal" => false
                },
-               "clientInfo" => %{"name" => "acp-live-test", "title" => "ACP live test", "version" => "0.1.0"}
+               "clientInfo" => %{"name" => "pont-live-test", "title" => "Pont live test", "version" => "0.1.0"}
              })
 
     assert {:ok, %{"result" => %{"sessionId" => session_id}}} =
@@ -137,8 +137,8 @@ defmodule Pont.OpenCodeLiveTest do
   end
 
   defp restore_env(previous) do
-    put_or_delete("ACP_PLANE_URL", previous.plane)
-    put_or_delete("ACP_RUNTIME_NAME", previous.name)
+    put_or_delete("PONT_PLANE_URL", previous.plane)
+    put_or_delete("PONT_RUNTIME_NAME", previous.name)
     Application.put_env(:pont, :harness, previous.harness)
     Application.put_env(:pont, :mode, previous.mode)
     Application.put_env(:pont, :port, previous.port)
