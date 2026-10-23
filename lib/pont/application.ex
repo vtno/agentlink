@@ -14,9 +14,9 @@ defmodule Pont.Application do
     with :ok <- ensure_link() do
       children =
         case Application.fetch_env!(:pont, :mode) do
-          :plane -> plane_children()
+          :plane -> [Pont.Plane.Supervisor]
           :agent -> [Pont.Sidecar]
-          :all -> plane_children() ++ [Pont.Sidecar.Supervisor]
+          :all -> [Pont.Plane.Supervisor, Pont.Sidecar.Supervisor]
         end
 
       Supervisor.start_link(children,
@@ -43,16 +43,5 @@ defmodule Pont.Application do
             {:error, message}
         end
     end
-  end
-
-  defp plane_children do
-    port = Application.fetch_env!(:pont, :port)
-
-    [
-      Pont.Registry,
-      Pont.Plane,
-      Pont.Setup.Watch,
-      {Bandit, plug: Pont.Router, scheme: :http, port: port, ip: {127, 0, 0, 1}}
-    ]
   end
 end
