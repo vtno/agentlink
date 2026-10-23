@@ -1,28 +1,27 @@
 defmodule Pont.Link do
   @moduledoc """
-  The sidecar's link configuration. The name in this file is what the uplink
-  sends when it dials the plane. `PONT_RUNTIME_NAME` and `PONT_PLANE_URL` still
-  override it for a machine that injects them from the environment.
+  The sidecar's link file. The uplink sends this name when it dials.
+  A missing file stops the sidecar. `PONT_RUNTIME_NAME` and `PONT_PLANE_URL`
+  still override a file that exists.
   """
 
-  defstruct name: "opencode", label: "this machine", plane_url: "ws://127.0.0.1:8090/agent"
+  defstruct name: "opencode",
+            label: "this machine",
+            program: "opencode",
+            plane_url: "ws://127.0.0.1:8090/agent"
 
   @doc "Where the link file lives."
   def path, do: Pont.Paths.link()
 
-  @doc "The link this machine dials with. Environment variables override the file."
+  @doc "Read the link file. An error tells the operator to create it."
   def read(path \\ nil) do
     path = path || path()
-    raw = read_json(path)
-    label = present(raw["label"]) || present(raw["name"]) || "this machine"
-    name = slug(System.get_env("PONT_RUNTIME_NAME") || raw["name"] || label)
-    name = if name == "", do: "opencode", else: name
 
-    %__MODULE__{
-      name: name,
-      label: label,
-      plane_url: System.get_env("PONT_PLANE_URL") || raw["plane_url"] || "ws://127.0.0.1:8090/agent"
-    }
+    case File.read(path) do
+      {:ok, body} -> decode(path, body)
+      {:error, :enoent} -> {:error, missing(path)}
+      {:error, reason} -> {:error, "Could not read #{path}: #{inspect(reason)}\n"}
+    end
   end
 
   def slug(text) when is_binary(text) do
@@ -35,17 +34,38 @@ defmodule Pont.Link do
 
   def slug(_), do: ""
 
-  defp read_json(path) do
-    case File.read(path) do
-      {:ok, body} ->
-        case Jason.decode(body) do
-          {:ok, map} when is_map(map) -> map
-          _ -> %{}
-        end
-
-      _ ->
-        %{}
+  defp decode(path, body) do
+    case Jason.decode(body) do
+      {:ok, map} when is_map(map) -> {:ok, from_map(map)}
+      _ -> {:error, "#{path} is not a JSON object.\n"}
     end
+  end
+
+  defp from_map(raw) do
+    label = present(raw["label"]) || present(raw["name"]) || "this machine"
+    name = slug(System.get_env("PONT_RUNTIME_NAME") || raw["name"] || label)
+    name = if name == "", do: "opencode", else: name
+
+    %__MODULE__{
+      name: name,
+      label: label,
+      program: present(raw["program"]) || "opencode",
+      plane_url: System.get_env("PONT_PLANE_URL") || raw["plane_url"] || "ws://127.0.0.1:8090/agent"
+    }
+  end
+
+  defp missing(path) do
+    """
+    No link file at #{path}.
+    The sidecar stops until you create it. Example:
+
+    {
+      "name": "opencode",
+      "label": "this machine",
+      "program": "opencode",
+      "plane_url": "ws://127.0.0.1:8090/agent"
+    }
+    """
   end
 
   defp present(value) when is_binary(value) do

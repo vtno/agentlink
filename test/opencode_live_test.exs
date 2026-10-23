@@ -16,8 +16,14 @@ defmodule Pont.OpenCodeLiveTest do
       harness: Application.get_env(:pont, :harness),
       mode: Application.get_env(:pont, :mode),
       port: Application.get_env(:pont, :port),
-      workdir: Application.get_env(:pont, :workdir)
+      workdir: Application.get_env(:pont, :workdir),
+      link_path: Application.get_env(:pont, :link_path),
+      token: Application.get_env(:pont, :master_token)
     }
+
+    link = Path.join(dir, "agent.link.json")
+    File.write!(link, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"}))
+    Application.put_env(:pont, :link_path, link)
 
     System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:#{@port}/agent")
     System.put_env("PONT_RUNTIME_NAME", "opencode")
@@ -25,6 +31,7 @@ defmodule Pont.OpenCodeLiveTest do
     Application.put_env(:pont, :mode, :all)
     Application.put_env(:pont, :port, @port)
     Application.put_env(:pont, :workdir, dir)
+    Application.put_env(:pont, :master_token, "live-token")
 
     on_exit(fn ->
       stop_app()
@@ -107,7 +114,7 @@ defmodule Pont.OpenCodeLiveTest do
   defp status_runtimes do
     case Mint.HTTP.connect(:http, "127.0.0.1", @port, mode: :passive) do
       {:ok, conn} ->
-        {:ok, conn, ref} = Mint.HTTP.request(conn, "GET", "/status", [], nil)
+        {:ok, conn, ref} = Mint.HTTP.request(conn, "GET", "/status", [{"authorization", "Bearer live-token"}], nil)
         {:ok, _conn, responses} = Mint.HTTP.recv(conn, 0, 2_000)
         Mint.HTTP.close(conn)
 
@@ -143,7 +150,14 @@ defmodule Pont.OpenCodeLiveTest do
     Application.put_env(:pont, :mode, previous.mode)
     Application.put_env(:pont, :port, previous.port)
     Application.put_env(:pont, :workdir, previous.workdir)
+    restore_link(previous.link_path)
+    restore_token(previous.token)
   end
+
+  defp restore_link(nil), do: Application.delete_env(:pont, :link_path)
+  defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
+  defp restore_token(nil), do: Application.delete_env(:pont, :master_token)
+  defp restore_token(token), do: Application.put_env(:pont, :master_token, token)
 
   defp put_or_delete(key, nil), do: System.delete_env(key)
   defp put_or_delete(key, value), do: System.put_env(key, value)
@@ -162,7 +176,7 @@ defmodule Pont.LiveClient do
   @impl true
   def init(port) do
     {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", port, protocols: [:http1], mode: :passive)
-    {:ok, conn, ref} = Mint.WebSocket.upgrade(:ws, conn, "/acp", [])
+    {:ok, conn, ref} = Mint.WebSocket.upgrade(:ws, conn, "/acp", [{"authorization", "Bearer live-token"}])
     {:ok, conn, 101, headers} = await(conn, ref, [])
     {:ok, conn, websocket} = Mint.WebSocket.new(conn, ref, 101, headers)
     {:ok, conn} = Mint.HTTP.set_mode(conn, :active)

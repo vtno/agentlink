@@ -6,32 +6,42 @@ defmodule Pont.Application do
   """
 
   use Application
-  require Logger
 
   @impl true
   def start(_type, _args) do
-    warn_if_open()
+    Pont.Setup.prepare()
 
-    children =
-      case Application.fetch_env!(:pont, :mode) do
-        :plane -> plane_children()
-        :agent -> [Pont.Sidecar]
-        :all -> plane_children() ++ [Pont.Sidecar]
-      end
+    with :ok <- ensure_link() do
+      children =
+        case Application.fetch_env!(:pont, :mode) do
+          :plane -> plane_children()
+          :agent -> [Pont.Sidecar]
+          :all -> plane_children() ++ [Pont.Sidecar]
+        end
 
-    Supervisor.start_link(children,
-      strategy: :one_for_one,
-      max_restarts: 5,
-      max_seconds: 20,
-      name: Pont.Supervisor
-    )
+      Supervisor.start_link(children,
+        strategy: :one_for_one,
+        max_restarts: 5,
+        max_seconds: 20,
+        name: Pont.Supervisor
+      )
+    end
   end
 
-  defp warn_if_open do
-    plane? = Application.fetch_env!(:pont, :mode) in [:plane, :all]
+  defp ensure_link do
+    case Application.fetch_env!(:pont, :mode) do
+      :plane ->
+        :ok
 
-    if plane? and not Pont.Auth.enabled?() and Mix.env() != :test do
-      Logger.warning("PONT_MASTER_TOKEN is unset. /acp, /agent, and /status accept any caller")
+      _ ->
+        case Pont.Link.read() do
+          {:ok, _link} ->
+            :ok
+
+          {:error, message} ->
+            IO.puts(:stderr, message)
+            {:error, message}
+        end
     end
   end
 
@@ -41,6 +51,7 @@ defmodule Pont.Application do
     [
       Pont.Registry,
       Pont.Plane,
+      Pont.Setup.Watch,
       {Bandit, plug: Pont.Router, scheme: :http, port: port, ip: {127, 0, 0, 1}}
     ]
   end

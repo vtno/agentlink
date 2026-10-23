@@ -1,8 +1,16 @@
+defmodule Pont.Registry.Uplink do
+  @moduledoc """
+  One dialed sidecar. `name` comes from the link. `label` is the machine.
+  `program` is the agent product name, not the `Pont.Harness` module.
+  """
+
+  defstruct [:name, :label, :program, :pid, :connected_at]
+end
+
 defmodule Pont.Registry do
   @moduledoc """
-  Live runtimes. The table outlives a single Plane message: an agent socket is the
-  source of truth, and a restart of the plane process can read who is still
-  connected. A dead agent socket is removed by the monitor.
+  Live uplinks. One row is one sidecar that has said hello.
+  The socket is the source of truth.
   """
 
   use GenServer
@@ -23,20 +31,29 @@ defmodule Pont.Registry do
     {:ok, %__MODULE__{}}
   end
 
-  @doc "An uplink said hello. Claim this name, and replace a previous agent socket that held it."
-  def register(pid, name, label) when is_pid(pid) do
-    GenServer.call(__MODULE__, {:register, pid, name, label})
+  @doc "An uplink said hello. The access policy accepts this subject, then this table remembers the socket."
+  def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject) when is_pid(pid) do
+    GenServer.call(__MODULE__, {:register, pid, uplink, subject})
   end
 
   @impl true
-  def handle_call({:register, pid, name, label}, _from, %__MODULE__{} = state) do
-    with {:ok, name} <- normalize_name(name) do
-      label = normalize_label(label, name)
+  def handle_call({:register, pid, %Pont.Registry.Uplink{} = uplink, subject}, _from, %__MODULE__{} = state) do
+    with {:ok, name} <- normalize_name(uplink.name),
+         :ok <- Pont.Access.claim(subject, name) do
+      uplink = %Pont.Registry.Uplink{
+        name: name,
+        label: clip(uplink.label, name),
+        program: clip(uplink.program, "opencode"),
+        pid: pid,
+        connected_at: System.system_time(:second)
+      }
+
       state = drop_pid(state, pid)
       state = replace_name(state, name, pid)
       ref = Process.monitor(pid)
-      :ets.insert(@table, {name, label, pid, System.system_time(:second)})
-      Logger.info("runtime registered name=#{name} label=#{label}")
+      :ets.insert(@table, {name, uplink})
+      Logger.info("uplink registered name=#{uplink.name} label=#{uplink.label} program=#{uplink.program}")
+      Pont.Setup.Watch.connected(uplink.name, uplink.label)
       Pont.Plane.runtime_reset(name)
       {:reply, :ok, %{state | pids: Map.put(state.pids, pid, {ref, name})}}
     else
@@ -52,7 +69,7 @@ defmodule Pont.Registry do
 
       {{_ref, name}, pids} ->
         case :ets.lookup(@table, name) do
-          [{^name, _, ^pid, _}] ->
+          [{^name, %Pont.Registry.Uplink{pid: ^pid}}] ->
             :ets.delete(@table, name)
             Logger.warning("runtime down name=#{name} #{inspect(reason)}")
             Pont.Plane.runtime_down(name)
@@ -65,27 +82,37 @@ defmodule Pont.Registry do
     end
   end
 
-  @doc "The runtimes currently dialed in. Read from the table, so this does not enter the process."
+  @doc "The uplinks this subject may use."
+  def allowed(%Pont.Access.Subject{} = subject) do
+    Enum.filter(list(), &Pont.Access.allowed?(subject, &1["name"]))
+  end
+
+  @doc "The uplinks currently dialed in. `name` is what a client selects."
   def list do
     @table
     |> :ets.tab2list()
-    |> Enum.map(fn {name, label, _pid, connected_at} ->
-      %{"name" => name, "label" => label, "connected_at" => connected_at}
+    |> Enum.map(fn {_name, %Pont.Registry.Uplink{} = uplink} ->
+      %{
+        "name" => uplink.name,
+        "label" => uplink.label,
+        "program" => uplink.program,
+        "connected_at" => uplink.connected_at
+      }
     end)
     |> Enum.sort_by(& &1["name"])
   end
 
-  @doc "The agent socket pid registered under this name, or nil."
+  @doc "The agent socket pid registered under this link name, or nil."
   def pid(name) when is_binary(name) do
     case :ets.lookup(@table, name) do
-      [{^name, _label, pid, _at}] -> pid
+      [{^name, %Pont.Registry.Uplink{pid: pid}}] -> pid
       [] -> nil
     end
   end
 
   defp replace_name(%__MODULE__{} = state, name, pid) do
     case :ets.lookup(@table, name) do
-      [{^name, _, old, _}] when old != pid ->
+      [{^name, %Pont.Registry.Uplink{pid: old}}] when old != pid ->
         send(old, :replaced)
         drop_pid(state, old)
 
@@ -103,7 +130,7 @@ defmodule Pont.Registry do
         Process.demonitor(ref, [:flush])
 
         case :ets.lookup(@table, name) do
-          [{^name, _, ^pid, _}] -> :ets.delete(@table, name)
+          [{^name, %Pont.Registry.Uplink{pid: ^pid}}] -> :ets.delete(@table, name)
           _ -> :ok
         end
 
@@ -117,18 +144,18 @@ defmodule Pont.Registry do
     if String.match?(name, ~r/^[a-z0-9][a-z0-9_-]{0,40}$/) do
       {:ok, name}
     else
-      {:error, "runtime name must be a short slug"}
+      {:error, "link name must be a short slug"}
     end
   end
 
-  defp normalize_name(_), do: {:error, "runtime name must be a short slug"}
+  defp normalize_name(_), do: {:error, "link name must be a short slug"}
 
-  defp normalize_label(label, name) when is_binary(label) do
-    case String.trim(label) do
-      "" -> name
+  defp clip(value, fallback) when is_binary(value) do
+    case String.trim(value) do
+      "" -> fallback
       text -> String.slice(text, 0, 80)
     end
   end
 
-  defp normalize_label(_, name), do: name
+  defp clip(_value, fallback), do: fallback
 end

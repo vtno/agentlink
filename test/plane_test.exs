@@ -1,6 +1,16 @@
 defmodule Pont.PlaneTest do
   use ExUnit.Case, async: false
 
+  defmodule Gate do
+    @behaviour Pont.Access
+
+    def authenticate(_conn), do: {:ok, %Pont.Access.Subject{id: "ada", role: :user}}
+    def allowed?(_subject, "hidden"), do: false
+    def allowed?(%Pont.Access.Subject{}, runtime) when is_binary(runtime), do: true
+    def claim(_subject, _name), do: :ok
+    def prepare(_mode), do: {:ok, ""}
+  end
+
   setup do
     start_supervised!(Pont.Registry)
     start_supervised!(Pont.Plane)
@@ -8,20 +18,20 @@ defmodule Pont.PlaneTest do
   end
 
   test "a batch is rejected and garbage is a parse error" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     Pont.Plane.client_frame(id, "[1]\nnot-json")
     assert %{"error" => %{"code" => -32600}} = reply!()
     assert %{"error" => %{"code" => -32700}} = reply!()
   end
 
   test "a message with no method is ignored" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     Pont.Plane.client_frame(id, ~s({"jsonrpc":"2.0","id":1}))
     refute_receive {:send, _}, 50
   end
 
   test "runtime list and select" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     call(id, "runtime/list", %{}, 1)
     assert %{"result" => %{"runtimes" => []}} = reply!()
 
@@ -37,13 +47,13 @@ defmodule Pont.PlaneTest do
   end
 
   test "a runtime notice is ignored" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     Pont.Plane.client_frame(id, ~s({"jsonrpc":"2.0","method":"runtime/list"}))
     refute_receive {:send, _}, 50
   end
 
   test "no runtime, one runtime is chosen, two runtimes must be chosen" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
     assert %{"error" => %{"message" => "no runtime connected"}} = reply!()
 
@@ -51,14 +61,14 @@ defmodule Pont.PlaneTest do
     call(id, "initialize", %{}, 2)
     assert {:agent, %{"method" => "initialize"}} = from_agent!()
 
-    other = Pont.Plane.register(self())
+    other = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("other")
     call(other, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 3)
     assert %{"error" => %{"message" => "select a runtime"}} = reply!()
   end
 
   test "initialize is cached and a second caller waits for the same reply" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
@@ -77,7 +87,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a failed initialize is not cached" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "initialize", %{}, 1)
     assert {:agent, %{"id" => agent_id}} = from_agent!()
@@ -89,7 +99,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "session new and load bind the session, and an error does not" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
     assert {:agent, %{"id" => agent_id, "method" => "session/new"}} = from_agent!()
@@ -108,7 +118,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "prompts run one at a time and the stop is broadcast" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
 
@@ -131,7 +141,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a prompt with no text and no session still runs, and a cancel is not queued" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "session/prompt", %{"prompt" => []}, 1)
     assert {:agent, %{"method" => "session/prompt", "id" => agent_id}} = from_agent!()
@@ -146,7 +156,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a live update goes only to clients on that session, unless a load is in flight" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     {other, other_id} = spawn_client()
@@ -176,7 +186,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a notice with no session reaches every client on the agent" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
@@ -190,7 +200,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a permission goes only to the phone that prompted" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     {other, other_id} = spawn_client()
@@ -221,7 +231,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a permission during load goes only to the phone that is loading" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     {other, other_id} = spawn_client()
@@ -239,7 +249,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "an error answer is forwarded, and a permission with no issuer is declined" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => [%{"type" => "text", "text" => "go"}]}, 1)
@@ -266,7 +276,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a reply that nobody asked for is dropped, and a non-json agent frame is dropped" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     Pont.Plane.client_frame(id, ~s({"jsonrpc":"2.0","id":4,"result":{}}))
     refute_receive {:send, _}, 50
@@ -275,7 +285,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "the agent disconnecting fails the prompt and the queue" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => [%{"type" => "text", "text" => "a"}]}, 8)
@@ -310,7 +320,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a prompt queued for a client that then leaves the runtime is skipped" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => [%{"type" => "text", "text" => "a"}]}, 5)
@@ -329,7 +339,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a dead runtime answers the next call with runtime is down" do
-    id = Pont.Plane.register(self())
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     pid = agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
@@ -363,10 +373,28 @@ defmodule Pont.PlaneTest do
     assert {:agent, %{"id" => "perm", "error" => %{"message" => "no app is attached to this session"}}} = from_agent!()
   end
 
+  test "a subject only sees the runtimes it is allowed to use" do
+    previous = Application.get_env(:pont, :access)
+    Application.put_env(:pont, :access, Pont.PlaneTest.Gate)
+
+    on_exit(fn ->
+      if previous, do: Application.put_env(:pont, :access, previous), else: Application.delete_env(:pont, :access)
+    end)
+
+    agent!("hidden")
+    agent!("lab")
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "ada", role: :user})
+    call(id, "runtime/list", %{}, 1)
+    assert %{"result" => %{"runtimes" => [%{"name" => "lab"}]}} = reply!()
+
+    call(id, "runtime/select", %{"name" => "hidden"}, 2)
+    assert %{"error" => %{"message" => "runtime is not allowed"}} = reply!()
+  end
+
   defp agent!(name) do
     parent = self()
     pid = spawn(fn -> agent_loop(parent) end)
-    :ok = Pont.Registry.register(pid, name, name)
+    :ok = Pont.Registry.register(pid, %Pont.Registry.Uplink{name: name, label: name}, %Pont.Access.Subject{id: "admin", role: :admin})
     pid
   end
 
@@ -381,7 +409,7 @@ defmodule Pont.PlaneTest do
   defp spawn_client do
     parent = self()
     pid = spawn(fn ->
-      id = Pont.Plane.register(self())
+      id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
       send(parent, {:ready, id})
       client_loop(parent)
     end)

@@ -10,19 +10,36 @@ defmodule Pont.LinkTest do
     :ok
   end
 
-  test "missing file uses the defaults" do
-    link = Pont.Link.read("/tmp/does-not-exist-acp-link.json")
-    assert %Pont.Link{name: "this-machine", label: "this machine", plane_url: "ws://127.0.0.1:8090/agent"} = link
+  test "a missing file tells the operator to create it" do
+    path = "/tmp/does-not-exist-acp-link.json"
+    assert {:error, message} = Pont.Link.read(path)
+    assert message =~ path
+    assert message =~ "plane_url"
+    assert message =~ "sidecar stops"
   end
 
-  test "bad json uses the defaults" do
+  test "bad json is an error" do
     path = write!("{")
-    assert Pont.Link.read(path).name == "this-machine"
+    assert {:error, message} = Pont.Link.read(path)
+    assert message =~ "not a JSON object"
+  end
+
+  test "a json array is not a link" do
+    path = write!("[]")
+    assert {:error, message} = Pont.Link.read(path)
+    assert message =~ "not a JSON object"
+  end
+
+  test "a directory is a read error" do
+    path = Path.join(System.tmp_dir!(), "pont-link-dir-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(path)
+    assert {:error, message} = Pont.Link.read(path)
+    assert message =~ "Could not read #{path}"
   end
 
   test "label and name come from the file" do
     path = write!(~s({"name":"Lab Box","label":"Bench","plane_url":"ws://example.test/agent"}))
-    link = Pont.Link.read(path)
+    assert {:ok, link} = Pont.Link.read(path)
     assert link.name == "lab-box"
     assert link.label == "Bench"
     assert link.plane_url == "ws://example.test/agent"
@@ -30,22 +47,25 @@ defmodule Pont.LinkTest do
 
   test "label falls back to the name, then a default" do
     path = write!(~s({"name":"Only Name"}))
-    assert Pont.Link.read(path).label == "Only Name"
+    assert {:ok, link} = Pont.Link.read(path)
+    assert link.label == "Only Name"
 
     path = write!(~s({}))
-    assert Pont.Link.read(path).label == "this machine"
+    assert {:ok, link} = Pont.Link.read(path)
+    assert link.label == "this machine"
   end
 
   test "a name that slugs to nothing becomes opencode" do
     path = write!(~s({"name":"---"}))
-    assert Pont.Link.read(path).name == "opencode"
+    assert {:ok, link} = Pont.Link.read(path)
+    assert link.name == "opencode"
   end
 
   test "environment overrides the file" do
     path = write!(~s({"name":"file","plane_url":"ws://file/agent"}))
     System.put_env("PONT_RUNTIME_NAME", "From Env")
     System.put_env("PONT_PLANE_URL", "ws://env/agent")
-    link = Pont.Link.read(path)
+    assert {:ok, link} = Pont.Link.read(path)
     assert link.name == "from-env"
     assert link.plane_url == "ws://env/agent"
   end

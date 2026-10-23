@@ -9,8 +9,8 @@ defmodule Pont.ClientSocket do
 
   @doc "Join the plane and keep the id this socket was given."
   @impl true
-  def init(_opts) do
-    id = Pont.Plane.register(self())
+  def init(%Pont.Access.Subject{} = subject) do
+    id = Pont.Plane.register(self(), subject)
     {:ok, %__MODULE__{id: id}}
   end
 

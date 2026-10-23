@@ -8,7 +8,9 @@ defmodule Pont.Paths do
   def root, do: Path.join(System.user_home!(), ".pont")
 
   @doc "Link file the sidecar reads when it dials."
-  def link, do: Path.join(root(), "agent.link.json")
+  def link do
+    Application.get_env(:pont, :link_path) || Path.join(root(), "agent.link.json")
+  end
 
   @doc "Workspace path before the application config overrides it."
   def default_workdir, do: Path.join(root(), "workspace")

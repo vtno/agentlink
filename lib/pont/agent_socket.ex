@@ -7,11 +7,11 @@ defmodule Pont.AgentSocket do
   @behaviour WebSock
   require Logger
 
-  defstruct name: nil
+  defstruct name: nil, subject: nil
 
-  @doc "Wait for the uplink hello before accepting ACP."
+  @doc "Wait for the uplink hello. The subject is whoever the router authenticated."
   @impl true
-  def init(_opts), do: {:ok, %__MODULE__{}}
+  def init(%Pont.Access.Subject{} = subject), do: {:ok, %__MODULE__{subject: subject}}
 
   @doc """
   The first text frame must be pont.uplink. That claims the runtime name.
@@ -21,7 +21,13 @@ defmodule Pont.AgentSocket do
   def handle_in({text, [opcode: :text]}, %__MODULE__{name: nil} = state) when is_binary(text) do
     case Jason.decode(text) do
       {:ok, %{"method" => "pont.uplink", "params" => params}} when is_map(params) ->
-        case Pont.Registry.register(self(), params["name"], params["label"]) do
+        uplink = %Pont.Registry.Uplink{
+          name: params["name"],
+          label: params["label"],
+          program: params["program"] || "opencode"
+        }
+
+        case Pont.Registry.register(self(), uplink, state.subject) do
           :ok -> {:ok, %{state | name: params["name"]}}
           {:error, reason} -> {:stop, reason, state}
         end

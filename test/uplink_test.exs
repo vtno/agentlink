@@ -49,13 +49,63 @@ defmodule Pont.UplinkTest do
 
   setup do
     previous = System.get_env("PONT_PLANE_URL")
+    link_path = Application.get_env(:pont, :link_path)
+    path = Path.join(System.tmp_dir!(), "pont-uplink-#{System.unique_integer([:positive])}.json")
+    File.write!(path, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"}))
+    Application.put_env(:pont, :link_path, path)
 
     on_exit(fn ->
       restore("PONT_PLANE_URL", previous)
+      restore_link(link_path)
+      File.rm(path)
       if pid = Process.whereis(Pont.Uplink), do: Process.exit(pid, :kill)
     end)
 
     :ok
+  end
+
+  test "a missing link file stops the uplink" do
+    Process.flag(:trap_exit, true)
+    missing = "/tmp/pont-uplink-missing-#{System.unique_integer([:positive])}.json"
+    Application.put_env(:pont, :link_path, missing)
+
+    assert {:error, {:shutdown, message}} = Pont.Uplink.start_link(owner: self())
+    assert message =~ "No link file"
+    refute Process.whereis(Pont.Uplink)
+  end
+
+  test "a deleted link file stops the uplink on the next dial" do
+    pid =
+      start_supervised!(%{
+        id: Pont.Uplink,
+        start: {Pont.Uplink, :start_link, [[owner: self()]]},
+        restart: :temporary
+      })
+
+    :sys.get_state(pid)
+    File.rm!(Application.get_env(:pont, :link_path))
+    ref = Process.monitor(pid)
+    send(pid, :connect)
+    assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, message}}
+    assert message =~ "No link file"
+    refute Process.whereis(Pont.Uplink)
+  end
+
+  test "a deleted link file stops the uplink on the next watch" do
+    pid =
+      start_supervised!(%{
+        id: Pont.Uplink,
+        start: {Pont.Uplink, :start_link, [[owner: self()]]},
+        restart: :temporary
+      })
+
+    :sys.get_state(pid)
+    File.rm!(Application.get_env(:pont, :link_path))
+    ref = Process.monitor(pid)
+    send(pid, :watch)
+    assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, message}}
+    assert message =~ "No link file"
+    refute Process.whereis(Pont.Uplink)
   end
 
   test "the sidecar sends the bearer token when it dials" do
@@ -120,6 +170,8 @@ defmodule Pont.UplinkTest do
 
   defp restore(key, nil), do: System.delete_env(key)
   defp restore(key, value), do: System.put_env(key, value)
+  defp restore_link(nil), do: Application.delete_env(:pont, :link_path)
+  defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
   defp restore_token(nil), do: Application.delete_env(:pont, :master_token)
   defp restore_token(value), do: Application.put_env(:pont, :master_token, value)
 end
