@@ -31,7 +31,7 @@ defmodule Pont.Application do
     plane? = Application.fetch_env!(:pont, :mode) in [:plane, :all]
 
     if plane? and not Pont.Auth.enabled?() and Mix.env() != :test do
-      Logger.warning("PONT_TOKEN is unset. /acp, /agent, and /status accept any caller")
+      Logger.warning("PONT_MASTER_TOKEN is unset. /acp, /agent, and /status accept any caller")
     end
   end
 

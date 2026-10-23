@@ -59,8 +59,8 @@ defmodule Pont.UplinkTest do
   end
 
   test "the sidecar sends the bearer token when it dials" do
-    previous = Application.get_env(:pont, :token)
-    Application.put_env(:pont, :token, "sekret")
+    previous = Application.get_env(:pont, :master_token)
+    Application.put_env(:pont, :master_token, "sekret")
     on_exit(fn -> restore_token(previous) end)
 
     start_supervised!({Bandit, plug: {Pont.UplinkTest.AuthPlug, self()}, scheme: :http, port: 18_093, ip: {127, 0, 0, 1}})
@@ -120,6 +120,6 @@ defmodule Pont.UplinkTest do
 
   defp restore(key, nil), do: System.delete_env(key)
   defp restore(key, value), do: System.put_env(key, value)
-  defp restore_token(nil), do: Application.delete_env(:pont, :token)
-  defp restore_token(value), do: Application.put_env(:pont, :token, value)
+  defp restore_token(nil), do: Application.delete_env(:pont, :master_token)
+  defp restore_token(value), do: Application.put_env(:pont, :master_token, value)
 end

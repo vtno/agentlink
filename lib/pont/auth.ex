@@ -4,9 +4,9 @@ defmodule Pont.Auth do
   or `?token=` when the client cannot set a header. Unset means the sockets stay open.
   """
 
-  @doc "True when PONT_TOKEN is set to a non-empty value."
+  @doc "True when PONT_MASTER_TOKEN is set to a non-empty value."
   def enabled? do
-    case Application.get_env(:pont, :token) do
+    case Application.get_env(:pont, :master_token) do
       token when is_binary(token) and token != "" -> true
       _ -> false
     end
@@ -14,7 +14,7 @@ defmodule Pont.Auth do
 
   @doc "True when auth is off, or the request presents the configured token."
   def allowed?(conn) do
-    case Application.get_env(:pont, :token) do
+    case Application.get_env(:pont, :master_token) do
       expected when is_binary(expected) and expected != "" -> same_token?(presented(conn), expected)
       _ -> true
     end
@@ -22,7 +22,7 @@ defmodule Pont.Auth do
 
   @doc "Header the sidecar sends. Empty when auth is off."
   def headers do
-    case Application.get_env(:pont, :token) do
+    case Application.get_env(:pont, :master_token) do
       token when is_binary(token) and token != "" -> [{"authorization", "Bearer " <> token}]
       _ -> []
     end

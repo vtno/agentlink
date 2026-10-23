@@ -30,10 +30,10 @@ defmodule Pont.RouterTest do
   end
 
   test "a token guards status and both sockets, and health stays open" do
-    previous = Application.get_env(:pont, :token)
-    Application.put_env(:pont, :token, "sekret")
+    previous = Application.get_env(:pont, :master_token)
+    Application.put_env(:pont, :master_token, "sekret")
     on_exit(fn ->
-      if previous, do: Application.put_env(:pont, :token, previous), else: Application.delete_env(:pont, :token)
+      if previous, do: Application.put_env(:pont, :master_token, previous), else: Application.delete_env(:pont, :master_token)
     end)
 
     assert request("GET", "/health") == {200, "ok"}
