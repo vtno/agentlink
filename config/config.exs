@@ -23,7 +23,7 @@ config :pont,
   runtime_name: System.get_env("PONT_RUNTIME_NAME") || "opencode",
   runtime_label: System.get_env("PONT_RUNTIME_LABEL") || "this machine",
   master_token: master_token,
-  harness: Pont.OpenCode,
+  agent: Pont.OpenCode,
   access: Pont.Access.Single
 
 config :logger, level: :info

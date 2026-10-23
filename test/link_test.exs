@@ -15,7 +15,7 @@ defmodule Pont.LinkTest do
     assert {:error, message} = Pont.Link.read(path)
     assert message =~ path
     assert message =~ "plane_url"
-    assert message =~ "sidecar stops"
+    assert message =~ "agent relay stops"
   end
 
   test "bad json is an error" do

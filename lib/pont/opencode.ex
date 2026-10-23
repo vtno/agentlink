@@ -1,9 +1,9 @@
 defmodule Pont.OpenCode do
   @moduledoc """
-  Production harness. Runs `opencode acp` and leaves stderr off the ACP stream.
+  Production agent. Runs `opencode acp` and leaves stderr off the ACP stream.
   """
 
-  @behaviour Pont.Harness
+  @behaviour Pont.Agent
 
   @impl true
   def open(_owner, cwd) do
@@ -26,7 +26,7 @@ defmodule Pont.OpenCode do
     :ok
   end
 
-  @doc "The executable Sidecar will spawn, with a relative symlink resolved."
+  @doc "The executable the agent relay will spawn, with a relative symlink resolved."
   def bin do
     configured = Pont.Paths.opencode_bin()
 

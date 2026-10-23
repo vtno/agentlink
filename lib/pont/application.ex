@@ -1,6 +1,6 @@
 defmodule Pont.Application do
   @moduledoc """
-  `PONT_MODE=all` runs the plane and the sidecar in one BEAM. They still talk
+  `PONT_MODE=all` runs the plane and the agent relay in one BEAM. They still talk
   over the agent WebSocket, so `plane` and `agent` can later be split onto
   two VMs with `PONT_PLANE_URL`.
   """
@@ -15,8 +15,8 @@ defmodule Pont.Application do
       children =
         case Application.fetch_env!(:pont, :mode) do
           :plane -> [Pont.Plane.Supervisor]
-          :agent -> [Pont.Sidecar]
-          :all -> [Pont.Plane.Supervisor, Pont.Sidecar.Supervisor]
+          :agent -> [Pont.Relay.Agent]
+          :all -> [Pont.Plane.Supervisor, Pont.Relay.Agent.Supervisor]
         end
 
       Supervisor.start_link(children,

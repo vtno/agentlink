@@ -1,12 +1,12 @@
 defmodule Pont.Plane.Supervisor do
   @moduledoc """
   The plane: the registry, the sockets, and the HTTP listener.
-  A sidecar is not a child here, so one sidecar cannot take the plane down.
+  An agent relay is not a child here, so one agent relay cannot take the plane down.
   """
 
   use Supervisor
 
-  @doc "Start the plane processes. This supervisor does not start a sidecar."
+  @doc "Start the plane processes. This supervisor does not start an agent relay."
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
   end

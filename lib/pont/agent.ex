@@ -1,7 +1,7 @@
-defmodule Pont.Harness do
+defmodule Pont.Agent do
   @moduledoc """
-  ACP stdio for one agent. Sidecar opens the agent through this behaviour.
-  `Pont.OpenCode` is the production harness. Tests supply a fake so the suite
+  ACP stdio for one agent. The agent relay opens the agent through this behaviour.
+  `Pont.OpenCode` is the production agent. Tests supply a fake so the suite
   never starts the binary.
   """
 

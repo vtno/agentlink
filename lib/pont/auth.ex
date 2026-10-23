@@ -23,7 +23,7 @@ defmodule Pont.Auth do
     end
   end
 
-  @doc "Header the sidecar sends. Empty when auth is off."
+  @doc "Header the agent relay sends. Empty when auth is off."
   def headers do
     case token() do
       token when is_binary(token) -> [{"authorization", "Bearer " <> token}]

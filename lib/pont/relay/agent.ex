@@ -1,18 +1,18 @@
-defmodule Pont.Sidecar do
+defmodule Pont.Relay.Agent do
   @moduledoc """
-  Supervised owner of one agent harness.
+  Supervised owner of one `Pont.Agent`.
 
-  Stdout is ACP JSONL. The harness is linked to this process: when the agent
+  Stdout is ACP JSONL. The agent is linked to this process: when it
   exits, this process stops and its supervisor starts another one. Production
-  uses `Pont.OpenCode`. The module comes from `:pont, :harness`.
+  uses `Pont.OpenCode`. The module comes from `:pont, :agent`.
   """
 
   use GenServer
   require Logger
 
-  defstruct [:agent, :harness, buffer: ""]
+  defstruct [:agent, :agent_module, buffer: ""]
 
-  @doc "Own the agent harness. If it dies, the supervisor starts this process again."
+  @doc "Own the agent. If it dies, the supervisor starts this process again."
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -22,16 +22,16 @@ defmodule Pont.Sidecar do
     Process.flag(:trap_exit, true)
     cwd = Pont.Paths.workdir()
     File.mkdir_p!(cwd)
-    harness = Application.get_env(:pont, :harness, Pont.OpenCode)
-    {:ok, agent} = harness.open(self(), cwd)
-    Logger.info("sidecar supervising #{inspect(harness)} cwd=#{cwd} agent=#{inspect(agent)}")
+    agent_module = Application.get_env(:pont, :agent, Pont.OpenCode)
+    {:ok, agent} = agent_module.open(self(), cwd)
+    Logger.info("agent relay supervising #{inspect(agent_module)} cwd=#{cwd} agent=#{inspect(agent)}")
 
     case Pont.Uplink.start_link(owner: self()) do
       {:ok, _} ->
-        {:ok, %__MODULE__{agent: agent, harness: harness}}
+        {:ok, %__MODULE__{agent: agent, agent_module: agent_module}}
 
       {:error, reason} ->
-        harness.close(agent)
+        agent_module.close(agent)
         {:stop, reason}
     end
   end
@@ -64,7 +64,7 @@ defmodule Pont.Sidecar do
             Pont.Uplink.send_message(message)
 
           _ ->
-            Logger.warning("sidecar dropped non-json stdout")
+            Logger.warning("agent relay dropped non-json stdout")
         end
       end
     end)
@@ -73,7 +73,7 @@ defmodule Pont.Sidecar do
   end
 
   def handle_info({agent, {:exit_status, status}}, %__MODULE__{agent: agent} = state) do
-    Logger.error("agent exited status=#{status}, supervisor will restart the sidecar")
+    Logger.error("agent exited status=#{status}, supervisor will restart the agent relay")
     {:stop, {:opencode_exit, status}, state}
   end
 
@@ -100,19 +100,19 @@ defmodule Pont.Sidecar do
   end
 
   def handle_info(message, state) do
-    Logger.debug("sidecar ignored #{inspect(message)}")
+    Logger.debug("agent relay ignored #{inspect(message)}")
     {:noreply, state}
   end
 
   @impl true
-  def terminate(reason, %__MODULE__{agent: agent, harness: harness}) do
-    Logger.info("sidecar stopping #{inspect(reason)}")
-    harness.close(agent)
+  def terminate(reason, %__MODULE__{agent: agent, agent_module: agent_module}) do
+    Logger.info("agent relay stopping #{inspect(reason)}")
+    agent_module.close(agent)
     :ok
   end
 
-  defp write(%{harness: harness, agent: agent}, message) do
-    harness.write(agent, [Jason.encode!(message), ?\n])
+  defp write(%{agent_module: agent_module, agent: agent}, message) do
+    agent_module.write(agent, [Jason.encode!(message), ?\n])
   end
 
   defp take_lines(buffer), do: take_lines(buffer, [])

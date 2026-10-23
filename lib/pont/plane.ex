@@ -60,7 +60,7 @@ defmodule Pont.Plane do
   @doc "Text from an app. Route it as ACP from that client."
   def client_frame(client_id, text), do: GenServer.cast(__MODULE__, {:frame, client_id, text})
 
-  @doc "Text from a sidecar. Route it as ACP from that agent."
+  @doc "Text from an agent relay. Route it as ACP from that agent."
   def agent_frame(name, text) when is_binary(name) and is_binary(text),
     do: GenServer.cast(__MODULE__, {:agent_frame, name, text})
 

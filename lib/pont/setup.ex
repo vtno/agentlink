@@ -18,7 +18,7 @@ end
 
 defmodule Pont.Setup.Watch do
   @moduledoc """
-  Prints sidecar success and auth failure. Started with the plane.
+  Prints agent relay success and auth failure. Started with the plane.
   """
 
   use GenServer
@@ -33,20 +33,20 @@ defmodule Pont.Setup.Watch do
   @impl true
   def init(_opts), do: {:ok, %__MODULE__{}}
 
-  @doc "A sidecar registered. Print its link name and machine."
+  @doc "An agent relay registered. Print its link name and machine."
   def connected(name, label) when is_binary(name), do: notify({:connected, name, label})
 
-  @doc "A sidecar was refused. Print the reason the dial failed."
+  @doc "An agent relay was refused. Print the reason the dial failed."
   def rejected(reason) when is_binary(reason), do: notify({:rejected, reason})
 
   @impl true
   def handle_info({:connected, name, label}, %__MODULE__{} = state) do
-    IO.puts("Sidecar connected: #{name} (#{label}).")
+    IO.puts("Agent relay connected: #{name} (#{label}).")
     {:noreply, state}
   end
 
   def handle_info({:rejected, reason}, %__MODULE__{} = state) do
-    IO.puts(:stderr, "A sidecar was rejected. #{reason}")
+    IO.puts(:stderr, "An agent relay was rejected. #{reason}")
     {:noreply, state}
   end
 

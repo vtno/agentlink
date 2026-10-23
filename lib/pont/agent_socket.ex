@@ -1,6 +1,6 @@
 defmodule Pont.AgentSocket do
   @moduledoc """
-  One sidecar uplink. The first frame is `pont.uplink` and lands in the registry.
+  One agent relay uplink. The first frame is `pont.uplink` and lands in the registry.
   Later frames are ACP from that runtime.
   """
 

@@ -59,7 +59,7 @@ defmodule Pont.AccessTest do
     assert {:error, "uplink is not allowed"} = Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
   end
 
-  test "a sidecar must present the master token" do
+  test "an agent relay must present the master token" do
     Application.delete_env(:pont, :master_token)
     assert {:reject, "PONT_MASTER_TOKEN is not set."} = Pont.Access.sidecar(conn("/agent"))
 
