@@ -3,7 +3,7 @@ defmodule Pont.Sidecar do
   Supervised owner of one agent harness.
 
   Stdout is ACP JSONL. The harness is linked to this process: when the agent
-  exits, this process stops and `Pont.Supervisor` starts another one. Production
+  exits, this process stops and its supervisor starts another one. Production
   uses `Pont.OpenCode`. The module comes from `:pont, :harness`.
   """
 
