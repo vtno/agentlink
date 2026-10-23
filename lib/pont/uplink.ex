@@ -24,11 +24,16 @@ defmodule Pont.Uplink do
 
   @impl true
   def init(opts) do
-    link = Pont.Link.read()
-    send(self(), :connect)
-    Process.send_after(self(), :watch, 1_000)
+    case Pont.Link.read() do
+      {:ok, link} ->
+        send(self(), :connect)
+        Process.send_after(self(), :watch, 1_000)
+        {:ok, %__MODULE__{owner: Keyword.fetch!(opts, :owner), link: link}}
 
-    {:ok, %__MODULE__{owner: Keyword.fetch!(opts, :owner), link: link}}
+      {:error, message} ->
+        Logger.error(message)
+        {:stop, {:shutdown, message}}
+    end
   end
 
   @doc "One ACP object toward the plane. Queued if the socket is down."
@@ -51,53 +56,32 @@ defmodule Pont.Uplink do
   @impl true
   def handle_info(:connect, %__MODULE__{} = state) do
     close_conn(state)
-    link = Pont.Link.read()
-    {ws_scheme, http_scheme, host, port, path} = endpoint(link.plane_url)
 
-    case Mint.HTTP.connect(http_scheme, host, port, protocols: [:http1], mode: :passive, timeout: 3_000) do
-      {:ok, conn} ->
-        case upgrade(conn, ws_scheme, path) do
-          {:ok, conn, ref, websocket} ->
-            Logger.info("sidecar uplink connected #{link.plane_url}")
-            state = %{state | conn: conn, websocket: websocket, ref: ref, link: link}
-            state = transmit(uplink_hello(link), state)
+    case Pont.Link.read() do
+      {:ok, link} ->
+        connect(link, state)
 
-            cond do
-              is_nil(state.conn) ->
-                schedule(state)
-
-              true ->
-                case Mint.HTTP.set_mode(state.conn, :active) do
-                  {:ok, conn} -> {:noreply, flush(%{state | conn: conn})}
-                  {:error, conn, reason} ->
-                    Logger.warning("sidecar uplink active mode failed #{inspect(reason)}")
-                    Mint.HTTP.close(conn)
-                    schedule(%{state | conn: nil, websocket: nil, ref: nil})
-                end
-            end
-
-          {:error, conn, reason} ->
-            Logger.warning("sidecar uplink handshake failed #{inspect(reason)}")
-            Mint.HTTP.close(conn)
-            schedule(%{state | conn: nil, websocket: nil, ref: nil})
-        end
-
-      {:error, reason} ->
-        Logger.warning("sidecar uplink connect failed #{inspect(reason)}")
-        schedule(%{state | conn: nil, websocket: nil, ref: nil})
+      {:error, message} ->
+        Logger.error(message)
+        {:stop, {:shutdown, message}, state}
     end
   end
 
   def handle_info(:watch, %__MODULE__{} = state) do
-    link = Pont.Link.read()
+    case Pont.Link.read() do
+      {:ok, link} ->
+        if state.conn && link != state.link do
+          Logger.info("agent link changed, redialing as #{link.name}")
+          send(self(), :connect)
+        end
 
-    if state.conn && link != state.link do
-      Logger.info("agent link changed, redialing as #{link.name}")
-      send(self(), :connect)
+        Process.send_after(self(), :watch, 1_000)
+        {:noreply, state}
+
+      {:error, message} ->
+        Logger.error(message)
+        {:stop, {:shutdown, message}, state}
     end
-
-    Process.send_after(self(), :watch, 1_000)
-    {:noreply, state}
   end
 
   def handle_info(message, %__MODULE__{conn: conn} = state) when not is_nil(conn) do
@@ -207,6 +191,43 @@ defmodule Pont.Uplink do
         {:ok, conn, responses} -> await_upgrade(conn, ref, acc ++ responses)
         other -> other
       end
+    end
+  end
+
+  defp connect(link, %__MODULE__{} = state) do
+    {ws_scheme, http_scheme, host, port, path} = endpoint(link.plane_url)
+
+    case Mint.HTTP.connect(http_scheme, host, port, protocols: [:http1], mode: :passive, timeout: 3_000) do
+      {:ok, conn} ->
+        case upgrade(conn, ws_scheme, path) do
+          {:ok, conn, ref, websocket} ->
+            Logger.info("sidecar uplink connected #{link.plane_url}")
+            state = %{state | conn: conn, websocket: websocket, ref: ref, link: link}
+            state = transmit(uplink_hello(link), state)
+
+            cond do
+              is_nil(state.conn) ->
+                schedule(state)
+
+              true ->
+                case Mint.HTTP.set_mode(state.conn, :active) do
+                  {:ok, conn} -> {:noreply, flush(%{state | conn: conn})}
+                  {:error, conn, reason} ->
+                    Logger.warning("sidecar uplink active mode failed #{inspect(reason)}")
+                    Mint.HTTP.close(conn)
+                    schedule(%{state | conn: nil, websocket: nil, ref: nil})
+                end
+            end
+
+          {:error, conn, reason} ->
+            Logger.warning("sidecar uplink handshake failed #{inspect(reason)}")
+            Mint.HTTP.close(conn)
+            schedule(%{state | conn: nil, websocket: nil, ref: nil})
+        end
+
+      {:error, reason} ->
+        Logger.warning("sidecar uplink connect failed #{inspect(reason)}")
+        schedule(%{state | conn: nil, websocket: nil, ref: nil})
     end
   end
 

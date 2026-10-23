@@ -16,8 +16,13 @@ defmodule Pont.OpenCodeLiveTest do
       harness: Application.get_env(:pont, :harness),
       mode: Application.get_env(:pont, :mode),
       port: Application.get_env(:pont, :port),
-      workdir: Application.get_env(:pont, :workdir)
+      workdir: Application.get_env(:pont, :workdir),
+      link_path: Application.get_env(:pont, :link_path)
     }
+
+    link = Path.join(dir, "agent.link.json")
+    File.write!(link, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"}))
+    Application.put_env(:pont, :link_path, link)
 
     System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:#{@port}/agent")
     System.put_env("PONT_RUNTIME_NAME", "opencode")
@@ -143,7 +148,11 @@ defmodule Pont.OpenCodeLiveTest do
     Application.put_env(:pont, :mode, previous.mode)
     Application.put_env(:pont, :port, previous.port)
     Application.put_env(:pont, :workdir, previous.workdir)
+    restore_link(previous.link_path)
   end
+
+  defp restore_link(nil), do: Application.delete_env(:pont, :link_path)
+  defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
 
   defp put_or_delete(key, nil), do: System.delete_env(key)
   defp put_or_delete(key, value), do: System.put_env(key, value)

@@ -25,9 +25,15 @@ defmodule Pont.Sidecar do
     harness = Application.get_env(:pont, :harness, Pont.OpenCode)
     {:ok, agent} = harness.open(self(), cwd)
     Logger.info("sidecar supervising #{inspect(harness)} cwd=#{cwd} agent=#{inspect(agent)}")
-    {:ok, _} = Pont.Uplink.start_link(owner: self())
 
-    {:ok, %__MODULE__{agent: agent, harness: harness}}
+    case Pont.Uplink.start_link(owner: self()) do
+      {:ok, _} ->
+        {:ok, %__MODULE__{agent: agent, harness: harness}}
+
+      {:error, reason} ->
+        harness.close(agent)
+        {:stop, reason}
+    end
   end
 
   @doc "Write one ACP message to the agent's stdin. :down if this process is gone."
@@ -79,6 +85,12 @@ defmodule Pont.Sidecar do
   def handle_info({:from_plane, message}, state) when is_map(message) do
     write(state, message)
     {:noreply, state}
+  end
+
+  def handle_info({:EXIT, pid, {:shutdown, message}}, %__MODULE__{agent: agent} = state)
+      when pid != agent and is_binary(message) do
+    Logger.error(message)
+    {:stop, {:shutdown, message}, state}
   end
 
   def handle_info({:EXIT, pid, reason}, %__MODULE__{agent: agent} = state) when pid != agent do

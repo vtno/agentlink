@@ -34,7 +34,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 
 ## Link file
 
-`Pont.Link` reads `$HOME/.pont/agent.link.json`.
+`Pont.Link` reads `$HOME/.pont/agent.link.json`. The sidecar refuses to start until that file exists.
 
 ```json
 {

@@ -3,9 +3,15 @@ defmodule Pont.SidecarTest do
 
   setup do
     Application.put_env(:pont, :harness_listener, self())
+    previous = Application.get_env(:pont, :link_path)
+    path = Path.join(System.tmp_dir!(), "pont-sidecar-#{System.unique_integer([:positive])}.json")
+    File.write!(path, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"}))
+    Application.put_env(:pont, :link_path, path)
 
     on_exit(fn ->
       Application.delete_env(:pont, :harness_listener)
+      if previous, do: Application.put_env(:pont, :link_path, previous), else: Application.delete_env(:pont, :link_path)
+      File.rm(path)
       stop(Pont.Sidecar)
       stop(Pont.Uplink)
     end)
@@ -60,6 +66,27 @@ defmodule Pont.SidecarTest do
     ref = Process.monitor(sidecar)
     Process.exit(agent, :kill)
     assert_receive {:DOWN, ^ref, :process, ^sidecar, {:opencode_exit, :killed}}
+  end
+
+  test "a missing link file stops the sidecar and closes the agent" do
+    Process.flag(:trap_exit, true)
+    Application.put_env(:pont, :link_path, "/tmp/pont-sidecar-missing-#{System.unique_integer([:positive])}.json")
+
+    assert {:error, {:shutdown, message}} = Pont.Sidecar.start_link([])
+    assert message =~ "No link file"
+    assert_receive {:harness_opened, agent, _cwd}
+    refute Process.alive?(agent)
+    refute Process.whereis(Pont.Sidecar)
+  end
+
+  test "a link failure stops the sidecar instead of starting another uplink" do
+    _agent = start_sidecar!()
+    sidecar = Process.whereis(Pont.Sidecar)
+    uplink = Process.whereis(Pont.Uplink)
+    ref = Process.monitor(sidecar)
+    send(sidecar, {:EXIT, uplink, {:shutdown, "No link file at /tmp/gone.json"}})
+    assert_receive {:DOWN, ^ref, :process, ^sidecar, {:shutdown, "No link file" <> _}}
+    refute Process.whereis(Pont.Sidecar)
   end
 
   test "an uplink crash starts another uplink" do
