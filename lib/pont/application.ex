@@ -16,7 +16,7 @@ defmodule Pont.Application do
         case Application.fetch_env!(:pont, :mode) do
           :plane -> plane_children()
           :agent -> [Pont.Sidecar]
-          :all -> plane_children() ++ [Pont.Sidecar]
+          :all -> plane_children() ++ [Pont.Sidecar.Supervisor]
         end
 
       Supervisor.start_link(children,

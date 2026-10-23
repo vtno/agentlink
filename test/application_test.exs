@@ -65,6 +65,58 @@ defmodule Pont.ApplicationTest do
     assert_receive {:harness_opened, _agent, _cwd}
     assert Process.whereis(Pont.Plane)
     assert Process.whereis(Pont.Sidecar)
+    assert Process.whereis(Pont.Sidecar.Supervisor)
+  end
+
+  test "a sidecar crash loop leaves the plane up" do
+    if pid = Process.whereis(Pont.Supervisor) do
+      Process.exit(pid, :kill)
+      Process.sleep(50)
+    end
+
+    Application.put_env(:pont, :mode, :all)
+    Application.put_env(:pont, :port, 18_098)
+    write_link()
+    assert {:ok, _pid} = Pont.Application.start(:normal, [])
+    assert_receive {:harness_opened, _agent, _cwd}
+
+    supervisor = Process.whereis(Pont.Sidecar.Supervisor)
+    supervisor_ref = Process.monitor(supervisor)
+
+    Enum.each(1..5, fn _ ->
+      crash_sidecar()
+      assert is_pid(wait_sidecar())
+    end)
+
+    crash_sidecar()
+    assert_receive {:DOWN, ^supervisor_ref, :process, ^supervisor, _}, 1_000
+    Process.sleep(50)
+    assert Process.alive?(Process.whereis(Pont.Plane))
+    assert Process.alive?(Process.whereis(Pont.Registry))
+    assert Process.alive?(Process.whereis(Pont.Supervisor))
+    refute Process.whereis(Pont.Sidecar)
+    refute Process.whereis(Pont.Sidecar.Supervisor)
+  end
+
+  defp crash_sidecar do
+    pid = wait_sidecar()
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
+  end
+
+  defp wait_sidecar(left \\ 50) do
+    case Process.whereis(Pont.Sidecar) do
+      pid when is_pid(pid) ->
+        pid
+
+      nil when left > 0 ->
+        Process.sleep(20)
+        wait_sidecar(left - 1)
+
+      nil ->
+        flunk("sidecar did not start")
+    end
   end
 
   defp write_link do
