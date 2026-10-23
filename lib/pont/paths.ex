@@ -23,6 +23,6 @@ defmodule Pont.Paths do
   @doc "Workspace the agent relay starts the agent in."
   def workdir, do: Application.get_env(:pont, :workdir) || default_workdir()
 
-  @doc "OpenCode executable the agent relay spawns."
+  @doc "OpenCode executable. `Pont.OpenCode` opens it."
   def opencode_bin, do: Application.get_env(:pont, :opencode_bin) || default_opencode_bin()
 end

@@ -26,7 +26,7 @@ defmodule Pont.OpenCode do
     :ok
   end
 
-  @doc "The executable the agent relay will spawn, with a relative symlink resolved."
+  @doc "The OpenCode executable this agent opens, with a relative symlink resolved."
   def bin do
     configured = Pont.Paths.opencode_bin()
 

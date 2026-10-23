@@ -6,6 +6,7 @@ Mix. `mix test` skips `:integration`. The OpenCode test is `mix test --only inte
 
 Read the matching file when the task touches that area:
 
+- [Glossary](docs/glossary.md) when naming a connection, a process, or a module
 - [Structs](docs/structs.md) when a value has a fixed shape
 - [GenServers](docs/genservers.md) when adding a client call or a callback
 - [Names](docs/names.md) when adding a module or a pid field

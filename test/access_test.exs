@@ -61,11 +61,11 @@ defmodule Pont.AccessTest do
 
   test "an agent relay must present the master token" do
     Application.delete_env(:pont, :master_token)
-    assert {:reject, "PONT_MASTER_TOKEN is not set."} = Pont.Access.sidecar(conn("/agent"))
+    assert {:reject, "PONT_MASTER_TOKEN is not set."} = Pont.Access.agent_relay(conn("/agent"))
 
     Application.put_env(:pont, :master_token, "sekret")
-    assert {:reject, "The master token did not match."} = Pont.Access.sidecar(conn("/agent"))
-    assert {:ok, %Pont.Access.Subject{id: "admin", role: :admin}} = Pont.Access.sidecar(conn("/agent?token=sekret"))
+    assert {:reject, "The master token did not match."} = Pont.Access.agent_relay(conn("/agent"))
+    assert {:ok, %Pont.Access.Subject{id: "admin", role: :admin}} = Pont.Access.agent_relay(conn("/agent?token=sekret"))
   end
 
   test "an empty subject is not an admin" do

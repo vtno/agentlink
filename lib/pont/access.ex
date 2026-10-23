@@ -45,7 +45,7 @@ defmodule Pont.Access do
   def authenticate(conn), do: implementation().authenticate(conn)
 
   @doc "An agent relay dial. The request must present the master token, then the policy names the subject."
-  def sidecar(conn) do
+  def agent_relay(conn) do
     cond do
       not Pont.Auth.enabled?() ->
         {:reject, "PONT_MASTER_TOKEN is not set."}

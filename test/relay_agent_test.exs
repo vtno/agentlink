@@ -4,7 +4,7 @@ defmodule Pont.Relay.AgentTest do
   setup do
     Application.put_env(:pont, :agent_listener, self())
     previous = Application.get_env(:pont, :link_path)
-    path = Path.join(System.tmp_dir!(), "pont-sidecar-#{System.unique_integer([:positive])}.json")
+    path = Path.join(System.tmp_dir!(), "pont-relay-#{System.unique_integer([:positive])}.json")
     File.write!(path, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"}))
     Application.put_env(:pont, :link_path, path)
 
@@ -45,32 +45,32 @@ defmodule Pont.Relay.AgentTest do
 
   test "a closed agent stops the agent relay" do
     agent = start_relay!()
-    sidecar = Process.whereis(Pont.Relay.Agent)
-    ref = Process.monitor(sidecar)
+    relay = Process.whereis(Pont.Relay.Agent)
+    ref = Process.monitor(relay)
     Pont.FakeAgent.refuse(agent)
     Pont.Relay.Agent.send_message(%{"method" => "x"})
-    assert_receive {:DOWN, ^ref, :process, ^sidecar, :port_closed}
+    assert_receive {:DOWN, ^ref, :process, ^relay, :port_closed}
   end
 
   test "an exit status stops the agent relay" do
     agent = start_relay!()
-    sidecar = Process.whereis(Pont.Relay.Agent)
-    ref = Process.monitor(sidecar)
+    relay = Process.whereis(Pont.Relay.Agent)
+    ref = Process.monitor(relay)
     Pont.FakeAgent.exit_status(agent, 3)
-    assert_receive {:DOWN, ^ref, :process, ^sidecar, {:opencode_exit, 3}}
+    assert_receive {:DOWN, ^ref, :process, ^relay, {:opencode_exit, 3}}
   end
 
   test "the agent process dying stops the agent relay" do
     agent = start_relay!()
-    sidecar = Process.whereis(Pont.Relay.Agent)
-    ref = Process.monitor(sidecar)
+    relay = Process.whereis(Pont.Relay.Agent)
+    ref = Process.monitor(relay)
     Process.exit(agent, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^sidecar, {:opencode_exit, :killed}}
+    assert_receive {:DOWN, ^ref, :process, ^relay, {:opencode_exit, :killed}}
   end
 
   test "a missing link file stops the agent relay and closes the agent" do
     Process.flag(:trap_exit, true)
-    Application.put_env(:pont, :link_path, "/tmp/pont-sidecar-missing-#{System.unique_integer([:positive])}.json")
+    Application.put_env(:pont, :link_path, "/tmp/pont-relay-missing-#{System.unique_integer([:positive])}.json")
 
     assert {:error, {:shutdown, message}} = Pont.Relay.Agent.start_link([])
     assert message =~ "No link file"
@@ -81,11 +81,11 @@ defmodule Pont.Relay.AgentTest do
 
   test "a link failure stops the agent relay instead of starting another uplink" do
     _agent = start_relay!()
-    sidecar = Process.whereis(Pont.Relay.Agent)
+    relay = Process.whereis(Pont.Relay.Agent)
     uplink = Process.whereis(Pont.Uplink)
-    ref = Process.monitor(sidecar)
-    send(sidecar, {:EXIT, uplink, {:shutdown, "No link file at /tmp/gone.json"}})
-    assert_receive {:DOWN, ^ref, :process, ^sidecar, {:shutdown, "No link file" <> _}}
+    ref = Process.monitor(relay)
+    send(relay, {:EXIT, uplink, {:shutdown, "No link file at /tmp/gone.json"}})
+    assert_receive {:DOWN, ^ref, :process, ^relay, {:shutdown, "No link file" <> _}}
     refute Process.whereis(Pont.Relay.Agent)
   end
 

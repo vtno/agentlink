@@ -79,7 +79,7 @@ defmodule Pont.OpenCodeLiveTest do
                    %{
                      "type" => "text",
                      "text" =>
-                       "Write index.html in the current directory. One short landing page for this control plane: a WebSocket plane, an agent relay beside the program, and a registry of runtimes. No other files."
+                       "Write index.html in the current directory. One short landing page for this control plane: a WebSocket plane, an agent relay beside the agent, and a registry of runtimes. No other files."
                    }
                  ]
                },
