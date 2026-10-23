@@ -6,6 +6,7 @@ defmodule Pont.AccessTest do
 
     def authenticate(_conn), do: :reject
     def allowed?(_subject, _runtime), do: false
+    def claim(_subject, _name), do: :reject
     def prepare(_mode), do: {:ok, ""}
   end
 
@@ -28,6 +29,7 @@ defmodule Pont.AccessTest do
     Application.delete_env(:pont, :master_token)
     assert {:ok, %Pont.Access.Subject{id: "admin", role: :admin}} = Pont.Access.authenticate(conn("/acp"))
     assert Pont.Access.allowed?(%Pont.Access.Subject{}, "opencode")
+    assert :ok = Pont.Access.claim(%Pont.Access.Subject{}, "opencode")
   end
 
   test "the master token is accepted and a different token is rejected" do
@@ -42,6 +44,7 @@ defmodule Pont.AccessTest do
     Application.put_env(:pont, :access, Pont.AccessTest.Deny)
     assert :reject = Pont.Access.authenticate(conn("/acp"))
     refute Pont.Access.allowed?(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
+    assert {:error, "uplink is not allowed"} = Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
   end
 
   test "a missing or incomplete module fails at the call" do

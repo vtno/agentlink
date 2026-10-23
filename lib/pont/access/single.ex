@@ -1,8 +1,8 @@
 defmodule Pont.Access.Single do
   @moduledoc """
   One operator. `PONT_MASTER_TOKEN` is the token. When it is unset, a plane
-  mints one for this process and prints it. That token is an admin and may
-  use every runtime.
+  mints one for this process and prints it. That admin owns every uplink and may
+  use every uplink.
   """
 
   @behaviour Pont.Access
@@ -17,7 +17,10 @@ defmodule Pont.Access.Single do
   end
 
   @impl true
-  def allowed?(%Pont.Access.Subject{}, runtime) when is_binary(runtime), do: true
+  def allowed?(%Pont.Access.Subject{}, name) when is_binary(name), do: true
+
+  @impl true
+  def claim(%Pont.Access.Subject{}, name) when is_binary(name), do: :ok
 
   @impl true
   def prepare(mode) do

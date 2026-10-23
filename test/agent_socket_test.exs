@@ -16,7 +16,7 @@ defmodule Pont.AgentSocketTest do
 
     bad = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "pont.uplink", "params" => %{"name" => "Bad Name"}})
 
-    assert {:stop, "runtime name must be a short slug", ^state} =
+    assert {:stop, "link name must be a short slug", ^state} =
              Pont.AgentSocket.handle_in({bad, [opcode: :text]}, state)
 
     hello = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "pont.uplink", "params" => %{"name" => "lab", "label" => "Bench"}})

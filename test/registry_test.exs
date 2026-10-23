@@ -10,14 +10,14 @@ defmodule Pont.RegistryTest do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     assert :ok = Pont.Registry.register(pid, "lab", "Bench")
     assert Pont.Registry.pid("lab") == pid
-    assert [%{"name" => "lab", "label" => "Bench", "connected_at" => at}] = Pont.Registry.list()
+    assert [%{"name" => "lab", "label" => "Bench", "runtime" => "Bench", "harness" => "opencode", "connected_at" => at}] = Pont.Registry.list()
     assert is_integer(at)
   end
 
   test "rejects a bad name and a missing name" do
     pid = spawn(fn -> Process.sleep(:infinity) end)
-    assert {:error, "runtime name must be a short slug"} = Pont.Registry.register(pid, "Has Space", "x")
-    assert {:error, "runtime name must be a short slug"} = Pont.Registry.register(pid, 1, "x")
+    assert {:error, "link name must be a short slug"} = Pont.Registry.register(pid, "Has Space", "x")
+    assert {:error, "link name must be a short slug"} = Pont.Registry.register(pid, 1, "x")
     assert Pont.Registry.list() == []
     assert Pont.Registry.pid("nope") == nil
   end

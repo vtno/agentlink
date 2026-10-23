@@ -5,7 +5,10 @@ defmodule Pont.Link do
   override it for a machine that injects them from the environment.
   """
 
-  defstruct name: "opencode", label: "this machine", plane_url: "ws://127.0.0.1:8090/agent"
+  defstruct name: "opencode",
+            label: "this machine",
+            harness: "opencode",
+            plane_url: "ws://127.0.0.1:8090/agent"
 
   @doc "Where the link file lives."
   def path, do: Pont.Paths.link()
@@ -21,6 +24,7 @@ defmodule Pont.Link do
     %__MODULE__{
       name: name,
       label: label,
+      harness: present(raw["harness"]) || "opencode",
       plane_url: System.get_env("PONT_PLANE_URL") || raw["plane_url"] || "ws://127.0.0.1:8090/agent"
     }
   end

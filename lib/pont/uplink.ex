@@ -15,6 +15,7 @@ defmodule Pont.Uplink do
     :ref,
     :name,
     :label,
+    :harness,
     :url,
     outbox: []
   ]
@@ -35,6 +36,7 @@ defmodule Pont.Uplink do
        owner: Keyword.fetch!(opts, :owner),
        name: link.name,
        label: link.label,
+       harness: link.harness,
        url: link.plane_url
      }}
   end
@@ -67,7 +69,7 @@ defmodule Pont.Uplink do
         case upgrade(conn, ws_scheme, path) do
           {:ok, conn, ref, websocket} ->
             Logger.info("sidecar uplink connected #{link.plane_url}")
-            state = %{state | conn: conn, websocket: websocket, ref: ref, name: link.name, label: link.label, url: link.plane_url}
+            state = %{state | conn: conn, websocket: websocket, ref: ref, name: link.name, label: link.label, harness: link.harness, url: link.plane_url}
             state = transmit(uplink_hello(link), state)
 
             cond do
@@ -99,7 +101,7 @@ defmodule Pont.Uplink do
   def handle_info(:watch, %__MODULE__{} = state) do
     link = Pont.Link.read()
 
-    if state.conn && (link.name != state.name or link.label != state.label or link.plane_url != state.url) do
+    if state.conn && (link.name != state.name or link.label != state.label or link.harness != state.harness or link.plane_url != state.url) do
       Logger.info("agent link changed, redialing as #{link.name}")
       send(self(), :connect)
     end
@@ -268,7 +270,7 @@ defmodule Pont.Uplink do
     %{
       "jsonrpc" => "2.0",
       "method" => "pont.uplink",
-      "params" => %{"name" => link.name, "label" => link.label}
+      "params" => %{"name" => link.name, "label" => link.label, "harness" => link.harness}
     }
   end
 

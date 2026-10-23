@@ -7,6 +7,7 @@ defmodule Pont.PlaneTest do
     def authenticate(_conn), do: {:ok, %Pont.Access.Subject{id: "ada", role: :user}}
     def allowed?(_subject, "hidden"), do: false
     def allowed?(%Pont.Access.Subject{}, runtime) when is_binary(runtime), do: true
+    def claim(_subject, _name), do: :ok
     def prepare(_mode), do: {:ok, ""}
   end
 
