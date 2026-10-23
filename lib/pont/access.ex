@@ -44,8 +44,8 @@ defmodule Pont.Access do
   @doc "Resolve the caller through the configured implementation."
   def authenticate(conn), do: implementation().authenticate(conn)
 
-  @doc "Accept the agent socket. The request must present the master token, then the policy names the subject."
-  def agent_socket(conn) do
+  @doc "Name the caller of the agent socket. The request must present the master token."
+  def agent_caller(conn) do
     cond do
       not Pont.Auth.enabled?() ->
         {:reject, "PONT_MASTER_TOKEN is not set."}

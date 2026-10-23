@@ -1,6 +1,6 @@
 defmodule Pont.OpenCode do
   @moduledoc """
-  Production agent. Runs `opencode acp` and leaves stderr off the ACP stream.
+  Production behaviour. Runs `opencode acp` and leaves stderr off the ACP stream.
   """
 
   @behaviour Pont.Agent
@@ -26,7 +26,7 @@ defmodule Pont.OpenCode do
     :ok
   end
 
-  @doc "The OpenCode executable this agent opens, with a relative symlink resolved."
+  @doc "The executable this behaviour runs, with a relative symlink resolved."
   def bin do
     configured = Pont.Paths.opencode_bin()
 

@@ -7,7 +7,7 @@ defmodule Pont.Paths do
   @doc "Directory that holds the link file and the agent workspace."
   def root, do: Path.join(System.user_home!(), ".pont")
 
-  @doc "Link file the agent relay reads before the uplink dials."
+  @doc "Link file the uplink reads when it dials."
   def link do
     Application.get_env(:pont, :link_path) || Path.join(root(), "agent.link.json")
   end
@@ -23,6 +23,6 @@ defmodule Pont.Paths do
   @doc "Workspace the agent relay opens the agent in."
   def workdir, do: Application.get_env(:pont, :workdir) || default_workdir()
 
-  @doc "OpenCode executable. `Pont.OpenCode` opens it."
+  @doc "OpenCode executable. `Pont.OpenCode` runs it."
   def opencode_bin, do: Application.get_env(:pont, :opencode_bin) || default_opencode_bin()
 end

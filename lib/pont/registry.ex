@@ -1,6 +1,6 @@
 defmodule Pont.Registry.Uplink do
   @moduledoc """
-  One dialed uplink. `name` comes from the link. `label` is the machine.
+  The row recorded after an uplink says hello. `name` comes from the link. `label` is the machine.
   `program` is the agent product name, not the `Pont.Agent` module.
   """
 

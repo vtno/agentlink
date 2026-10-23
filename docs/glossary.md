@@ -2,11 +2,11 @@
 
 Plane. Accepts sockets and applies the access policy.
 
-Socket. One WebSocket on the plane. `Pont.ClientSocket` is the app. `Pont.AgentSocket` is the agent connection. The uplink dials `Pont.AgentSocket`.
+Socket. One WebSocket on the plane. `Pont.ClientSocket` is the app connection. `Pont.AgentSocket` is the agent connection. The uplink dials `Pont.AgentSocket`.
 
 Relay. Copies JSON-RPC between a local stdio and a plane socket. `Pont.Relay.Agent` opens an agent and starts an uplink. `Pont.Relay.Client` is not built yet.
 
-Link. The file the agent relay reads before the uplink dials. Name, label, program, and plane URL. Not the live connection.
+Link. The file. Name, label, program, and plane URL. Not the live connection. The uplink reads it when it dials. A missing file stops the relay.
 
 Uplink. `Pont.Uplink` is the process that dials. `Pont.Registry.Uplink` is the row recorded after that dial says hello.
 
