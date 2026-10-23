@@ -13,6 +13,12 @@ defmodule Pont.AccessTest do
   defmodule Incomplete do
   end
 
+  defmodule Trio do
+    def authenticate(_conn), do: {:ok, %Pont.Access.Subject{id: "ada", role: :user}}
+    def allowed?(_subject, _name), do: true
+    def prepare(_mode), do: {:ok, ""}
+  end
+
   setup do
     token = Application.get_env(:pont, :master_token)
     access = Application.get_env(:pont, :access)
@@ -45,6 +51,11 @@ defmodule Pont.AccessTest do
     assert :reject = Pont.Access.authenticate(conn("/acp"))
     refute Pont.Access.allowed?(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
     assert {:error, "uplink is not allowed"} = Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
+  end
+
+  test "a policy without claim still accepts an uplink" do
+    Application.put_env(:pont, :access, Pont.AccessTest.Trio)
+    assert :ok = Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
   end
 
   test "a missing or incomplete module fails at the call" do

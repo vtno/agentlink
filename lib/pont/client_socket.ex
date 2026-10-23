@@ -14,10 +14,6 @@ defmodule Pont.ClientSocket do
     {:ok, %__MODULE__{id: id}}
   end
 
-  def init(_other) do
-    init(%Pont.Access.Subject{})
-  end
-
   @doc "One text frame from the client. Hand it to the plane as a client frame."
   @impl true
   def handle_in({text, [opcode: :text]}, %__MODULE__{} = state) when is_binary(text) do

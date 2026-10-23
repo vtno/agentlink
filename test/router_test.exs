@@ -18,8 +18,17 @@ defmodule Pont.RouterTest do
   end
 
   test "the app and agent paths upgrade to a websocket" do
-    assert {:ok, _conn, _ref, _ws} = upgrade("/acp")
-    assert {:ok, conn, ref, websocket} = upgrade("/agent")
+    assert {:ok, conn, _ref, _ws} = upgrade("/acp")
+    Mint.HTTP.close(conn)
+
+    previous = Application.get_env(:pont, :master_token)
+    Application.put_env(:pont, :master_token, "sekret")
+
+    on_exit(fn ->
+      if previous, do: Application.put_env(:pont, :master_token, previous), else: Application.delete_env(:pont, :master_token)
+    end)
+
+    assert {:ok, conn, ref, websocket} = upgrade("/agent", [{"authorization", "Bearer sekret"}])
     hello = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "pont.uplink", "params" => %{"name" => "lab", "label" => "Bench"}})
     {:ok, _websocket, data} = Mint.WebSocket.encode(websocket, {:text, hello})
     {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)

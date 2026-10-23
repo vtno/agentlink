@@ -42,6 +42,8 @@ defmodule Pont.SetupTest do
     assert text =~ "Waiting for the sidecar to connect."
 
     assert {:ok, local} = Pont.Access.Single.prepare(:all)
+    assert local =~ "sekret"
+    assert local =~ Pont.Access.Single.command("sekret", "wss://plane.example/agent")
     assert local =~ "sidecar on this machine is starting"
   end
 

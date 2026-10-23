@@ -10,7 +10,7 @@ defmodule Pont.RegistryTest do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     assert :ok = Pont.Registry.register(pid, "lab", "Bench")
     assert Pont.Registry.pid("lab") == pid
-    assert [%{"name" => "lab", "label" => "Bench", "runtime" => "Bench", "harness" => "opencode", "connected_at" => at}] = Pont.Registry.list()
+    assert [%{"name" => "lab", "label" => "Bench", "program" => "opencode", "connected_at" => at}] = Pont.Registry.list()
     assert is_integer(at)
   end
 

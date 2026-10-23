@@ -172,10 +172,7 @@ defmodule Pont.Plane do
   defp on_runtime(state, client_id, %{"method" => "runtime/list", "id" => id}) do
     subject = subject_of(state, client_id)
 
-    runtimes =
-      Enum.filter(Pont.Registry.list(), fn row ->
-        Pont.Access.allowed?(subject, row["name"])
-      end)
+    runtimes = Pont.Registry.allowed(subject)
 
     reply(state, client_id, id, {:ok, %{"runtimes" => runtimes}})
   end
@@ -233,7 +230,7 @@ defmodule Pont.Plane do
         end
 
       _ ->
-        case Enum.filter(Pont.Registry.list(), &Pont.Access.allowed?(subject, &1["name"])) do
+        case Pont.Registry.allowed(subject) do
           [%{"name" => name}] ->
             clients = Map.update!(state.clients, client_id, &%{&1 | runtime: name})
             {:ok, %{state | clients: clients}, name}
@@ -252,10 +249,8 @@ defmodule Pont.Plane do
   end
 
   defp subject_of(state, client_id) do
-    case state.clients[client_id] do
-      %{subject: %Pont.Access.Subject{} = subject} -> subject
-      _ -> %Pont.Access.Subject{}
-    end
+    %Pont.Client{subject: subject} = state.clients[client_id]
+    subject
   end
 
   defp on_initialize(state, slot, client_id, message) do

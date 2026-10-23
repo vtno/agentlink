@@ -31,7 +31,6 @@ defmodule Pont.Access do
 
       not function_exported?(module, :authenticate, 1) or
           not function_exported?(module, :allowed?, 2) or
-          not function_exported?(module, :claim, 2) or
           not function_exported?(module, :prepare, 1) ->
         raise ArgumentError, "access module #{inspect(module)} does not implement Pont.Access"
 
@@ -48,11 +47,17 @@ defmodule Pont.Access do
     implementation().allowed?(subject, name)
   end
 
-  @doc "Ask the configured policy to accept this uplink. `:reject` becomes an error."
-  def claim(subject, name) when is_binary(name) do
-    case implementation().claim(subject, name) do
-      :ok -> :ok
-      :reject -> {:error, "uplink is not allowed"}
+  @doc "Ask the configured policy to accept this uplink. A policy without claim/2 accepts it."
+  def claim(%Pont.Access.Subject{} = subject, name) when is_binary(name) do
+    module = implementation()
+
+    if function_exported?(module, :claim, 2) do
+      case module.claim(subject, name) do
+        :ok -> :ok
+        :reject -> {:error, "uplink is not allowed"}
+      end
+    else
+      :ok
     end
   end
 

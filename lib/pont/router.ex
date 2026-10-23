@@ -11,10 +11,7 @@ defmodule Pont.Router do
   get "/status" do
     case Pont.Access.authenticate(conn) do
       {:ok, subject} ->
-        runtimes =
-          Enum.filter(Pont.Registry.list(), fn row ->
-            Pont.Access.allowed?(subject, row["name"])
-          end)
+        runtimes = Pont.Registry.allowed(subject)
 
         body =
           Jason.encode!(%{
@@ -44,17 +41,28 @@ defmodule Pont.Router do
   end
 
   get "/agent" do
-    if Pont.Auth.allowed?(conn) do
-      conn
-      |> WebSockAdapter.upgrade(Pont.AgentSocket, [], timeout: :infinity)
-      |> halt()
-    else
-      Pont.Setup.rejected()
-      send_resp(conn, 401, "unauthorized")
+    case agent_subject(conn) do
+      {:ok, subject} ->
+        conn
+        |> WebSockAdapter.upgrade(Pont.AgentSocket, subject, timeout: :infinity)
+        |> halt()
+
+      :reject ->
+        Pont.Setup.rejected()
+        send_resp(conn, 401, "unauthorized")
     end
   end
 
   match _ do
     send_resp(conn, 404, "not found")
+  end
+
+  defp agent_subject(conn) do
+    with true <- Pont.Auth.enabled?(),
+         {:ok, subject} <- Pont.Access.authenticate(conn) do
+      {:ok, subject}
+    else
+      _ -> :reject
+    end
   end
 end

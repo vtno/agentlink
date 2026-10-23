@@ -76,7 +76,15 @@ defmodule Pont.Access.Single do
         """
 
       :all ->
-        "#{origin}\nThe sidecar on this machine is starting.\n"
+        """
+        #{origin}
+        #{token}
+
+        The sidecar on this machine is starting.
+        Another machine can dial with:
+
+        #{command(token, url)}
+        """
 
       :agent ->
         "#{origin}\nThe sidecar will dial #{url}.\n"

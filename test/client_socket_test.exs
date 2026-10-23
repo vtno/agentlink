@@ -8,7 +8,7 @@ defmodule Pont.ClientSocketTest do
   end
 
   test "a client socket registers, forwards text, and pushes a reply" do
-    {:ok, state} = Pont.ClientSocket.init([])
+    {:ok, state} = Pont.ClientSocket.init(%Pont.Access.Subject{})
     assert is_binary(state.id)
 
     {:ok, state} = Pont.ClientSocket.handle_in({~s({"jsonrpc":"2.0","method":"runtime/list"}), [opcode: :text]}, state)
