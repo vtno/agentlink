@@ -1,6 +1,6 @@
 defmodule Pont.Client do
   @moduledoc false
-  defstruct [:pid, runtime: nil, session_id: nil]
+  defstruct [:pid, runtime: nil, session_id: nil, subject: %Pont.Access.Subject{}]
 end
 
 defmodule Pont.AgentSlot do
@@ -40,16 +40,19 @@ defmodule Pont.Plane do
   def init(_opts), do: {:ok, %__MODULE__{}}
 
   @doc "A client socket connected. Remember it and hand back its id."
-  def register(pid) when is_pid(pid), do: GenServer.call(__MODULE__, {:register, pid})
+  def register(pid, subject \\ %Pont.Access.Subject{})
+
+  def register(pid, %Pont.Access.Subject{} = subject) when is_pid(pid),
+    do: GenServer.call(__MODULE__, {:register, pid, subject})
 
   @impl true
-  def handle_call({:register, pid}, _from, %__MODULE__{} = state) do
+  def handle_call({:register, pid, subject}, _from, %__MODULE__{} = state) do
     id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     ref = Process.monitor(pid)
 
     state = %{
       state
-      | clients: Map.put(state.clients, id, %Pont.Client{pid: pid}),
+      | clients: Map.put(state.clients, id, %Pont.Client{pid: pid, subject: subject}),
         monitors: Map.put(state.monitors, ref, id)
     }
 
@@ -167,11 +170,19 @@ defmodule Pont.Plane do
   end
 
   defp on_runtime(state, client_id, %{"method" => "runtime/list", "id" => id}) do
-    reply(state, client_id, id, {:ok, %{"runtimes" => Pont.Registry.list()}})
+    subject = subject_of(state, client_id)
+
+    runtimes =
+      Enum.filter(Pont.Registry.list(), fn row ->
+        Pont.Access.allowed?(subject, row["name"])
+      end)
+
+    reply(state, client_id, id, {:ok, %{"runtimes" => runtimes}})
   end
 
   defp on_runtime(state, client_id, %{"method" => "runtime/select", "id" => id} = message) do
     name = get_in(message, ["params", "name"])
+    subject = subject_of(state, client_id)
 
     cond do
       not is_binary(name) ->
@@ -179,6 +190,9 @@ defmodule Pont.Plane do
 
       is_nil(Pont.Registry.pid(name)) ->
         reply(state, client_id, id, {:error, "runtime is not connected"})
+
+      not Pont.Access.allowed?(subject, name) ->
+        reply(state, client_id, id, {:error, "runtime is not allowed"})
 
       true ->
         clients = Map.update!(state.clients, client_id, &%{&1 | runtime: name})
@@ -208,22 +222,39 @@ defmodule Pont.Plane do
   end
 
   defp ensure_runtime(state, client_id) do
+    subject = subject_of(state, client_id)
+
     case state.clients[client_id] do
       %{runtime: name} when is_binary(name) ->
-        {:ok, state, name}
+        if Pont.Access.allowed?(subject, name) do
+          {:ok, state, name}
+        else
+          {:error, state, "runtime is not allowed"}
+        end
 
       _ ->
-        case Pont.Registry.list() do
+        case Enum.filter(Pont.Registry.list(), &Pont.Access.allowed?(subject, &1["name"])) do
           [%{"name" => name}] ->
             clients = Map.update!(state.clients, client_id, &%{&1 | runtime: name})
             {:ok, %{state | clients: clients}, name}
 
           [] ->
-            {:error, state, "no runtime connected"}
+            if Pont.Registry.list() == [] do
+              {:error, state, "no runtime connected"}
+            else
+              {:error, state, "runtime is not allowed"}
+            end
 
           _ ->
             {:error, state, "select a runtime"}
         end
+    end
+  end
+
+  defp subject_of(state, client_id) do
+    case state.clients[client_id] do
+      %{subject: %Pont.Access.Subject{} = subject} -> subject
+      _ -> %Pont.Access.Subject{}
     end
   end
 

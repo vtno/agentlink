@@ -48,7 +48,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 
 ## Environment
 
-`PONT_RUNTIME_NAME` overrides `name` in the link file. `PONT_PLANE_URL` overrides `plane_url`. Set `PONT_MASTER_TOKEN` before a proxy exposes the plane. `/health` stays open. `/acp`, `/agent`, and `/status` then require that token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The sidecar sends the header.
+`PONT_RUNTIME_NAME` overrides `name` in the link file. `PONT_PLANE_URL` overrides `plane_url`. `PONT_MASTER_TOKEN` is the single-player token. If it is unset, the plane mints one for this process and prints it. `/acp`, `/agent`, and `/status` then require that token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The sidecar sends the header. `/health` stays open.
 
 | Variable | Default |
 |---|---|
@@ -58,7 +58,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 | `PONT_RUNTIME_NAME` | `opencode`, or `name` from the link file |
 | `PONT_WORKDIR` | `$HOME/.pont/workspace` |
 | `OPENCODE_BIN` | `opencode` on `PATH`, otherwise `$HOME/.local/bin/opencode` |
-| `PONT_MASTER_TOKEN` | unset |
+| `PONT_MASTER_TOKEN` | minted for this process when unset |
 
 `OPENCODE_BIN` is the `opencode` executable. The sidecar runs it as `opencode acp`.
 

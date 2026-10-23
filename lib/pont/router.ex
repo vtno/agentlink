@@ -9,28 +9,37 @@ defmodule Pont.Router do
   end
 
   get "/status" do
-    if Pont.Auth.allowed?(conn) do
-      body =
-        Jason.encode!(%{
-          "plane" => "127.0.0.1:#{Application.fetch_env!(:pont, :port)}",
-          "runtimes" => Pont.Registry.list()
-        })
+    case Pont.Access.authenticate(conn) do
+      {:ok, subject} ->
+        runtimes =
+          Enum.filter(Pont.Registry.list(), fn row ->
+            Pont.Access.allowed?(subject, row["name"])
+          end)
 
-      conn
-      |> put_resp_content_type("application/json")
-      |> send_resp(200, body)
-    else
-      send_resp(conn, 401, "unauthorized")
+        body =
+          Jason.encode!(%{
+            "plane" => "127.0.0.1:#{Application.fetch_env!(:pont, :port)}",
+            "runtimes" => runtimes
+          })
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, body)
+
+      :reject ->
+        send_resp(conn, 401, "unauthorized")
     end
   end
 
   get "/acp" do
-    if Pont.Auth.allowed?(conn) do
-      conn
-      |> WebSockAdapter.upgrade(Pont.ClientSocket, [], timeout: :infinity)
-      |> halt()
-    else
-      send_resp(conn, 401, "unauthorized")
+    case Pont.Access.authenticate(conn) do
+      {:ok, subject} ->
+        conn
+        |> WebSockAdapter.upgrade(Pont.ClientSocket, subject, timeout: :infinity)
+        |> halt()
+
+      :reject ->
+        send_resp(conn, 401, "unauthorized")
     end
   end
 
@@ -40,6 +49,7 @@ defmodule Pont.Router do
       |> WebSockAdapter.upgrade(Pont.AgentSocket, [], timeout: :infinity)
       |> halt()
     else
+      Pont.Setup.rejected()
       send_resp(conn, 401, "unauthorized")
     end
   end

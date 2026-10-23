@@ -1,6 +1,15 @@
 defmodule Pont.PlaneTest do
   use ExUnit.Case, async: false
 
+  defmodule Gate do
+    @behaviour Pont.Access
+
+    def authenticate(_conn), do: {:ok, %Pont.Access.Subject{id: "ada", role: :user}}
+    def allowed?(_subject, "hidden"), do: false
+    def allowed?(%Pont.Access.Subject{}, runtime) when is_binary(runtime), do: true
+    def prepare(_mode), do: {:ok, ""}
+  end
+
   setup do
     start_supervised!(Pont.Registry)
     start_supervised!(Pont.Plane)
@@ -361,6 +370,24 @@ defmodule Pont.PlaneTest do
       "params" => %{"sessionId" => "ses_1"}
     }))
     assert {:agent, %{"id" => "perm", "error" => %{"message" => "no app is attached to this session"}}} = from_agent!()
+  end
+
+  test "a subject only sees the runtimes it is allowed to use" do
+    previous = Application.get_env(:pont, :access)
+    Application.put_env(:pont, :access, Pont.PlaneTest.Gate)
+
+    on_exit(fn ->
+      if previous, do: Application.put_env(:pont, :access, previous), else: Application.delete_env(:pont, :access)
+    end)
+
+    agent!("hidden")
+    agent!("lab")
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "ada", role: :user})
+    call(id, "runtime/list", %{}, 1)
+    assert %{"result" => %{"runtimes" => [%{"name" => "lab"}]}} = reply!()
+
+    call(id, "runtime/select", %{"name" => "hidden"}, 2)
+    assert %{"error" => %{"message" => "runtime is not allowed"}} = reply!()
   end
 
   defp agent!(name) do

@@ -37,6 +37,7 @@ defmodule Pont.Registry do
       ref = Process.monitor(pid)
       :ets.insert(@table, {name, label, pid, System.system_time(:second)})
       Logger.info("runtime registered name=#{name} label=#{label}")
+      Pont.Setup.connected(name, label)
       Pont.Plane.runtime_reset(name)
       {:reply, :ok, %{state | pids: Map.put(state.pids, pid, {ref, name})}}
     else

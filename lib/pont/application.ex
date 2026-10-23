@@ -6,11 +6,10 @@ defmodule Pont.Application do
   """
 
   use Application
-  require Logger
 
   @impl true
   def start(_type, _args) do
-    warn_if_open()
+    Pont.Setup.prepare()
 
     children =
       case Application.fetch_env!(:pont, :mode) do
@@ -27,20 +26,13 @@ defmodule Pont.Application do
     )
   end
 
-  defp warn_if_open do
-    plane? = Application.fetch_env!(:pont, :mode) in [:plane, :all]
-
-    if plane? and not Pont.Auth.enabled?() and Mix.env() != :test do
-      Logger.warning("PONT_MASTER_TOKEN is unset. /acp, /agent, and /status accept any caller")
-    end
-  end
-
   defp plane_children do
     port = Application.fetch_env!(:pont, :port)
 
     [
       Pont.Registry,
       Pont.Plane,
+      Pont.Setup.Watch,
       {Bandit, plug: Pont.Router, scheme: :http, port: port, ip: {127, 0, 0, 1}}
     ]
   end
