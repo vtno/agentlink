@@ -1,0 +1,49 @@
+defmodule Pont.Auth do
+  @moduledoc """
+  One shared bearer token for the plane. Callers send `Authorization: Bearer`,
+  or `?token=` when the client cannot set a header. Unset means the sockets stay open.
+  """
+
+  @doc "True when PONT_TOKEN is set to a non-empty value."
+  def enabled? do
+    case Application.get_env(:pont, :token) do
+      token when is_binary(token) and token != "" -> true
+      _ -> false
+    end
+  end
+
+  @doc "True when auth is off, or the request presents the configured token."
+  def allowed?(conn) do
+    case Application.get_env(:pont, :token) do
+      expected when is_binary(expected) and expected != "" -> same_token?(presented(conn), expected)
+      _ -> true
+    end
+  end
+
+  @doc "Header the sidecar sends. Empty when auth is off."
+  def headers do
+    case Application.get_env(:pont, :token) do
+      token when is_binary(token) and token != "" -> [{"authorization", "Bearer " <> token}]
+      _ -> []
+    end
+  end
+
+  defp presented(conn) do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    case conn.query_params["token"] do
+      token when is_binary(token) and token != "" -> token
+      _ -> bearer(Plug.Conn.get_req_header(conn, "authorization"))
+    end
+  end
+
+  defp bearer(["Bearer " <> token | _]) when token != "", do: token
+  defp bearer(["bearer " <> token | _]) when token != "", do: token
+  defp bearer(_), do: nil
+
+  defp same_token?(presented, expected) when is_binary(presented) do
+    byte_size(presented) == byte_size(expected) and Plug.Crypto.secure_compare(presented, expected)
+  end
+
+  defp same_token?(_, _), do: false
+end

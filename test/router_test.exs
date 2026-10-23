@@ -29,9 +29,30 @@ defmodule Pont.RouterTest do
     Mint.HTTP.close(conn)
   end
 
-  defp request(method, path) do
+  test "a token guards status and both sockets, and health stays open" do
+    previous = Application.get_env(:pont, :token)
+    Application.put_env(:pont, :token, "sekret")
+    on_exit(fn ->
+      if previous, do: Application.put_env(:pont, :token, previous), else: Application.delete_env(:pont, :token)
+    end)
+
+    assert request("GET", "/health") == {200, "ok"}
+    assert request("GET", "/status") == {401, "unauthorized"}
+    assert request("GET", "/acp") == {401, "unauthorized"}
+    assert request("GET", "/agent") == {401, "unauthorized"}
+
+    {200, body} = request("GET", "/status", [{"authorization", "Bearer sekret"}])
+    assert Jason.decode!(body)["runtimes"] == []
+
+    assert {:ok, conn, _ref, _ws} = upgrade("/acp?token=sekret")
+    Mint.HTTP.close(conn)
+    assert {:ok, conn, _ref, _ws} = upgrade("/agent", [{"authorization", "Bearer sekret"}])
+    Mint.HTTP.close(conn)
+  end
+
+  defp request(method, path, headers \\ []) do
     {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", 18_091, mode: :passive)
-    {:ok, conn, ref} = Mint.HTTP.request(conn, method, path, [], nil)
+    {:ok, conn, ref} = Mint.HTTP.request(conn, method, path, headers, nil)
     assert {:ok, _conn, responses} = Mint.HTTP.recv(conn, 0, 1_000)
     status = Enum.find_value(responses, fn {:status, ^ref, code} -> code; _ -> nil end)
     body = Enum.find_value(responses, "", fn {:data, ^ref, chunk} -> chunk; _ -> nil end)
@@ -39,10 +60,10 @@ defmodule Pont.RouterTest do
     {status, body}
   end
 
-  defp upgrade(path) do
+  defp upgrade(path, headers \\ []) do
     {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", 18_091, protocols: [:http1], mode: :passive)
 
-    with {:ok, conn, ref} <- Mint.WebSocket.upgrade(:ws, conn, path, []),
+    with {:ok, conn, ref} <- Mint.WebSocket.upgrade(:ws, conn, path, headers),
          {:ok, conn, status, headers} <- await(conn, ref, []),
          {:ok, conn, websocket} <- Mint.WebSocket.new(conn, ref, status, headers) do
       {:ok, conn, ref, websocket}
