@@ -33,6 +33,15 @@ defmodule Pont.UplinkTest do
     end
   end
 
+  defmodule AuthPlug do
+    def init(owner), do: owner
+
+    def call(conn, owner) do
+      send(owner, {:auth, Plug.Conn.get_req_header(conn, "authorization")})
+      Plug.Conn.send_resp(conn, 401, "unauthorized")
+    end
+  end
+
   defmodule HttpPlain do
     def init(opts), do: opts
     def call(conn, _opts), do: Plug.Conn.send_resp(conn, 200, "nope")
@@ -47,6 +56,17 @@ defmodule Pont.UplinkTest do
     end)
 
     :ok
+  end
+
+  test "the sidecar sends the bearer token when it dials" do
+    previous = Application.get_env(:pont, :master_token)
+    Application.put_env(:pont, :master_token, "sekret")
+    on_exit(fn -> restore_token(previous) end)
+
+    start_supervised!({Bandit, plug: {Pont.UplinkTest.AuthPlug, self()}, scheme: :http, port: 18_093, ip: {127, 0, 0, 1}})
+    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:18093/agent")
+    start_supervised!({Pont.Uplink, owner: self()})
+    assert_receive {:auth, ["Bearer sekret"]}
   end
 
   test "a message waits in the outbox while the plane is down" do
@@ -100,4 +120,6 @@ defmodule Pont.UplinkTest do
 
   defp restore(key, nil), do: System.delete_env(key)
   defp restore(key, value), do: System.put_env(key, value)
+  defp restore_token(nil), do: Application.delete_env(:pont, :master_token)
+  defp restore_token(value), do: Application.put_env(:pont, :master_token, value)
 end

@@ -191,7 +191,7 @@ defmodule Pont.Uplink do
   end
 
   defp upgrade(conn, ws_scheme, path) do
-    with {:ok, conn, ref} <- Mint.WebSocket.upgrade(ws_scheme, conn, path, []),
+    with {:ok, conn, ref} <- Mint.WebSocket.upgrade(ws_scheme, conn, path, Pont.Auth.headers()),
          {:ok, conn, status, headers} <- await_upgrade(conn, ref, []),
          {:ok, conn, websocket} <- Mint.WebSocket.new(conn, ref, status, headers) do
       {:ok, conn, ref, websocket}
