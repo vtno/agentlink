@@ -1,7 +1,6 @@
 defmodule Pont.Setup do
   @moduledoc """
-  Prints the instructions from the access policy, then reports when a sidecar
-  connects or is rejected. The policy decides how a token is created.
+  Prints the instructions from the access policy. The policy decides how a token is created.
   """
 
   @doc "Ask the access policy to install credentials, and show its instructions. Tests skip this."
@@ -15,12 +14,6 @@ defmodule Pont.Setup do
       end
     end
   end
-
-  @doc "A sidecar registered. The watcher prints it when this plane is running."
-  def connected(name, label) when is_binary(name), do: Pont.Setup.Watch.connected(name, label)
-
-  @doc "A sidecar presented the wrong master token."
-  def rejected, do: Pont.Setup.Watch.rejected()
 end
 
 defmodule Pont.Setup.Watch do
@@ -43,8 +36,8 @@ defmodule Pont.Setup.Watch do
   @doc "A sidecar registered. Print its link name and machine."
   def connected(name, label) when is_binary(name), do: notify({:connected, name, label})
 
-  @doc "A sidecar presented the wrong master token. Print the rejection."
-  def rejected, do: notify(:rejected)
+  @doc "A sidecar was refused. Print the reason the dial failed."
+  def rejected(reason) when is_binary(reason), do: notify({:rejected, reason})
 
   @impl true
   def handle_info({:connected, name, label}, %__MODULE__{} = state) do
@@ -52,8 +45,8 @@ defmodule Pont.Setup.Watch do
     {:noreply, state}
   end
 
-  def handle_info(:rejected, %__MODULE__{} = state) do
-    IO.puts(:stderr, "A sidecar was rejected. The master token did not match.")
+  def handle_info({:rejected, reason}, %__MODULE__{} = state) do
+    IO.puts(:stderr, "A sidecar was rejected. #{reason}")
     {:noreply, state}
   end
 

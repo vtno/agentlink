@@ -10,7 +10,7 @@ defmodule Pont.Access.Single do
   @impl true
   def authenticate(conn) do
     if Pont.Auth.allowed?(conn) do
-      {:ok, %Pont.Access.Subject{}}
+      {:ok, %Pont.Access.Subject{id: "admin", role: :admin}}
     else
       :reject
     end
@@ -91,12 +91,7 @@ defmodule Pont.Access.Single do
     end
   end
 
-  defp configured_token do
-    case Application.get_env(:pont, :master_token) do
-      token when is_binary(token) and token != "" -> token
-      _ -> nil
-    end
-  end
+  defp configured_token, do: Pont.Auth.token()
 
   defp mint do
     Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)

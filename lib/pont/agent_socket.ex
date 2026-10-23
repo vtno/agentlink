@@ -21,7 +21,13 @@ defmodule Pont.AgentSocket do
   def handle_in({text, [opcode: :text]}, %__MODULE__{name: nil} = state) when is_binary(text) do
     case Jason.decode(text) do
       {:ok, %{"method" => "pont.uplink", "params" => params}} when is_map(params) ->
-        case Pont.Registry.register(self(), params["name"], params["label"], params["program"] || "opencode", state.subject) do
+        uplink = %Pont.Registry.Uplink{
+          name: params["name"],
+          label: params["label"],
+          program: params["program"] || "opencode"
+        }
+
+        case Pont.Registry.register(self(), uplink, state.subject) do
           :ok -> {:ok, %{state | name: params["name"]}}
           {:error, reason} -> {:stop, reason, state}
         end

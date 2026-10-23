@@ -32,18 +32,18 @@ defmodule Pont.Registry do
   end
 
   @doc "An uplink said hello. The access policy accepts this subject, then this table remembers the socket."
-  def register(pid, name, label, program \\ "opencode", subject \\ %Pont.Access.Subject{}) when is_pid(pid) do
-    GenServer.call(__MODULE__, {:register, pid, name, label, program, subject})
+  def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject) when is_pid(pid) do
+    GenServer.call(__MODULE__, {:register, pid, uplink, subject})
   end
 
   @impl true
-  def handle_call({:register, pid, name, label, program, subject}, _from, %__MODULE__{} = state) do
-    with {:ok, name} <- normalize_name(name),
+  def handle_call({:register, pid, %Pont.Registry.Uplink{} = uplink, subject}, _from, %__MODULE__{} = state) do
+    with {:ok, name} <- normalize_name(uplink.name),
          :ok <- Pont.Access.claim(subject, name) do
       uplink = %Pont.Registry.Uplink{
         name: name,
-        label: normalize_label(label, name),
-        program: normalize_label(program, "opencode"),
+        label: normalize_label(uplink.label, name),
+        program: normalize_label(uplink.program, "opencode"),
         pid: pid,
         connected_at: System.system_time(:second)
       }
@@ -53,7 +53,7 @@ defmodule Pont.Registry do
       ref = Process.monitor(pid)
       :ets.insert(@table, {name, uplink})
       Logger.info("uplink registered name=#{uplink.name} label=#{uplink.label} program=#{uplink.program}")
-      Pont.Setup.connected(uplink.name, uplink.label)
+      Pont.Setup.Watch.connected(uplink.name, uplink.label)
       Pont.Plane.runtime_reset(name)
       {:reply, :ok, %{state | pids: Map.put(state.pids, pid, {ref, name})}}
     else

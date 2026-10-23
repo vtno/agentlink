@@ -9,46 +9,36 @@ defmodule Pont.Router do
   end
 
   get "/status" do
-    case Pont.Access.authenticate(conn) do
-      {:ok, subject} ->
-        runtimes = Pont.Registry.allowed(subject)
+    open(conn, fn conn, subject ->
+      body =
+        Jason.encode!(%{
+          "plane" => "127.0.0.1:#{Application.fetch_env!(:pont, :port)}",
+          "runtimes" => Pont.Registry.allowed(subject)
+        })
 
-        body =
-          Jason.encode!(%{
-            "plane" => "127.0.0.1:#{Application.fetch_env!(:pont, :port)}",
-            "runtimes" => runtimes
-          })
-
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(200, body)
-
-      :reject ->
-        send_resp(conn, 401, "unauthorized")
-    end
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, body)
+    end)
   end
 
   get "/acp" do
-    case Pont.Access.authenticate(conn) do
-      {:ok, subject} ->
-        conn
-        |> WebSockAdapter.upgrade(Pont.ClientSocket, subject, timeout: :infinity)
-        |> halt()
-
-      :reject ->
-        send_resp(conn, 401, "unauthorized")
-    end
+    open(conn, fn conn, subject ->
+      conn
+      |> WebSockAdapter.upgrade(Pont.ClientSocket, subject, timeout: :infinity)
+      |> halt()
+    end)
   end
 
   get "/agent" do
-    case agent_subject(conn) do
+    case Pont.Access.sidecar(conn) do
       {:ok, subject} ->
         conn
         |> WebSockAdapter.upgrade(Pont.AgentSocket, subject, timeout: :infinity)
         |> halt()
 
-      :reject ->
-        Pont.Setup.rejected()
+      {:reject, reason} ->
+        Pont.Setup.Watch.rejected(reason)
         send_resp(conn, 401, "unauthorized")
     end
   end
@@ -57,12 +47,10 @@ defmodule Pont.Router do
     send_resp(conn, 404, "not found")
   end
 
-  defp agent_subject(conn) do
-    with true <- Pont.Auth.enabled?(),
-         {:ok, subject} <- Pont.Access.authenticate(conn) do
-      {:ok, subject}
-    else
-      _ -> :reject
+  defp open(conn, fun) do
+    case Pont.Access.authenticate(conn) do
+      {:ok, subject} -> fun.(conn, subject)
+      :reject -> send_resp(conn, 401, "unauthorized")
     end
   end
 end

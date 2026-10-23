@@ -13,10 +13,7 @@ defmodule Pont.Uplink do
     :conn,
     :websocket,
     :ref,
-    :name,
-    :label,
-    :program,
-    :url,
+    :link,
     outbox: []
   ]
 
@@ -31,14 +28,7 @@ defmodule Pont.Uplink do
     send(self(), :connect)
     Process.send_after(self(), :watch, 1_000)
 
-    {:ok,
-     %__MODULE__{
-       owner: Keyword.fetch!(opts, :owner),
-       name: link.name,
-       label: link.label,
-       program: link.program,
-       url: link.plane_url
-     }}
+    {:ok, %__MODULE__{owner: Keyword.fetch!(opts, :owner), link: link}}
   end
 
   @doc "One ACP object toward the plane. Queued if the socket is down."
@@ -69,7 +59,7 @@ defmodule Pont.Uplink do
         case upgrade(conn, ws_scheme, path) do
           {:ok, conn, ref, websocket} ->
             Logger.info("sidecar uplink connected #{link.plane_url}")
-            state = %{state | conn: conn, websocket: websocket, ref: ref, name: link.name, label: link.label, program: link.program, url: link.plane_url}
+            state = %{state | conn: conn, websocket: websocket, ref: ref, link: link}
             state = transmit(uplink_hello(link), state)
 
             cond do
@@ -101,7 +91,7 @@ defmodule Pont.Uplink do
   def handle_info(:watch, %__MODULE__{} = state) do
     link = Pont.Link.read()
 
-    if state.conn && (link.name != state.name or link.label != state.label or link.program != state.program or link.plane_url != state.url) do
+    if state.conn && link != state.link do
       Logger.info("agent link changed, redialing as #{link.name}")
       send(self(), :connect)
     end

@@ -1,6 +1,6 @@
 defmodule Pont.Client do
   @moduledoc false
-  defstruct [:pid, runtime: nil, session_id: nil, subject: %Pont.Access.Subject{}]
+  defstruct [:pid, :subject, runtime: nil, session_id: nil]
 end
 
 defmodule Pont.AgentSlot do
@@ -39,9 +39,7 @@ defmodule Pont.Plane do
   @impl true
   def init(_opts), do: {:ok, %__MODULE__{}}
 
-  @doc "A client socket connected. Remember it and hand back its id."
-  def register(pid, subject \\ %Pont.Access.Subject{})
-
+  @doc "A client socket connected. Remember it and hand back its id. The subject is required."
   def register(pid, %Pont.Access.Subject{} = subject) when is_pid(pid),
     do: GenServer.call(__MODULE__, {:register, pid, subject})
 

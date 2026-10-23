@@ -54,13 +54,13 @@ defmodule Pont.SetupTest do
     connected =
       ExUnit.CaptureIO.capture_io(fn ->
         Process.group_leader(pid, Process.group_leader())
-        Pont.Setup.connected("opencode", "this machine")
+        Pont.Setup.Watch.connected("opencode", "this machine")
         :sys.get_state(pid)
       end)
 
     rejected =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        Pont.Setup.rejected()
+        Pont.Setup.Watch.rejected("The master token did not match.")
         :sys.get_state(pid)
       end)
 

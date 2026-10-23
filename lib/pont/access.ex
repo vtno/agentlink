@@ -5,8 +5,8 @@ defmodule Pont.Access do
   """
 
   defmodule Subject do
-    @moduledoc "The identity attached to one app connection."
-    defstruct id: "admin", role: :admin
+    @moduledoc "The identity attached to one connection. An empty struct is not an admin."
+    defstruct [:id, :role]
   end
 
   @doc "Resolve the caller. `:reject` closes the connection."
@@ -15,11 +15,13 @@ defmodule Pont.Access do
   @doc "True when this subject may use this uplink."
   @callback allowed?(Subject.t(), name :: String.t()) :: boolean
 
-  @doc "A sidecar is claiming this uplink. `:reject` refuses the dial."
+  @doc "A sidecar is claiming this uplink. `:reject` refuses the dial. A policy may omit this."
   @callback claim(Subject.t(), name :: String.t()) :: :ok | :reject
 
   @doc "Install this policy before the sockets open. Return text for the operator, or an error."
   @callback prepare(mode :: atom()) :: {:ok, String.t()} | {:error, String.t()}
+
+  @optional_callbacks [claim: 2]
 
   @doc "The implementation named by `:access`. `Pont.Access.Single` when unset."
   def implementation do
@@ -41,6 +43,23 @@ defmodule Pont.Access do
 
   @doc "Resolve the caller through the configured implementation."
   def authenticate(conn), do: implementation().authenticate(conn)
+
+  @doc "A sidecar dial. The request must present the master token, then the policy names the subject."
+  def sidecar(conn) do
+    cond do
+      not Pont.Auth.enabled?() ->
+        {:reject, "PONT_MASTER_TOKEN is not set."}
+
+      not Pont.Auth.allowed?(conn) ->
+        {:reject, "The master token did not match."}
+
+      true ->
+        case authenticate(conn) do
+          {:ok, %Subject{} = subject} -> {:ok, subject}
+          :reject -> {:reject, "The access policy rejected it."}
+        end
+    end
+  end
 
   @doc "Ask the configured implementation if this subject may use this uplink."
   def allowed?(subject, name) when is_binary(name) do
