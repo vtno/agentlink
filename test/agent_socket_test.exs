@@ -8,7 +8,7 @@ defmodule Pont.AgentSocketTest do
   end
 
   test "an agent socket rejects a bad hello, then forwards ACP" do
-    {:ok, state} = Pont.AgentSocket.init(%Pont.Access.Subject{})
+    {:ok, state} = Pont.AgentSocket.init(%Pont.Access.Subject{id: "admin", role: :admin})
     assert {:ok, ^state} = Pont.AgentSocket.handle_in({<<1>>, [opcode: :binary]}, state)
 
     assert {:stop, :expected_uplink, ^state} =

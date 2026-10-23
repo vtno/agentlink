@@ -31,11 +31,17 @@ defmodule Pont.AccessTest do
     :ok
   end
 
-  test "an unset token is the admin, and the admin may use any runtime" do
+  test "an unset token is not an admin" do
     Application.delete_env(:pont, :master_token)
-    assert {:ok, %Pont.Access.Subject{id: "admin", role: :admin}} = Pont.Access.authenticate(conn("/acp"))
-    assert Pont.Access.allowed?(%Pont.Access.Subject{}, "opencode")
-    assert :ok = Pont.Access.claim(%Pont.Access.Subject{}, "opencode")
+    assert :reject = Pont.Access.authenticate(conn("/acp"))
+    refute Pont.Access.allowed?(%Pont.Access.Subject{}, "opencode")
+    assert {:error, "uplink is not allowed"} = Pont.Access.claim(%Pont.Access.Subject{}, "opencode")
+  end
+
+  test "the admin may use any runtime" do
+    admin = %Pont.Access.Subject{id: "admin", role: :admin}
+    assert Pont.Access.allowed?(admin, "opencode")
+    assert :ok = Pont.Access.claim(admin, "opencode")
   end
 
   test "the master token is accepted and a different token is rejected" do

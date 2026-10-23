@@ -42,8 +42,8 @@ defmodule Pont.Registry do
          :ok <- Pont.Access.claim(subject, name) do
       uplink = %Pont.Registry.Uplink{
         name: name,
-        label: normalize_label(uplink.label, name),
-        program: normalize_label(uplink.program, "opencode"),
+        label: clip(uplink.label, name),
+        program: clip(uplink.program, "opencode"),
         pid: pid,
         connected_at: System.system_time(:second)
       }
@@ -150,12 +150,12 @@ defmodule Pont.Registry do
 
   defp normalize_name(_), do: {:error, "link name must be a short slug"}
 
-  defp normalize_label(label, name) when is_binary(label) do
-    case String.trim(label) do
-      "" -> name
+  defp clip(value, fallback) when is_binary(value) do
+    case String.trim(value) do
+      "" -> fallback
       text -> String.slice(text, 0, 80)
     end
   end
 
-  defp normalize_label(_, name), do: name
+  defp clip(_value, fallback), do: fallback
 end

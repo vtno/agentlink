@@ -9,7 +9,7 @@ defmodule Pont.Access.Single do
 
   @impl true
   def authenticate(conn) do
-    if Pont.Auth.allowed?(conn) do
+    if Pont.Auth.enabled?() and Pont.Auth.allowed?(conn) do
       {:ok, %Pont.Access.Subject{id: "admin", role: :admin}}
     else
       :reject
@@ -17,10 +17,12 @@ defmodule Pont.Access.Single do
   end
 
   @impl true
-  def allowed?(%Pont.Access.Subject{}, name) when is_binary(name), do: true
+  def allowed?(%Pont.Access.Subject{role: :admin}, name) when is_binary(name), do: true
+  def allowed?(%Pont.Access.Subject{}, name) when is_binary(name), do: false
 
   @impl true
-  def claim(%Pont.Access.Subject{}, name) when is_binary(name), do: :ok
+  def claim(%Pont.Access.Subject{role: :admin}, name) when is_binary(name), do: :ok
+  def claim(%Pont.Access.Subject{}, name) when is_binary(name), do: :reject
 
   @impl true
   def prepare(mode) do

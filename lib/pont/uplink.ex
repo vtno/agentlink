@@ -24,15 +24,14 @@ defmodule Pont.Uplink do
 
   @impl true
   def init(opts) do
-    case Pont.Link.read() do
+    case read_link() do
       {:ok, link} ->
         send(self(), :connect)
         Process.send_after(self(), :watch, 1_000)
         {:ok, %__MODULE__{owner: Keyword.fetch!(opts, :owner), link: link}}
 
-      {:error, message} ->
-        Logger.error(message)
-        {:stop, {:shutdown, message}}
+      {:stop, reason} ->
+        {:stop, reason}
     end
   end
 
@@ -57,18 +56,17 @@ defmodule Pont.Uplink do
   def handle_info(:connect, %__MODULE__{} = state) do
     close_conn(state)
 
-    case Pont.Link.read() do
+    case read_link() do
       {:ok, link} ->
         connect(link, state)
 
-      {:error, message} ->
-        Logger.error(message)
-        {:stop, {:shutdown, message}, state}
+      {:stop, reason} ->
+        {:stop, reason, state}
     end
   end
 
   def handle_info(:watch, %__MODULE__{} = state) do
-    case Pont.Link.read() do
+    case read_link() do
       {:ok, link} ->
         if state.conn && link != state.link do
           Logger.info("agent link changed, redialing as #{link.name}")
@@ -78,9 +76,8 @@ defmodule Pont.Uplink do
         Process.send_after(self(), :watch, 1_000)
         {:noreply, state}
 
-      {:error, message} ->
-        Logger.error(message)
-        {:stop, {:shutdown, message}, state}
+      {:stop, reason} ->
+        {:stop, reason, state}
     end
   end
 
@@ -191,6 +188,17 @@ defmodule Pont.Uplink do
         {:ok, conn, responses} -> await_upgrade(conn, ref, acc ++ responses)
         other -> other
       end
+    end
+  end
+
+  defp read_link do
+    case Pont.Link.read() do
+      {:ok, link} ->
+        {:ok, link}
+
+      {:error, message} ->
+        Logger.error(message)
+        {:stop, {:shutdown, message}}
     end
   end
 

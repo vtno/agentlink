@@ -9,9 +9,9 @@ defmodule Pont.Application do
 
   @impl true
   def start(_type, _args) do
-    with :ok <- ensure_link() do
-      Pont.Setup.prepare()
+    Pont.Setup.prepare()
 
+    with :ok <- ensure_link() do
       children =
         case Application.fetch_env!(:pont, :mode) do
           :plane -> plane_children()
