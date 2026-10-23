@@ -57,7 +57,7 @@ defmodule Pont.Relay.AgentTest do
     relay = Process.whereis(Pont.Relay.Agent)
     ref = Process.monitor(relay)
     Pont.FakeAgent.exit_status(agent, 3)
-    assert_receive {:DOWN, ^ref, :process, ^relay, {:opencode_exit, 3}}
+    assert_receive {:DOWN, ^ref, :process, ^relay, {:agent_exit, 3}}
   end
 
   test "the agent process dying stops the agent relay" do
@@ -65,7 +65,7 @@ defmodule Pont.Relay.AgentTest do
     relay = Process.whereis(Pont.Relay.Agent)
     ref = Process.monitor(relay)
     Process.exit(agent, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^relay, {:opencode_exit, :killed}}
+    assert_receive {:DOWN, ^ref, :process, ^relay, {:agent_exit, :killed}}
   end
 
   test "a missing link file stops the agent relay and closes the agent" do

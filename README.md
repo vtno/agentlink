@@ -2,7 +2,7 @@
 
 > Pont means bridge in French.
 
-Pont proxies [Agent Client Protocol](https://agentclientprotocol.com) traffic between a client and one agent. The plane accepts the client. The agent relay runs the agent and dials the plane.
+Pont proxies [Agent Client Protocol](https://agentclientprotocol.com) traffic between a client and one agent. The plane accepts the client. The agent relay opens the agent. The uplink dials the plane.
 
 ACP is JSON-RPC. The agent writes JSONL on its standard output. Pont sends one JSON value in each WebSocket text frame.
 
@@ -28,7 +28,7 @@ The plane serves these paths on port 8090.
 | `GET /health` | The body is `ok`. |
 | `GET /status` | JSON with the listen address and the connected agents. |
 | `GET /acp` | WebSocket for an ACP client. |
-| `GET /agent` | WebSocket for an agent relay. |
+| `GET /agent` | WebSocket the uplink dials. |
 
 A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `session/new`, `session/load`, and `session/prompt`. Pont returns a permission question only to the client that started that turn.
 
@@ -48,7 +48,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 
 ## Environment
 
-`PONT_RUNTIME_NAME` overrides `name` in the link file. `PONT_PLANE_URL` overrides `plane_url`. `PONT_MASTER_TOKEN` is the single-player token. If it is unset, the plane mints one for this process and prints it. `/acp`, `/agent`, and `/status` then require that token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The agent relay sends the header. `/health` stays open.
+`PONT_RUNTIME_NAME` overrides `name` in the link file. `PONT_PLANE_URL` overrides `plane_url`. `PONT_MASTER_TOKEN` is the single-player token. If it is unset, the plane mints one for this process and prints it. `/acp`, `/agent`, and `/status` then require that token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The uplink sends the header. `/health` stays open.
 
 | Variable | Default |
 |---|---|
@@ -60,7 +60,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 | `OPENCODE_BIN` | `opencode` on `PATH`, otherwise `$HOME/.local/bin/opencode` |
 | `PONT_MASTER_TOKEN` | minted for this process when unset |
 
-`OPENCODE_BIN` is the `opencode` executable. The agent relay runs it as `opencode acp`.
+`OPENCODE_BIN` is the `opencode` executable. `Pont.OpenCode` runs it as `opencode acp`.
 
 ## Tests
 

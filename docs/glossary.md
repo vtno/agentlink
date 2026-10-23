@@ -4,7 +4,7 @@ Plane. Accepts sockets and applies the access policy.
 
 Socket. One WebSocket on the plane. `Pont.ClientSocket` is the app. `Pont.AgentSocket` is the agent relay.
 
-Relay. Copies JSON-RPC between a local stdio and a plane socket. `Pont.Relay.Agent` dials `/agent` and opens an agent. `Pont.Relay.Client` dials `/acp`. Zed owns that process. It is not built yet.
+Relay. Copies JSON-RPC between a local stdio and a plane socket. `Pont.Relay.Agent` opens an agent and starts an uplink. `Pont.Relay.Client` is not built yet.
 
 Link. The file the agent relay reads before it dials. Name, label, program, and plane URL. Not the live connection.
 

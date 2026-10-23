@@ -1,7 +1,7 @@
 import Config
 
 config :pont,
-  agent: Pont.FakeAgent,
+  agent_module: Pont.FakeAgent,
   mode: :plane,
   port: 18_090,
   workdir: "/tmp/pont-test-workdir"

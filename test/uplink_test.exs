@@ -108,7 +108,7 @@ defmodule Pont.UplinkTest do
     refute Process.whereis(Pont.Uplink)
   end
 
-  test "the agent relay sends the bearer token when it dials" do
+  test "the uplink sends the bearer token when it dials" do
     previous = Application.get_env(:pont, :master_token)
     Application.put_env(:pont, :master_token, "sekret")
     on_exit(fn -> restore_token(previous) end)

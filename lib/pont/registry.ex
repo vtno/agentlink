@@ -1,6 +1,6 @@
 defmodule Pont.Registry.Uplink do
   @moduledoc """
-  One dialed agent relay. `name` comes from the link. `label` is the machine.
+  One dialed uplink. `name` comes from the link. `label` is the machine.
   `program` is the agent product name, not the `Pont.Agent` module.
   """
 
@@ -9,7 +9,7 @@ end
 
 defmodule Pont.Registry do
   @moduledoc """
-  Live uplinks. One row is one agent relay that has said hello.
+  Live uplinks. One row is one uplink that has said hello.
   The socket is the source of truth.
   """
 

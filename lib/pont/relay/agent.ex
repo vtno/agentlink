@@ -4,7 +4,7 @@ defmodule Pont.Relay.Agent do
 
   Stdout is ACP JSONL. The agent is linked to this process: when it
   exits, this process stops and its supervisor starts another one. Production
-  uses `Pont.OpenCode`. The module comes from `:pont, :agent`.
+  uses `Pont.OpenCode`. The module comes from `:pont, :agent_module`.
   """
 
   use GenServer
@@ -22,7 +22,7 @@ defmodule Pont.Relay.Agent do
     Process.flag(:trap_exit, true)
     cwd = Pont.Paths.workdir()
     File.mkdir_p!(cwd)
-    agent_module = Application.get_env(:pont, :agent, Pont.OpenCode)
+    agent_module = Application.get_env(:pont, :agent_module, Pont.OpenCode)
     {:ok, agent} = agent_module.open(self(), cwd)
     Logger.info("agent relay supervising #{inspect(agent_module)} cwd=#{cwd} agent=#{inspect(agent)}")
 
@@ -74,12 +74,12 @@ defmodule Pont.Relay.Agent do
 
   def handle_info({agent, {:exit_status, status}}, %__MODULE__{agent: agent} = state) do
     Logger.error("agent exited status=#{status}, supervisor will restart the agent relay")
-    {:stop, {:opencode_exit, status}, state}
+    {:stop, {:agent_exit, status}, state}
   end
 
   def handle_info({:EXIT, agent, reason}, %__MODULE__{agent: agent} = state) do
     Logger.error("agent exit #{inspect(reason)}")
-    {:stop, {:opencode_exit, reason}, state}
+    {:stop, {:agent_exit, reason}, state}
   end
 
   def handle_info({:from_plane, message}, state) when is_map(message) do

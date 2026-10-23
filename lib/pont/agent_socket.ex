@@ -1,6 +1,6 @@
 defmodule Pont.AgentSocket do
   @moduledoc """
-  One agent relay uplink. The first frame is `pont.uplink` and lands in the registry.
+  The plane's agent socket. The first frame is `pont.uplink` and lands in the registry.
   Later frames are ACP from that runtime.
   """
 
@@ -55,7 +55,7 @@ defmodule Pont.AgentSocket do
 
   @impl true
   def terminate(reason, state) do
-    Logger.info("agent uplink closed name=#{inspect(state.name)} #{inspect(reason)}")
+    Logger.info("agent socket closed name=#{inspect(state.name)} #{inspect(reason)}")
     :ok
   end
 end

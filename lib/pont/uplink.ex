@@ -1,6 +1,6 @@
 defmodule Pont.Uplink do
   @moduledoc """
-  Agent relay side of the plane socket. Outbound text frames are one JSON object.
+  Dials the plane's agent socket. Outbound text frames are one JSON object.
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
   process directly.
   """
@@ -17,7 +17,7 @@ defmodule Pont.Uplink do
     outbox: []
   ]
 
-  @doc "Dial the plane. This process is the socket, so a remote agent relay never calls the plane directly."
+  @doc "Dial the plane's agent socket. A remote relay never calls the plane process directly."
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end

@@ -13,7 +13,7 @@ defmodule Pont.OpenCodeLiveTest do
     previous = %{
       plane: System.get_env("PONT_PLANE_URL"),
       name: System.get_env("PONT_RUNTIME_NAME"),
-      agent_module: Application.get_env(:pont, :agent),
+      agent_module: Application.get_env(:pont, :agent_module),
       mode: Application.get_env(:pont, :mode),
       port: Application.get_env(:pont, :port),
       workdir: Application.get_env(:pont, :workdir),
@@ -27,7 +27,7 @@ defmodule Pont.OpenCodeLiveTest do
 
     System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:#{@port}/agent")
     System.put_env("PONT_RUNTIME_NAME", "opencode")
-    Application.put_env(:pont, :agent, Pont.OpenCode)
+    Application.put_env(:pont, :agent_module, Pont.OpenCode)
     Application.put_env(:pont, :mode, :all)
     Application.put_env(:pont, :port, @port)
     Application.put_env(:pont, :workdir, dir)
@@ -146,7 +146,7 @@ defmodule Pont.OpenCodeLiveTest do
   defp restore_env(previous) do
     put_or_delete("PONT_PLANE_URL", previous.plane)
     put_or_delete("PONT_RUNTIME_NAME", previous.name)
-    Application.put_env(:pont, :agent, previous.agent_module)
+    Application.put_env(:pont, :agent_module, previous.agent_module)
     Application.put_env(:pont, :mode, previous.mode)
     Application.put_env(:pont, :port, previous.port)
     Application.put_env(:pont, :workdir, previous.workdir)

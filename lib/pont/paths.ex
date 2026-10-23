@@ -7,7 +7,7 @@ defmodule Pont.Paths do
   @doc "Directory that holds the link file and the agent workspace."
   def root, do: Path.join(System.user_home!(), ".pont")
 
-  @doc "Link file the agent relay reads when it dials."
+  @doc "Link file the agent relay reads before the uplink dials."
   def link do
     Application.get_env(:pont, :link_path) || Path.join(root(), "agent.link.json")
   end
