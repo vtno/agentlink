@@ -31,7 +31,7 @@ defmodule Pont.Router do
   end
 
   get "/agent" do
-    case Pont.Access.agent_relay(conn) do
+    case Pont.Access.agent_socket(conn) do
       {:ok, subject} ->
         conn
         |> WebSockAdapter.upgrade(Pont.AgentSocket, subject, timeout: :infinity)

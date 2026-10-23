@@ -18,7 +18,7 @@ end
 
 defmodule Pont.Setup.Watch do
   @moduledoc """
-  Prints agent relay success and auth failure. Started with the plane.
+  Prints an uplink hello and a refused dial. Started with the plane.
   """
 
   use GenServer
@@ -33,20 +33,20 @@ defmodule Pont.Setup.Watch do
   @impl true
   def init(_opts), do: {:ok, %__MODULE__{}}
 
-  @doc "An agent relay registered. Print its link name and machine."
+  @doc "An uplink said hello. Print its link name and machine."
   def connected(name, label) when is_binary(name), do: notify({:connected, name, label})
 
-  @doc "An agent relay was refused. Print the reason the dial failed."
+  @doc "A dial was refused. Print the reason."
   def rejected(reason) when is_binary(reason), do: notify({:rejected, reason})
 
   @impl true
   def handle_info({:connected, name, label}, %__MODULE__{} = state) do
-    IO.puts("Agent relay connected: #{name} (#{label}).")
+    IO.puts("Uplink connected: #{name} (#{label}).")
     {:noreply, state}
   end
 
   def handle_info({:rejected, reason}, %__MODULE__{} = state) do
-    IO.puts(:stderr, "An agent relay was rejected. #{reason}")
+    IO.puts(:stderr, "An uplink was rejected. #{reason}")
     {:noreply, state}
   end
 

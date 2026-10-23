@@ -24,7 +24,7 @@ defmodule Pont.Relay.Agent do
     File.mkdir_p!(cwd)
     agent_module = Application.get_env(:pont, :agent_module, Pont.OpenCode)
     {:ok, agent} = agent_module.open(self(), cwd)
-    Logger.info("agent relay supervising #{inspect(agent_module)} cwd=#{cwd} agent=#{inspect(agent)}")
+    Logger.info("opened #{inspect(agent_module)} cwd=#{cwd} agent=#{inspect(agent)}")
 
     case Pont.Uplink.start_link(owner: self()) do
       {:ok, _} ->

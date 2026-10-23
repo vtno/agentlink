@@ -20,7 +20,7 @@ defmodule Pont.Paths do
     System.find_executable("opencode") || Path.join(System.user_home!(), ".local/bin/opencode")
   end
 
-  @doc "Workspace the agent relay starts the agent in."
+  @doc "Workspace the agent relay opens the agent in."
   def workdir, do: Application.get_env(:pont, :workdir) || default_workdir()
 
   @doc "OpenCode executable. `Pont.OpenCode` opens it."

@@ -74,7 +74,7 @@ defmodule Pont.Access.Single do
         #{command(token, url)}
 
         The plane listens on 127.0.0.1. If that machine is not this one, set PONT_PLANE_URL to an address it can reach.
-        Waiting for the agent relay to connect.
+        Waiting for the uplink to connect.
         """
 
       :all ->
@@ -89,7 +89,7 @@ defmodule Pont.Access.Single do
         """
 
       :agent ->
-        "#{origin}\nThe agent relay will dial #{url}.\n"
+        "#{origin}\nThe uplink will dial #{url}.\n"
     end
   end
 

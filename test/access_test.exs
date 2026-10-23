@@ -59,13 +59,13 @@ defmodule Pont.AccessTest do
     assert {:error, "uplink is not allowed"} = Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
   end
 
-  test "an agent relay must present the master token" do
+  test "an agent socket must present the master token" do
     Application.delete_env(:pont, :master_token)
-    assert {:reject, "PONT_MASTER_TOKEN is not set."} = Pont.Access.agent_relay(conn("/agent"))
+    assert {:reject, "PONT_MASTER_TOKEN is not set."} = Pont.Access.agent_socket(conn("/agent"))
 
     Application.put_env(:pont, :master_token, "sekret")
-    assert {:reject, "The master token did not match."} = Pont.Access.agent_relay(conn("/agent"))
-    assert {:ok, %Pont.Access.Subject{id: "admin", role: :admin}} = Pont.Access.agent_relay(conn("/agent?token=sekret"))
+    assert {:reject, "The master token did not match."} = Pont.Access.agent_socket(conn("/agent"))
+    assert {:ok, %Pont.Access.Subject{id: "admin", role: :admin}} = Pont.Access.agent_socket(conn("/agent?token=sekret"))
   end
 
   test "an empty subject is not an admin" do
