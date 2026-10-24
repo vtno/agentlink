@@ -86,6 +86,82 @@ defmodule Pont.PlaneTest do
     refute_receive {:agent, _}, 50
   end
 
+  test "a second client does not inherit the first client's fs and terminal capabilities" do
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    call(id, "runtime/select", %{"name" => "lab"}, 1)
+    reply!()
+
+    zed = %{
+      "protocolVersion" => 1,
+      "clientCapabilities" => %{
+        "fs" => %{"readTextFile" => true, "writeTextFile" => true},
+        "terminal" => true
+      },
+      "clientInfo" => %{"name" => "zed", "version" => "0.1.0"}
+    }
+
+    web = %{
+      "protocolVersion" => 1,
+      "clientCapabilities" => %{
+        "fs" => false,
+        "terminal" => false
+      },
+      "clientInfo" => %{"name" => "acp-ui", "version" => "0.1.0"}
+    }
+
+    call(id, "initialize", zed, 2)
+    assert {:agent, %{"id" => agent_id, "method" => "initialize", "params" => %{"clientCapabilities" => first}}} = from_agent!()
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{"agentCapabilities" => %{}}}))
+    assert %{"id" => 2, "result" => _} = reply!()
+
+    {other, other_id} = spawn_client()
+    call(other_id, "runtime/select", %{"name" => "lab"}, 1)
+    assert %{"id" => 1} = client_reply!(other)
+
+    call(other_id, "initialize", web, 2)
+    :sys.get_state(Pont.Plane)
+
+    # `shown` is the clientCapabilities the agent has actually been given for this runtime.
+    shown =
+      receive do
+        {:agent, %{"method" => "initialize", "id" => second_id, "params" => %{"clientCapabilities" => caps}}} ->
+          Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => second_id, "result" => %{"agentCapabilities" => %{}}}))
+          assert %{"id" => 2} = client_reply!(other)
+          caps
+
+      after
+        50 ->
+          assert %{"id" => 2, "result" => _} = client_reply!(other)
+          first
+      end
+
+    call(other_id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 3)
+    assert {:agent, %{"id" => new_id, "method" => "session/new"}} = from_agent!()
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => new_id, "result" => %{"sessionId" => "ses_web"}}))
+    assert %{"result" => %{"sessionId" => "ses_web"}} = client_reply!(other)
+
+    call(other_id, "session/prompt", %{"sessionId" => "ses_web", "prompt" => [%{"type" => "text", "text" => "go"}]}, 4)
+    assert %{"method" => "session/update"} = client_reply!(other)
+    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+
+    for {req_id, method} <- [{"read", "fs/read_text_file"}, {"term", "terminal/create"}, {"perm", "session/request_permission"}] do
+      Pont.Plane.agent_frame("lab", Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => req_id,
+        "method" => method,
+        "params" => %{"sessionId" => "ses_web"}
+      }))
+    end
+
+    :sys.get_state(Pont.Plane)
+    messages = collect_client(other)
+    fs_and_terminal = for %{"method" => method} <- messages, fs_or_terminal?(method), do: method
+    permission? = Enum.any?(messages, &(&1["method"] == "session/request_permission"))
+
+    assert {shown, fs_and_terminal, permission?} == {web["clientCapabilities"], [], true}
+  end
+
   test "a failed initialize is not cached" do
     id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
@@ -442,6 +518,18 @@ defmodule Pont.PlaneTest do
   defp client_reply!(pid) do
     assert_receive {^pid, {:send, json}}, 500
     Jason.decode!(json)
+  end
+
+  defp fs_or_terminal?("fs/" <> _), do: true
+  defp fs_or_terminal?("terminal/" <> _), do: true
+  defp fs_or_terminal?(_method), do: false
+
+  defp collect_client(pid, timeout \\ 500) do
+    receive do
+      {^pid, {:send, json}} -> [Jason.decode!(json) | collect_client(pid, 50)]
+    after
+      timeout -> []
+    end
   end
 
   defp open_session!(id, session_id) do
