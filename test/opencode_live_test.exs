@@ -11,8 +11,6 @@ defmodule Pont.OpenCodeLiveTest do
     File.write!(Path.join(dir, "opencode.json"), ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"}))
 
     previous = %{
-      plane: System.get_env("PONT_PLANE_URL"),
-      name: System.get_env("PONT_RUNTIME_NAME"),
       agent_module: Application.get_env(:pont, :agent_module),
       mode: Application.get_env(:pont, :mode),
       port: Application.get_env(:pont, :port),
@@ -25,8 +23,6 @@ defmodule Pont.OpenCodeLiveTest do
     File.write!(link, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"}))
     Application.put_env(:pont, :link_path, link)
 
-    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:#{@port}/agent")
-    System.put_env("PONT_RUNTIME_NAME", "opencode")
     Application.put_env(:pont, :agent_module, Pont.OpenCode)
     Application.put_env(:pont, :mode, :all)
     Application.put_env(:pont, :port, @port)
@@ -151,8 +147,6 @@ defmodule Pont.OpenCodeLiveTest do
   end
 
   defp restore_env(previous) do
-    put_or_delete("PONT_PLANE_URL", previous.plane)
-    put_or_delete("PONT_RUNTIME_NAME", previous.name)
     Application.put_env(:pont, :agent_module, previous.agent_module)
     Application.put_env(:pont, :mode, previous.mode)
     Application.put_env(:pont, :port, previous.port)
@@ -165,9 +159,6 @@ defmodule Pont.OpenCodeLiveTest do
   defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
   defp restore_token(nil), do: Application.delete_env(:pont, :master_token)
   defp restore_token(token), do: Application.put_env(:pont, :master_token, token)
-
-  defp put_or_delete(key, nil), do: System.delete_env(key)
-  defp put_or_delete(key, value), do: System.put_env(key, value)
 end
 
 defmodule Pont.LiveClient do

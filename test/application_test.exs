@@ -31,8 +31,8 @@ defmodule Pont.ApplicationTest do
     refute Process.whereis(Pont.Relay.Agent)
   end
 
-  test "agent mode stops when the link file is missing" do
-    Application.put_env(:pont, :mode, :agent)
+  test "relay mode stops when the link file is missing" do
+    Application.put_env(:pont, :mode, :relay)
     Application.put_env(:pont, :link_path, "/tmp/pont-missing-#{System.unique_integer([:positive])}.json")
 
     assert {:error, message} = Pont.Application.start(:normal, [])
@@ -40,14 +40,14 @@ defmodule Pont.ApplicationTest do
     refute Process.whereis(Pont.Relay.Agent)
   end
 
-  test "agent mode starts only the agent relay" do
+  test "relay mode starts only the relay" do
     if pid = Process.whereis(Pont.Supervisor) do
       Process.exit(pid, :kill)
       Process.sleep(50)
     end
 
     write_link()
-    Application.put_env(:pont, :mode, :agent)
+    Application.put_env(:pont, :mode, :relay)
     assert {:ok, _pid} = Pont.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _cwd}
     assert Process.whereis(Pont.Relay.Agent)

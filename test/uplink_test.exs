@@ -48,14 +48,12 @@ defmodule Pont.UplinkTest do
   end
 
   setup do
-    previous = System.get_env("PONT_PLANE_URL")
     link_path = Application.get_env(:pont, :link_path)
     path = Path.join(System.tmp_dir!(), "pont-uplink-#{System.unique_integer([:positive])}.json")
-    File.write!(path, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"}))
     Application.put_env(:pont, :link_path, path)
+    write_link!("ws://127.0.0.1:1/agent")
 
     on_exit(fn ->
-      restore("PONT_PLANE_URL", previous)
       restore_link(link_path)
       File.rm(path)
       if pid = Process.whereis(Pont.Uplink), do: Process.exit(pid, :kill)
@@ -114,13 +112,12 @@ defmodule Pont.UplinkTest do
     on_exit(fn -> restore_token(previous) end)
 
     start_supervised!({Bandit, plug: {Pont.UplinkTest.AuthPlug, self()}, scheme: :http, port: 18_093, ip: {127, 0, 0, 1}})
-    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:18093/agent")
+    write_link!("ws://127.0.0.1:18093/agent")
     start_supervised!({Pont.Uplink, owner: self()})
     assert_receive {:auth, ["Bearer sekret"]}
   end
 
   test "a message waits in the outbox while the plane is down" do
-    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:1/agent")
     start_supervised!({Pont.Uplink, owner: self()})
     Pont.Uplink.send_message(%{"method" => "ping"})
     Process.sleep(50)
@@ -132,7 +129,7 @@ defmodule Pont.UplinkTest do
 
   test "a handshake that is not a websocket is retried" do
     start_supervised!({Bandit, plug: HttpPlain, scheme: :http, port: 18_094, ip: {127, 0, 0, 1}})
-    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:18094/agent")
+    write_link!("ws://127.0.0.1:18094/agent")
     start_supervised!({Pont.Uplink, owner: self()})
     Process.sleep(200)
     assert Process.alive?(Process.whereis(Pont.Uplink))
@@ -141,7 +138,7 @@ defmodule Pont.UplinkTest do
 
   test "a connected uplink sends, receives, and redials when the link changes" do
     start_supervised!({Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_095, ip: {127, 0, 0, 1}})
-    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:18095/agent")
+    write_link!("ws://127.0.0.1:18095/agent")
     start_supervised!({Pont.Uplink, owner: self()})
 
     assert_receive {:socket, socket}
@@ -162,14 +159,24 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, out}
     assert %{"method" => "out"} = Jason.decode!(out)
 
-    System.put_env("PONT_PLANE_URL", "ws://127.0.0.1:1/agent")
+    write_link!("ws://127.0.0.1:1/agent")
     send(Pont.Uplink, :watch)
     Process.sleep(200)
     assert :sys.get_state(Pont.Uplink).websocket == nil
   end
 
-  defp restore(key, nil), do: System.delete_env(key)
-  defp restore(key, value), do: System.put_env(key, value)
+  defp write_link!(url) do
+    File.write!(
+      Application.fetch_env!(:pont, :link_path),
+      Jason.encode!(%{
+        "name" => "opencode",
+        "label" => "this machine",
+        "program" => "opencode",
+        "plane_url" => url
+      })
+    )
+  end
+
   defp restore_link(nil), do: Application.delete_env(:pont, :link_path)
   defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
   defp restore_token(nil), do: Application.delete_env(:pont, :master_token)

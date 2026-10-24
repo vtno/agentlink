@@ -12,6 +12,11 @@ defmodule Pont.Paths do
     Application.get_env(:pont, :link_path) || Path.join(root(), "agent.link.json")
   end
 
+  @doc "Plane WebSocket the uplink dials on this machine."
+  def plane_url(port \\ 8090) when is_integer(port) and port >= 1 and port <= 65_535 do
+    "ws://127.0.0.1:#{port}/agent"
+  end
+
   @doc "Workspace path before the application config overrides it."
   def default_workdir, do: Path.join(root(), "workspace")
 

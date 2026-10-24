@@ -1,15 +1,6 @@
 defmodule Pont.LinkTest do
   use ExUnit.Case, async: false
 
-  setup do
-    name = System.get_env("PONT_RUNTIME_NAME")
-    url = System.get_env("PONT_PLANE_URL")
-    on_exit(fn -> restore("PONT_RUNTIME_NAME", name); restore("PONT_PLANE_URL", url) end)
-    System.delete_env("PONT_RUNTIME_NAME")
-    System.delete_env("PONT_PLANE_URL")
-    :ok
-  end
-
   test "a missing file tells the operator to create it" do
     path = "/tmp/does-not-exist-acp-link.json"
     assert {:error, message} = Pont.Link.read(path)
@@ -61,15 +52,6 @@ defmodule Pont.LinkTest do
     assert link.name == "opencode"
   end
 
-  test "environment overrides the file" do
-    path = write!(~s({"name":"file","plane_url":"ws://file/agent"}))
-    System.put_env("PONT_RUNTIME_NAME", "From Env")
-    System.put_env("PONT_PLANE_URL", "ws://env/agent")
-    assert {:ok, link} = Pont.Link.read(path)
-    assert link.name == "from-env"
-    assert link.plane_url == "ws://env/agent"
-  end
-
   test "slug trims, lowercases, and caps the length" do
     assert Pont.Link.slug("  Hello, World! ") == "hello-world"
     assert Pont.Link.slug(String.duplicate("ab", 30)) == String.duplicate("ab", 20)
@@ -81,7 +63,4 @@ defmodule Pont.LinkTest do
     File.write!(path, body)
     path
   end
-
-  defp restore(key, nil), do: System.delete_env(key)
-  defp restore(key, value), do: System.put_env(key, value)
 end

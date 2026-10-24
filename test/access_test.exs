@@ -61,7 +61,7 @@ defmodule Pont.AccessTest do
 
   test "the agent socket caller must present the master token" do
     Application.delete_env(:pont, :master_token)
-    assert {:reject, "PONT_MASTER_TOKEN is not set."} = Pont.Access.agent_caller(conn("/agent"))
+    assert {:reject, "No token is set."} = Pont.Access.agent_caller(conn("/agent"))
 
     Application.put_env(:pont, :master_token, "sekret")
     assert {:reject, "The master token did not match."} = Pont.Access.agent_caller(conn("/agent"))

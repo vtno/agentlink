@@ -9,8 +9,13 @@ defmodule Pont.Setup do
       :ok
     else
       case Pont.Access.prepare() do
-        {:ok, text} -> IO.puts(text)
-        {:error, text} -> IO.puts(:stderr, text)
+        {:ok, text} ->
+          IO.puts(text)
+          :ok
+
+        {:error, text} ->
+          IO.puts(:stderr, text)
+          {:error, text}
       end
     end
   end
