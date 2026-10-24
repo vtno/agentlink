@@ -4,11 +4,10 @@ defmodule Pont.OpenCodeLiveTest do
   @moduletag :integration
   @port 18_099
 
-  @tag timeout: 180_000
+  @tag timeout: 240_000
   test "a client asks the running agent for a landing page" do
     dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "opencode.json"), ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"}))
 
     previous = %{
       agent_module: Application.get_env(:pont, :agent_module),
@@ -19,23 +18,16 @@ defmodule Pont.OpenCodeLiveTest do
       token: Application.get_env(:pont, :master_token)
     }
 
-    link = Path.join(dir, "agent.link.json")
-    File.write!(link, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"}))
-    Application.put_env(:pont, :link_path, link)
-
-    Application.put_env(:pont, :agent_module, Pont.OpenCode)
-    Application.put_env(:pont, :mode, :all)
-    Application.put_env(:pont, :port, @port)
-    Application.put_env(:pont, :workdir, dir)
-    Application.put_env(:pont, :master_token, "live-token")
+    {:ok, subject} = Agent.start(fn -> nil end)
 
     on_exit(fn ->
+      stop_subject(Agent.get(subject, & &1))
       stop_app()
       restore_env(previous)
       File.rm_rf(dir)
     end)
 
-    assert {:ok, _} = Pont.Application.start(:normal, [])
+    page_dir = start_subject(dir, subject)
     assert :ok = wait_runtime()
 
     {:ok, client} = Pont.LiveClient.start(@port)
@@ -57,7 +49,7 @@ defmodule Pont.OpenCodeLiveTest do
              })
 
     assert {:ok, %{"result" => %{"sessionId" => session_id}}} =
-             Pont.LiveClient.request(client, "session/new", %{"cwd" => dir, "mcpServers" => []})
+             Pont.LiveClient.request(client, "session/new", %{"cwd" => page_dir, "mcpServers" => []})
 
     _ = Pont.LiveClient.request(client, "session/set_config_option", %{
       "sessionId" => session_id,
@@ -82,7 +74,7 @@ defmodule Pont.OpenCodeLiveTest do
                150_000
              )
 
-    html = find_html(dir)
+    html = find_html(page_dir)
     assert {:ok, document} = File.read!(html) |> Floki.parse_document()
     assert Floki.find(document, "html") != []
     assert Floki.find(document, "head title") != []
@@ -95,6 +87,84 @@ defmodule Pont.OpenCodeLiveTest do
     assert text =~ ~r/registry/i
   end
 
+  defp start_subject(dir, subject) do
+    case System.get_env("PONT_BIN") do
+      nil -> start_app(dir)
+      bin -> start_binary(bin, dir, subject)
+    end
+  end
+
+  defp start_app(dir) do
+    File.write!(Path.join(dir, "opencode.json"), model_config())
+    link = Path.join(dir, "agent.link.json")
+    File.write!(link, link_json())
+    Application.put_env(:pont, :link_path, link)
+    Application.put_env(:pont, :agent_module, Pont.OpenCode)
+    Application.put_env(:pont, :mode, :all)
+    Application.put_env(:pont, :port, @port)
+    Application.put_env(:pont, :workdir, dir)
+    Application.put_env(:pont, :master_token, "live-token")
+    assert {:ok, _} = Pont.Application.start(:normal, [])
+    dir
+  end
+
+  defp start_binary(bin, dir, subject) do
+    home = Path.join(dir, "home")
+    page_dir = Path.join(home, ".pont/workspace")
+    File.mkdir_p!(page_dir)
+    File.write!(Path.join(page_dir, "opencode.json"), model_config())
+    File.mkdir_p!(Path.join(home, ".pont"))
+    File.write!(Path.join(home, ".pont/agent.link.json"), link_json())
+
+    opencode =
+      System.get_env("OPENCODE_BIN") ||
+        "/workspace/node_modules/@opencode/cli-linux-x64/bin/opencode"
+
+    port =
+      Port.open({:spawn_executable, bin}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        {:args, ["--port", Integer.to_string(@port), "--token", "live-token", "--opencode-bin", opencode]},
+        {:env, binary_env(home)}
+      ])
+
+    Agent.update(subject, fn _ -> port end)
+    page_dir
+  end
+
+  defp model_config do
+    ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"})
+  end
+
+  defp link_json do
+    ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"})
+  end
+
+  defp binary_env(home) do
+    real_home = System.user_home!()
+
+    System.get_env()
+    |> Map.put("HOME", home)
+    |> Map.put_new("XDG_DATA_HOME", Path.join(real_home, ".local/share"))
+    |> Map.put_new("XDG_CONFIG_HOME", Path.join(real_home, ".config"))
+    |> Map.put_new("XDG_STATE_HOME", Path.join(real_home, ".local/state"))
+    |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)
+  end
+
+  defp stop_subject(port) when is_port(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} -> System.cmd("kill", ["-TERM", Integer.to_string(pid)])
+      _ -> :ok
+    end
+
+    Port.close(port)
+  catch
+    _, _ -> :ok
+  end
+
+  defp stop_subject(_), do: :ok
+
   defp find_html(dir) do
     case Path.wildcard(Path.join(dir, "**/*.html")) do
       [path | _] -> path
@@ -103,6 +173,8 @@ defmodule Pont.OpenCodeLiveTest do
   end
 
   defp wait_runtime(left \\ 60) do
+    flush_binary()
+
     case status_runtimes() do
       [%{"name" => "opencode"}] -> :ok
       _ when left > 0 ->
@@ -111,6 +183,19 @@ defmodule Pont.OpenCodeLiveTest do
 
       other ->
         {:error, other}
+    end
+  end
+
+  defp flush_binary do
+    receive do
+      {_port, {:data, data}} ->
+        IO.binwrite(data)
+        flush_binary()
+
+      {_port, {:exit_status, status}} ->
+        IO.puts("pont binary exited #{status}")
+    after
+      0 -> :ok
     end
   end
 

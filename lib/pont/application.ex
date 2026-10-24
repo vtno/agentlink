@@ -19,13 +19,40 @@ defmodule Pont.Application do
           :all -> [Pont.Plane.Supervisor, Pont.Relay.Agent.Supervisor]
         end
 
-      Supervisor.start_link(children,
-        strategy: :one_for_one,
-        max_restarts: 5,
-        max_seconds: 20,
-        name: Pont.Supervisor
-      )
+      case Supervisor.start_link(children,
+             strategy: :one_for_one,
+             max_restarts: 5,
+             max_seconds: 20,
+             name: Pont.Supervisor
+           ) do
+        {:ok, _pid} = ok ->
+          keep_wrapped_vm()
+          ok
+
+        other ->
+          other
+      end
     end
+  end
+
+  # The wrapper hands our flags to Elixir's CLI. That CLI treats them as
+  # files and then halts. A wrapped VM stays up only if that CLI does nothing.
+  defp keep_wrapped_vm do
+    if System.get_env("__BURRITO") do
+      :code.unstick_mod(Kernel.CLI)
+
+      [{Kernel.CLI, beam}] =
+        Code.compile_string("""
+        defmodule Kernel.CLI do
+          def main(_argv), do: :ok
+        end
+        """)
+
+      :code.purge(Kernel.CLI)
+      :code.load_binary(Kernel.CLI, ~c"pont_cli.beam", beam)
+    end
+
+    :ok
   end
 
   defp command do
