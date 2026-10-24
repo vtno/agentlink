@@ -25,10 +25,11 @@ defmodule Pont.CLI do
 
   @doc "Turn argv into a command. `:help` prints usage and does not start."
   def parse([]), do: {:ok, %__MODULE__{}}
-  def parse(["--help"]), do: {:ok, :help}
-  def parse(["-h"]), do: {:ok, :help}
+  def parse(["--help" | _]), do: {:ok, :help}
+  def parse(["-h" | _]), do: {:ok, :help}
   def parse(["plane" | rest]), do: flags(rest, %__MODULE__{mode: :plane})
   def parse(["agent" | rest]), do: flags(rest, %__MODULE__{mode: :agent})
+  def parse(["--" <> _ | _] = argv), do: flags(argv, %__MODULE__{})
   def parse(_argv), do: {:error, usage()}
 
   @doc "The commands this binary accepts."

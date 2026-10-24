@@ -18,6 +18,7 @@ mix run --no-halt
 That starts the plane and the agent relay. Arguments go after `--`.
 
 ```sh
+mix run --no-halt -- --port 8090 --token 'the-token'
 mix run --no-halt -- plane --port 8090
 mix run --no-halt -- agent --token 'the-token'
 ```

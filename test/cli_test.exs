@@ -5,6 +5,11 @@ defmodule Pont.CLITest do
     assert {:ok, %Pont.CLI{mode: :all, port: nil, token: nil}} = Pont.CLI.parse([])
   end
 
+  test "the root command takes a port and a token" do
+    assert {:ok, %Pont.CLI{mode: :all, port: 9000, token: "sekret"}} =
+             Pont.CLI.parse(["--port", "9000", "--token", "sekret"])
+  end
+
   test "plane takes a port and a token" do
     assert {:ok, %Pont.CLI{mode: :plane, port: 9000, token: "sekret"}} =
              Pont.CLI.parse(["plane", "--port", "9000", "--token", "sekret"])
