@@ -4,9 +4,9 @@ defmodule Pont.CLI do
   `plane` is the plane alone. `relay` starts `Pont.Relay.Agent`.
   """
 
-  defstruct mode: :all, port: nil, token: nil
+  defstruct mode: :all, port: nil, token: nil, opencode_bin: nil
 
-  @doc "Read the command and store the mode, port, and token."
+  @doc "Read the command and store the mode, port, token, and OpenCode executable."
   def apply(argv \\ System.argv()) do
     case parse(argv) do
       {:ok, :help} ->
@@ -35,34 +35,45 @@ defmodule Pont.CLI do
   @doc "The commands this binary accepts."
   def usage do
     """
-    pont [--port PORT] [--token TOKEN]
+    pont [--port PORT] [--token TOKEN] [--opencode-bin PATH]
     pont plane [--port PORT] [--token TOKEN]
-    pont relay --token TOKEN
+    pont relay --token TOKEN [--opencode-bin PATH]
     """
   end
 
   defp listen(rest, mode) do
     with {:ok, opts} <- options(rest),
+         :ok <- plane_bin(mode, opts),
          {:ok, port} <- optional_port(opts[:port]),
-         {:ok, token} <- optional_token(opts[:token]) do
-      {:ok, %__MODULE__{mode: mode, port: port, token: token}}
+         {:ok, token} <- optional_token(opts[:token]),
+         {:ok, bin} <- optional_bin(opts[:opencode_bin]) do
+      {:ok, %__MODULE__{mode: mode, port: port, token: token, opencode_bin: bin}}
     end
   end
 
   defp relay(rest) do
     with {:ok, opts} <- options(rest),
          :ok <- no_port(opts),
-         {:ok, token} <- required_token(opts[:token]) do
-      {:ok, %__MODULE__{mode: :relay, token: token}}
+         {:ok, token} <- required_token(opts[:token]),
+         {:ok, bin} <- optional_bin(opts[:opencode_bin]) do
+      {:ok, %__MODULE__{mode: :relay, token: token, opencode_bin: bin}}
     end
   end
 
   defp options(rest) do
-    case OptionParser.parse(rest, strict: [port: :integer, token: :string]) do
+    case OptionParser.parse(rest, strict: [port: :integer, token: :string, opencode_bin: :string]) do
       {opts, [], []} -> {:ok, opts}
       _ -> {:error, usage()}
     end
   end
+
+  defp plane_bin(:plane, opts) do
+    if Keyword.has_key?(opts, :opencode_bin),
+      do: {:error, "pont plane does not run opencode.\n" <> usage()},
+      else: :ok
+  end
+
+  defp plane_bin(_mode, _opts), do: :ok
 
   defp no_port(opts) do
     if Keyword.has_key?(opts, :port),
@@ -83,14 +94,27 @@ defmodule Pont.CLI do
 
   defp optional_port(_port), do: {:error, "port must be from 1 to 65535.\n" <> usage()}
 
-  defp store(%__MODULE__{mode: mode, port: port, token: token}) do
+  defp optional_bin(nil), do: {:ok, nil}
+  defp optional_bin(""), do: {:error, usage()}
+
+  defp optional_bin(path) when is_binary(path) do
+    expanded = Path.expand(path)
+
+    if File.exists?(expanded),
+      do: {:ok, expanded},
+      else: {:error, "opencode bin not found: #{expanded}\n" <> usage()}
+  end
+
+  defp store(%__MODULE__{mode: mode, port: port, token: token, opencode_bin: opencode_bin}) do
     Application.put_env(:pont, :mode, mode)
 
     if port do
       Application.put_env(:pont, :port, port)
       Application.put_env(:pont, :plane_url, Pont.Paths.plane_url(port))
     end
+
     if token, do: Application.put_env(:pont, :master_token, token)
+    if opencode_bin, do: Application.put_env(:pont, :opencode_bin, opencode_bin)
     :ok
   end
 end

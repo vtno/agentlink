@@ -31,6 +31,38 @@ defmodule Pont.CLITest do
     assert {:ok, :help} = Pont.CLI.parse(["--help"])
   end
 
+  test "relay and the root command take an OpenCode executable" do
+    path = Path.join(System.tmp_dir!(), "pont-opencode-#{System.unique_integer([:positive])}")
+    File.touch!(path)
+    on_exit(fn -> File.rm(path) end)
+    expanded = Path.expand(path)
+
+    assert {:ok, %Pont.CLI{mode: :all, opencode_bin: ^expanded}} =
+             Pont.CLI.parse(["--opencode-bin", path])
+
+    assert {:ok, %Pont.CLI{mode: :relay, token: "sekret", opencode_bin: ^expanded}} =
+             Pont.CLI.parse(["relay", "--token", "sekret", "--opencode-bin", path])
+
+    assert {:error, message} = Pont.CLI.parse(["plane", "--opencode-bin", path])
+    assert message =~ "does not run opencode"
+    assert {:error, message} = Pont.CLI.parse(["--opencode-bin", path <> "-missing"])
+    assert message =~ "not found"
+  end
+
+  test "apply stores the OpenCode executable" do
+    path = Path.join(System.tmp_dir!(), "pont-opencode-#{System.unique_integer([:positive])}")
+    File.touch!(path)
+    on_exit(fn -> File.rm(path) end)
+    previous = Application.get_env(:pont, :opencode_bin)
+    mode = Application.get_env(:pont, :mode)
+
+    assert :ok = Pont.CLI.apply(["--opencode-bin", path])
+    assert Application.get_env(:pont, :opencode_bin) == Path.expand(path)
+
+    restore(:opencode_bin, previous)
+    restore(:mode, mode)
+  end
+
   test "apply stores the command" do
     previous = %{
       mode: Application.get_env(:pont, :mode),

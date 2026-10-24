@@ -20,10 +20,10 @@ That starts the plane and the agent relay. Arguments go after `--`.
 ```sh
 mix run --no-halt -- --port 8090 --token 'the-token'
 mix run --no-halt -- plane --port 8090
-mix run --no-halt -- relay --token 'the-token'
+mix run --no-halt -- relay --token 'the-token' --opencode-bin /usr/local/bin/opencode
 ```
 
-`plane` is the plane alone. `relay` starts the relay alone. The relay reads `$HOME/.pont/agent.link.json` for the name, the label, the program, and the plane URL. `--port` is the plane's port. `--token` is the single-player token. A plane with no token mints one and prints `pont relay --token '…'`.
+`plane` is the plane alone. `relay` starts the relay alone. The relay reads `$HOME/.pont/agent.link.json` for the name, the label, the program, and the plane URL. `--port` is the plane's port. `--token` is the single-player token. `--opencode-bin` is the OpenCode executable when it is not on `PATH`. A plane with no token mints one and prints `pont relay --token '…'`.
 
 ## Routes
 
