@@ -5,7 +5,16 @@ defmodule Pont.CLITest do
     System.put_env("__BURRITO", "1")
     on_exit(fn -> System.delete_env("__BURRITO") end)
 
-    assert Pont.CLI.argv_from_launch() == Enum.map(:init.get_plain_arguments(), &to_string/1)
+    assert Pont.CLI.argv_from_launch() ==
+             :init.get_plain_arguments() |> Enum.map(&to_string/1) |> Pont.CLI.drop_launcher_prefix()
+  end
+
+  test "the launcher prefix is not a pont argument" do
+    assert Pont.CLI.drop_launcher_prefix(["--no-halt", "--", "plane", "--port", "9000"]) ==
+             ["plane", "--port", "9000"]
+
+    assert Pont.CLI.drop_launcher_prefix(["--", "plane"]) == ["plane"]
+    assert Pont.CLI.drop_launcher_prefix(["plane"]) == ["plane"]
   end
 
   test "no arguments run the plane and the relay" do

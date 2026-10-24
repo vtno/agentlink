@@ -35,7 +35,12 @@ defmodule Pont.MixProject do
       {:mint, "~> 1.6"},
       {:mint_web_socket, "~> 1.0"},
       {:floki, "~> 0.37", only: :test},
-      {:burrito, "~> 1.6", runtime: false}
+      # PR #230 (fix/dont-let-elixir-cli-consume-app-args). Not released.
+      # The launcher passes `--no-halt --` so Elixir's CLI does not halt.
+      {:burrito,
+       github: "joshrotenberg/burrito",
+       ref: "f2d437041418abb9073a6d7588d22835a04ee7cb",
+       runtime: false}
     ]
   end
 
