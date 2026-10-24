@@ -23,7 +23,7 @@ defmodule Pont.CLI do
     end
   end
 
-  @doc "Turn argv into a command. `:help` prints usage and does not start."
+  @doc "Turn argv into a command. `:help` means show usage and do not start."
   def parse([]), do: {:ok, %__MODULE__{}}
   def parse(["--help" | _]), do: {:ok, :help}
   def parse(["-h" | _]), do: {:ok, :help}
@@ -85,8 +85,11 @@ defmodule Pont.CLI do
 
   defp store(%__MODULE__{mode: mode, port: port, token: token}) do
     Application.put_env(:pont, :mode, mode)
-    if port, do: Application.put_env(:pont, :port, port)
-    if port, do: Application.put_env(:pont, :plane_url, Pont.Paths.plane_url(port))
+
+    if port do
+      Application.put_env(:pont, :port, port)
+      Application.put_env(:pont, :plane_url, Pont.Paths.plane_url(port))
+    end
     if token, do: Application.put_env(:pont, :master_token, token)
     :ok
   end
