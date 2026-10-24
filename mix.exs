@@ -32,7 +32,8 @@ defmodule Pont.MixProject do
       {:jason, "~> 1.4"},
       {:plug, "~> 1.16"},
       {:mint, "~> 1.6"},
-      {:mint_web_socket, "~> 1.0"}
+      {:mint_web_socket, "~> 1.0"},
+      {:floki, "~> 0.37", only: :test}
     ]
   end
 end

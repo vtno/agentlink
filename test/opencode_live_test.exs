@@ -87,9 +87,16 @@ defmodule Pont.OpenCodeLiveTest do
              )
 
     html = find_html(dir)
-    body = File.read!(html)
-    assert body =~ ~r/<html/i
-    assert body =~ ~r/control plane/i
+    assert {:ok, document} = File.read!(html) |> Floki.parse_document()
+    assert Floki.find(document, "html") != []
+    assert Floki.find(document, "head title") != []
+    assert Floki.find(document, "body") != []
+
+    text = Floki.text(document)
+    assert text =~ ~r/control plane/i
+    assert text =~ ~r/websocket/i
+    assert text =~ ~r/relay/i
+    assert text =~ ~r/registry/i
   end
 
   defp find_html(dir) do
