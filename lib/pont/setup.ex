@@ -3,9 +3,12 @@ defmodule Pont.Setup do
   Prints the instructions from the access policy. The policy decides how a token is created.
   """
 
+  # Mix is not in a release. Decide this when the file is compiled.
+  @skip_prepare Mix.env() == :test
+
   @doc "Ask the access policy to install credentials, and show its instructions. Tests skip this."
   def prepare do
-    if Mix.env() == :test do
+    if @skip_prepare do
       :ok
     else
       case Pont.Access.prepare() do

@@ -7,6 +7,9 @@ defmodule Pont.Application do
 
   use Application
 
+  # A release has no Mix. A bad command must exit. A crash dump is the wrong signal.
+  @halt_boot_error Mix.env() != :test
+
   @impl true
   def start(_type, _args) do
     with :ok <- command(),
@@ -33,7 +36,7 @@ defmodule Pont.Application do
       case Pont.CLI.apply() do
         :ok -> :ok
         {:halt, code} -> System.halt(code)
-        {:error, message} -> {:error, message}
+        {:error, message} -> boot_error(message)
       end
     else
       :ok
@@ -52,8 +55,12 @@ defmodule Pont.Application do
 
           {:error, message} ->
             IO.puts(:stderr, message)
-            {:error, message}
+            boot_error(message)
         end
     end
+  end
+
+  defp boot_error(message) do
+    if @halt_boot_error, do: System.halt(1), else: {:error, message}
   end
 end

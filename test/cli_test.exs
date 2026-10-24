@@ -1,6 +1,29 @@
 defmodule Pont.CLITest do
   use ExUnit.Case, async: false
 
+  test "a wrapped binary drops the launcher prefix" do
+    System.put_env("__BURRITO", "1")
+    on_exit(fn -> System.delete_env("__BURRITO") end)
+
+    assert Pont.CLI.argv_from_launch(["--no-halt", "--", "plane", "--port", "9000"]) ==
+             ["plane", "--port", "9000"]
+  end
+
+  test "a normal launch does not drop the launcher prefix" do
+    System.delete_env("__BURRITO")
+
+    assert Pont.CLI.argv_from_launch(["--no-halt", "--", "plane"]) ==
+             ["--no-halt", "--", "plane"]
+  end
+
+  test "the launcher prefix is not a pont argument" do
+    assert Pont.CLI.drop_launcher_prefix(["--no-halt", "--", "plane", "--port", "9000"]) ==
+             ["plane", "--port", "9000"]
+
+    assert Pont.CLI.drop_launcher_prefix(["--", "plane"]) == ["--", "plane"]
+    assert Pont.CLI.drop_launcher_prefix(["plane"]) == ["plane"]
+  end
+
   test "no arguments run the plane and the relay" do
     assert {:ok, %Pont.CLI{mode: :all, port: nil, token: nil}} = Pont.CLI.parse([])
   end

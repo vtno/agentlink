@@ -1,43 +1,25 @@
 defmodule Pont.OpenCodeLiveTest do
   use ExUnit.Case, async: false
 
-  @moduletag :integration
   @port 18_099
 
-  @tag timeout: 180_000
-  test "a client asks the running agent for a landing page" do
-    dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "opencode.json"), ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"}))
-
-    previous = %{
-      agent_module: Application.get_env(:pont, :agent_module),
-      mode: Application.get_env(:pont, :mode),
-      port: Application.get_env(:pont, :port),
-      workdir: Application.get_env(:pont, :workdir),
-      link_path: Application.get_env(:pont, :link_path),
-      token: Application.get_env(:pont, :master_token)
-    }
-
-    link = Path.join(dir, "agent.link.json")
-    File.write!(link, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"}))
-    Application.put_env(:pont, :link_path, link)
-
-    Application.put_env(:pont, :agent_module, Pont.OpenCode)
-    Application.put_env(:pont, :mode, :all)
-    Application.put_env(:pont, :port, @port)
-    Application.put_env(:pont, :workdir, dir)
-    Application.put_env(:pont, :master_token, "live-token")
+  @tag :wrapped
+  @tag timeout: 240_000
+  test "the wrapped binary asks the agent for a landing page" do
+    dir = tmp_dir()
+    {:ok, wrapper} = Agent.start(fn -> nil end)
 
     on_exit(fn ->
-      stop_app()
-      restore_env(previous)
+      stop_wrapper(Agent.get(wrapper, & &1))
       File.rm_rf(dir)
     end)
 
-    assert {:ok, _} = Pont.Application.start(:normal, [])
+    page_dir = start_binary(System.fetch_env!("PONT_BIN"), dir, wrapper)
     assert :ok = wait_runtime()
+    request_page(page_dir)
+  end
 
+  defp request_page(page_dir) do
     {:ok, client} = Pont.LiveClient.start(@port)
 
     assert {:ok, %{"result" => %{"runtimes" => [%{"name" => "opencode"}]}}} =
@@ -57,7 +39,7 @@ defmodule Pont.OpenCodeLiveTest do
              })
 
     assert {:ok, %{"result" => %{"sessionId" => session_id}}} =
-             Pont.LiveClient.request(client, "session/new", %{"cwd" => dir, "mcpServers" => []})
+             Pont.LiveClient.request(client, "session/new", %{"cwd" => page_dir, "mcpServers" => []})
 
     _ = Pont.LiveClient.request(client, "session/set_config_option", %{
       "sessionId" => session_id,
@@ -82,7 +64,7 @@ defmodule Pont.OpenCodeLiveTest do
                150_000
              )
 
-    html = find_html(dir)
+    html = find_html(page_dir)
     assert {:ok, document} = File.read!(html) |> Floki.parse_document()
     assert Floki.find(document, "html") != []
     assert Floki.find(document, "head title") != []
@@ -95,6 +77,80 @@ defmodule Pont.OpenCodeLiveTest do
     assert text =~ ~r/registry/i
   end
 
+  defp tmp_dir do
+    dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    dir
+  end
+
+  defp paths_under(home) do
+    root = System.user_home!()
+    {under_home(Pont.Paths.link(), root, home), under_home(Pont.Paths.default_workdir(), root, home)}
+  end
+
+  defp start_binary(bin, dir, wrapper) do
+    home = Path.join(dir, "home")
+    File.mkdir_p!(home)
+    {link, page_dir} = paths_under(home)
+    File.mkdir_p!(Path.dirname(link))
+    File.mkdir_p!(page_dir)
+    File.write!(Path.join(page_dir, "opencode.json"), model_config())
+    File.write!(link, link_json())
+
+    opencode = System.get_env("OPENCODE_BIN") || Pont.Paths.default_opencode_bin()
+    unless File.exists?(opencode), do: flunk("opencode not found: #{opencode}")
+
+    port =
+      Port.open({:spawn_executable, bin}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        {:args, ["--port", Integer.to_string(@port), "--token", "live-token", "--opencode-bin", opencode]},
+        {:env, binary_env(home)}
+      ])
+
+    Agent.update(wrapper, fn _ -> port end)
+    page_dir
+  end
+
+  defp under_home(path, root, home) do
+    relative = Path.relative_to(path, root)
+    if relative == path, do: flunk("Pont.Paths returned #{path}, which is not under #{root}")
+    Path.join(home, relative)
+  end
+
+  defp model_config do
+    ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"})
+  end
+
+  defp link_json do
+    ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"})
+  end
+
+  defp binary_env(home) do
+    real_home = System.user_home!()
+
+    System.get_env()
+    |> Map.put("HOME", home)
+    |> Map.put_new("XDG_DATA_HOME", Path.join(real_home, ".local/share"))
+    |> Map.put_new("XDG_CONFIG_HOME", Path.join(real_home, ".config"))
+    |> Map.put_new("XDG_STATE_HOME", Path.join(real_home, ".local/state"))
+    |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)
+  end
+
+  defp stop_wrapper(port) when is_port(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} -> System.cmd("kill", ["-TERM", Integer.to_string(pid)])
+      _ -> :ok
+    end
+
+    Port.close(port)
+  catch
+    _, _ -> :ok
+  end
+
+  defp stop_wrapper(_), do: :ok
+
   defp find_html(dir) do
     case Path.wildcard(Path.join(dir, "**/*.html")) do
       [path | _] -> path
@@ -103,6 +159,8 @@ defmodule Pont.OpenCodeLiveTest do
   end
 
   defp wait_runtime(left \\ 60) do
+    flush_binary()
+
     case status_runtimes() do
       [%{"name" => "opencode"}] -> :ok
       _ when left > 0 ->
@@ -111,6 +169,19 @@ defmodule Pont.OpenCodeLiveTest do
 
       other ->
         {:error, other}
+    end
+  end
+
+  defp flush_binary do
+    receive do
+      {_port, {:data, data}} ->
+        IO.binwrite(data)
+        flush_binary()
+
+      {_port, {:exit_status, status}} ->
+        IO.puts("pont binary exited #{status}")
+    after
+      0 -> :ok
     end
   end
 
@@ -132,33 +203,6 @@ defmodule Pont.OpenCodeLiveTest do
         []
     end
   end
-
-  defp stop_app do
-    case Process.whereis(Pont.Supervisor) do
-      nil ->
-        :ok
-
-      pid ->
-        Process.unlink(pid)
-        Supervisor.stop(pid, :shutdown, 10_000)
-    end
-  catch
-    :exit, _ -> :ok
-  end
-
-  defp restore_env(previous) do
-    Application.put_env(:pont, :agent_module, previous.agent_module)
-    Application.put_env(:pont, :mode, previous.mode)
-    Application.put_env(:pont, :port, previous.port)
-    Application.put_env(:pont, :workdir, previous.workdir)
-    restore_link(previous.link_path)
-    restore_token(previous.token)
-  end
-
-  defp restore_link(nil), do: Application.delete_env(:pont, :link_path)
-  defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
-  defp restore_token(nil), do: Application.delete_env(:pont, :master_token)
-  defp restore_token(token), do: Application.put_env(:pont, :master_token, token)
 end
 
 defmodule Pont.LiveClient do

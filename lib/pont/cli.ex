@@ -7,7 +7,9 @@ defmodule Pont.CLI do
   defstruct mode: :all, port: nil, token: nil, opencode_bin: nil
 
   @doc "Read the command and store the mode, port, token, and OpenCode executable."
-  def apply(argv \\ System.argv()) do
+  def apply(argv \\ nil) do
+    argv = argv || argv_from_launch()
+
     case parse(argv) do
       {:ok, :help} ->
         IO.puts(usage())
@@ -22,6 +24,22 @@ defmodule Pont.CLI do
         {:error, message}
     end
   end
+
+  @doc "Arguments from the wrapped binary, or from the normal Elixir launch."
+  def argv_from_launch(argv \\ nil) do
+    argv =
+      cond do
+        is_list(argv) -> argv
+        System.get_env("__BURRITO") != nil -> :init.get_plain_arguments() |> Enum.map(&to_string/1)
+        true -> System.argv()
+      end
+
+    if System.get_env("__BURRITO") != nil, do: drop_launcher_prefix(argv), else: argv
+  end
+
+  @doc "Drop the `--no-halt --` pair the Burrito launcher inserts."
+  def drop_launcher_prefix(["--no-halt", "--" | rest]), do: rest
+  def drop_launcher_prefix(args), do: args
 
   @doc "Turn argv into a command. `:help` means show usage and do not start."
   def parse([]), do: {:ok, %__MODULE__{}}
