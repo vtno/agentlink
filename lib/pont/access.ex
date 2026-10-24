@@ -15,7 +15,7 @@ defmodule Pont.Access do
   @doc "True when this subject may use this uplink."
   @callback allowed?(Subject.t(), name :: String.t()) :: boolean
 
-  @doc "A sidecar is claiming this uplink. `:reject` refuses the dial. A policy may omit this."
+  @doc "An uplink is claiming its name. `:reject` refuses the hello. A policy may omit this."
   @callback claim(Subject.t(), name :: String.t()) :: :ok | :reject
 
   @doc "Install this policy before the sockets open. Return text for the operator, or an error."
@@ -44,8 +44,8 @@ defmodule Pont.Access do
   @doc "Resolve the caller through the configured implementation."
   def authenticate(conn), do: implementation().authenticate(conn)
 
-  @doc "A sidecar dial. The request must present the master token, then the policy names the subject."
-  def sidecar(conn) do
+  @doc "Name the caller of the agent socket. The request must present the master token."
+  def agent_caller(conn) do
     cond do
       not Pont.Auth.enabled?() ->
         {:reject, "PONT_MASTER_TOKEN is not set."}

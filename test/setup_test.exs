@@ -39,12 +39,12 @@ defmodule Pont.SetupTest do
     Application.put_env(:pont, :master_token, "sekret")
     assert {:ok, text} = Pont.Access.Single.prepare(:plane)
     assert text =~ Pont.Access.Single.command("sekret", "wss://plane.example/agent")
-    assert text =~ "Waiting for the sidecar to connect."
+    assert text =~ "Waiting for the uplink to connect."
 
     assert {:ok, local} = Pont.Access.Single.prepare(:all)
     assert local =~ "sekret"
     assert local =~ Pont.Access.Single.command("sekret", "wss://plane.example/agent")
-    assert local =~ "sidecar on this machine is starting"
+    assert local =~ "agent relay on this machine is starting"
   end
 
   test "the watcher reports a connection and a rejection" do
@@ -64,7 +64,7 @@ defmodule Pont.SetupTest do
         :sys.get_state(pid)
       end)
 
-    assert connected =~ "Sidecar connected: opencode (this machine)."
+    assert connected =~ "Uplink connected: opencode (this machine)."
     assert rejected =~ "master token did not match"
   end
 

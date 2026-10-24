@@ -60,11 +60,11 @@ defmodule Pont.Plane do
   @doc "Text from an app. Route it as ACP from that client."
   def client_frame(client_id, text), do: GenServer.cast(__MODULE__, {:frame, client_id, text})
 
-  @doc "Text from a sidecar. Route it as ACP from that agent."
+  @doc "Text from the agent socket. Route it as ACP from that agent."
   def agent_frame(name, text) when is_binary(name) and is_binary(text),
     do: GenServer.cast(__MODULE__, {:agent_frame, name, text})
 
-  @doc "The same agent dialed again. Drop the cached slot so the next app initializes it fresh."
+  @doc "The same uplink dialed again. Drop the cached slot so the next app initializes it fresh."
   def runtime_reset(name) when is_binary(name), do: GenServer.cast(__MODULE__, {:runtime_reset, name})
 
   @doc "The agent socket closed. Fail whatever was still waiting on it."

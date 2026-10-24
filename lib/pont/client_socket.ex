@@ -1,6 +1,6 @@
 defmodule Pont.ClientSocket do
   @moduledoc """
-  One client connection. Registers with the plane, then forwards each text frame.
+  The app connection. Registers with the plane, then forwards each text frame.
   """
 
   @behaviour WebSock

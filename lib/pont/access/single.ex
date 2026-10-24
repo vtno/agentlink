@@ -33,7 +33,7 @@ defmodule Pont.Access.Single do
     end
   end
 
-  @doc "The shell line that starts a sidecar against this plane."
+  @doc "The shell line that starts an agent relay against this plane."
   def command(token, url) when is_binary(token) and is_binary(url) do
     "PONT_MODE=agent PONT_MASTER_TOKEN='#{token}' PONT_PLANE_URL='#{url}' mix run --no-halt"
   end
@@ -74,7 +74,7 @@ defmodule Pont.Access.Single do
         #{command(token, url)}
 
         The plane listens on 127.0.0.1. If that machine is not this one, set PONT_PLANE_URL to an address it can reach.
-        Waiting for the sidecar to connect.
+        Waiting for the uplink to connect.
         """
 
       :all ->
@@ -82,14 +82,14 @@ defmodule Pont.Access.Single do
         #{origin}
         #{token}
 
-        The sidecar on this machine is starting.
+        The agent relay on this machine is starting.
         Another machine can dial with:
 
         #{command(token, url)}
         """
 
       :agent ->
-        "#{origin}\nThe sidecar will dial #{url}.\n"
+        "#{origin}\nThe uplink will dial #{url}.\n"
     end
   end
 

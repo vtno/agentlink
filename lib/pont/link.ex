@@ -1,7 +1,7 @@
 defmodule Pont.Link do
   @moduledoc """
-  The sidecar's link file. The uplink sends this name when it dials.
-  A missing file stops the sidecar. `PONT_RUNTIME_NAME` and `PONT_PLANE_URL`
+  The agent relay's link file. The uplink sends this name when it dials.
+  A missing file stops the agent relay. `PONT_RUNTIME_NAME` and `PONT_PLANE_URL`
   still override a file that exists.
   """
 
@@ -57,7 +57,7 @@ defmodule Pont.Link do
   defp missing(path) do
     """
     No link file at #{path}.
-    The sidecar stops until you create it. Example:
+    The agent relay stops until you create it. Example:
 
     {
       "name": "opencode",

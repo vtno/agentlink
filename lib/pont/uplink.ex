@@ -1,6 +1,6 @@
 defmodule Pont.Uplink do
   @moduledoc """
-  Sidecar side of the plane socket. Outbound text frames are one JSON object.
+  Dials the plane's agent socket. Outbound text frames are one JSON object.
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
   process directly.
   """
@@ -17,7 +17,7 @@ defmodule Pont.Uplink do
     outbox: []
   ]
 
-  @doc "Dial the plane. This process is the socket, so a remote sidecar never calls the plane directly."
+  @doc "Dial the plane's agent socket. A remote relay never calls the plane process directly."
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -89,7 +89,7 @@ defmodule Pont.Uplink do
 
       {:error, conn, reason, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &apply_response/2)
-        Logger.warning("sidecar uplink error #{inspect(reason)}")
+        Logger.warning("uplink error #{inspect(reason)}")
         close_conn(state)
         schedule(%{state | conn: nil, websocket: nil, ref: nil})
 
@@ -107,7 +107,7 @@ defmodule Pont.Uplink do
         Enum.reduce(frames, state, &apply_frame/2)
 
       {:error, websocket, reason} ->
-        Logger.warning("sidecar uplink decode failed #{inspect(reason)}")
+        Logger.warning("uplink decode failed #{inspect(reason)}")
         %{state | websocket: websocket}
     end
   end
@@ -127,7 +127,7 @@ defmodule Pont.Uplink do
   end
 
   defp apply_frame({:error, reason}, state) do
-    Logger.warning("sidecar uplink frame error #{inspect(reason)}")
+    Logger.warning("uplink frame error #{inspect(reason)}")
     state
   end
 
@@ -152,13 +152,13 @@ defmodule Pont.Uplink do
             %{state | conn: conn, websocket: websocket}
 
           {:error, conn, reason} ->
-            Logger.warning("sidecar uplink send failed #{inspect(reason)}")
+            Logger.warning("uplink send failed #{inspect(reason)}")
             Mint.HTTP.close(conn)
             %{state | conn: nil, websocket: nil, ref: nil}
         end
 
       {:error, websocket, reason} ->
-        Logger.warning("sidecar uplink encode failed #{inspect(reason)}")
+        Logger.warning("uplink encode failed #{inspect(reason)}")
         %{state | websocket: websocket}
     end
   end
@@ -209,7 +209,7 @@ defmodule Pont.Uplink do
       {:ok, conn} ->
         case upgrade(conn, ws_scheme, path) do
           {:ok, conn, ref, websocket} ->
-            Logger.info("sidecar uplink connected #{link.plane_url}")
+            Logger.info("uplink connected #{link.plane_url}")
             state = %{state | conn: conn, websocket: websocket, ref: ref, link: link}
             state = transmit(uplink_hello(link), state)
 
@@ -221,20 +221,20 @@ defmodule Pont.Uplink do
                 case Mint.HTTP.set_mode(state.conn, :active) do
                   {:ok, conn} -> {:noreply, flush(%{state | conn: conn})}
                   {:error, conn, reason} ->
-                    Logger.warning("sidecar uplink active mode failed #{inspect(reason)}")
+                    Logger.warning("uplink active mode failed #{inspect(reason)}")
                     Mint.HTTP.close(conn)
                     schedule(%{state | conn: nil, websocket: nil, ref: nil})
                 end
             end
 
           {:error, conn, reason} ->
-            Logger.warning("sidecar uplink handshake failed #{inspect(reason)}")
+            Logger.warning("uplink handshake failed #{inspect(reason)}")
             Mint.HTTP.close(conn)
             schedule(%{state | conn: nil, websocket: nil, ref: nil})
         end
 
       {:error, reason} ->
-        Logger.warning("sidecar uplink connect failed #{inspect(reason)}")
+        Logger.warning("uplink connect failed #{inspect(reason)}")
         schedule(%{state | conn: nil, websocket: nil, ref: nil})
     end
   end
