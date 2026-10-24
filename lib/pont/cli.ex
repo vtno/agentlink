@@ -26,19 +26,19 @@ defmodule Pont.CLI do
   end
 
   @doc "Arguments from the wrapped binary, or from the normal Elixir launch."
-  def argv_from_launch do
-    if System.get_env("__BURRITO") != nil do
-      :init.get_plain_arguments()
-      |> Enum.map(&to_string/1)
-      |> drop_launcher_prefix()
-    else
-      System.argv()
-    end
+  def argv_from_launch(argv \\ nil) do
+    argv =
+      cond do
+        is_list(argv) -> argv
+        System.get_env("__BURRITO") != nil -> :init.get_plain_arguments() |> Enum.map(&to_string/1)
+        true -> System.argv()
+      end
+
+    if System.get_env("__BURRITO") != nil, do: drop_launcher_prefix(argv), else: argv
   end
 
   @doc "Drop the `--no-halt --` pair the Burrito launcher inserts."
   def drop_launcher_prefix(["--no-halt", "--" | rest]), do: rest
-  def drop_launcher_prefix(["--" | rest]), do: rest
   def drop_launcher_prefix(args), do: args
 
   @doc "Turn argv into a command. `:help` means show usage and do not start."

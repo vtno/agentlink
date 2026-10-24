@@ -1,35 +1,42 @@
 defmodule Pont.OpenCodeLiveTest do
   use ExUnit.Case, async: false
 
-  @moduletag :integration
   @port 18_099
 
-  @tag timeout: 240_000
+  @tag :integration
+  @tag timeout: 180_000
   test "a client asks the running agent for a landing page" do
-    dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-
-    previous = %{
-      agent_module: Application.get_env(:pont, :agent_module),
-      mode: Application.get_env(:pont, :mode),
-      port: Application.get_env(:pont, :port),
-      workdir: Application.get_env(:pont, :workdir),
-      link_path: Application.get_env(:pont, :link_path),
-      token: Application.get_env(:pont, :master_token)
-    }
-
-    {:ok, subject} = Agent.start(fn -> nil end)
+    dir = tmp_dir()
+    previous = capture_env()
 
     on_exit(fn ->
-      stop_subject(Agent.get(subject, & &1))
       stop_app()
       restore_env(previous)
       File.rm_rf(dir)
     end)
 
-    page_dir = start_subject(dir, subject)
+    page_dir = start_app(dir)
     assert :ok = wait_runtime()
+    request_page(page_dir)
+  end
 
+  @tag :wrapped
+  @tag timeout: 240_000
+  test "the wrapped binary asks the agent for a landing page" do
+    dir = tmp_dir()
+    {:ok, wrapper} = Agent.start(fn -> nil end)
+
+    on_exit(fn ->
+      stop_wrapper(Agent.get(wrapper, & &1))
+      File.rm_rf(dir)
+    end)
+
+    page_dir = start_binary(System.fetch_env!("PONT_BIN"), dir, wrapper)
+    assert :ok = wait_runtime()
+    request_page(page_dir)
+  end
+
+  defp request_page(page_dir) do
     {:ok, client} = Pont.LiveClient.start(@port)
 
     assert {:ok, %{"result" => %{"runtimes" => [%{"name" => "opencode"}]}}} =
@@ -87,11 +94,21 @@ defmodule Pont.OpenCodeLiveTest do
     assert text =~ ~r/registry/i
   end
 
-  defp start_subject(dir, subject) do
-    case System.get_env("PONT_BIN") do
-      nil -> start_app(dir)
-      bin -> start_binary(bin, dir, subject)
-    end
+  defp tmp_dir do
+    dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    dir
+  end
+
+  defp capture_env do
+    %{
+      agent_module: Application.get_env(:pont, :agent_module),
+      mode: Application.get_env(:pont, :mode),
+      port: Application.get_env(:pont, :port),
+      workdir: Application.get_env(:pont, :workdir),
+      link_path: Application.get_env(:pont, :link_path),
+      token: Application.get_env(:pont, :master_token)
+    }
   end
 
   defp start_app(dir) do
@@ -108,17 +125,17 @@ defmodule Pont.OpenCodeLiveTest do
     dir
   end
 
-  defp start_binary(bin, dir, subject) do
+  defp start_binary(bin, dir, wrapper) do
     home = Path.join(dir, "home")
-    page_dir = Path.join(home, ".pont/workspace")
+    File.mkdir_p!(home)
+    {link, page_dir} = paths_under(home)
+    File.mkdir_p!(Path.dirname(link))
     File.mkdir_p!(page_dir)
     File.write!(Path.join(page_dir, "opencode.json"), model_config())
-    File.mkdir_p!(Path.join(home, ".pont"))
-    File.write!(Path.join(home, ".pont/agent.link.json"), link_json())
+    File.write!(link, link_json())
 
-    opencode =
-      System.get_env("OPENCODE_BIN") ||
-        "/workspace/node_modules/@opencode/cli-linux-x64/bin/opencode"
+    opencode = System.get_env("OPENCODE_BIN") || Pont.Paths.default_opencode_bin()
+    unless File.exists?(opencode), do: flunk("opencode not found: #{opencode}")
 
     port =
       Port.open({:spawn_executable, bin}, [
@@ -129,8 +146,26 @@ defmodule Pont.OpenCodeLiveTest do
         {:env, binary_env(home)}
       ])
 
-    Agent.update(subject, fn _ -> port end)
+    Agent.update(wrapper, fn _ -> port end)
     page_dir
+  end
+
+  defp paths_under(home) do
+    root = System.user_home!()
+    previous_link = Application.get_env(:pont, :link_path)
+    Application.delete_env(:pont, :link_path)
+
+    paths =
+      {under_home(Pont.Paths.link(), root, home), under_home(Pont.Paths.default_workdir(), root, home)}
+
+    if previous_link, do: Application.put_env(:pont, :link_path, previous_link)
+    paths
+  end
+
+  defp under_home(path, root, home) do
+    relative = Path.relative_to(path, root)
+    if relative == path, do: flunk("Pont.Paths returned #{path}, which is not under #{root}")
+    Path.join(home, relative)
   end
 
   defp model_config do
@@ -152,7 +187,7 @@ defmodule Pont.OpenCodeLiveTest do
     |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)
   end
 
-  defp stop_subject(port) when is_port(port) do
+  defp stop_wrapper(port) when is_port(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, pid} -> System.cmd("kill", ["-TERM", Integer.to_string(pid)])
       _ -> :ok
@@ -163,7 +198,7 @@ defmodule Pont.OpenCodeLiveTest do
     _, _ -> :ok
   end
 
-  defp stop_subject(_), do: :ok
+  defp stop_wrapper(_), do: :ok
 
   defp find_html(dir) do
     case Path.wildcard(Path.join(dir, "**/*.html")) do
