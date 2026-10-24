@@ -3,23 +3,6 @@ defmodule Pont.OpenCodeLiveTest do
 
   @port 18_099
 
-  @tag :integration
-  @tag timeout: 180_000
-  test "a client asks the running agent for a landing page" do
-    dir = tmp_dir()
-    previous = capture_env()
-
-    on_exit(fn ->
-      stop_app()
-      restore_env(previous)
-      File.rm_rf(dir)
-    end)
-
-    page_dir = start_app(dir)
-    assert :ok = wait_runtime()
-    request_page(page_dir)
-  end
-
   @tag :wrapped
   @tag timeout: 240_000
   test "the wrapped binary asks the agent for a landing page" do
@@ -100,29 +83,9 @@ defmodule Pont.OpenCodeLiveTest do
     dir
   end
 
-  defp capture_env do
-    %{
-      agent_module: Application.get_env(:pont, :agent_module),
-      mode: Application.get_env(:pont, :mode),
-      port: Application.get_env(:pont, :port),
-      workdir: Application.get_env(:pont, :workdir),
-      link_path: Application.get_env(:pont, :link_path),
-      token: Application.get_env(:pont, :master_token)
-    }
-  end
-
-  defp start_app(dir) do
-    File.write!(Path.join(dir, "opencode.json"), model_config())
-    link = Path.join(dir, "agent.link.json")
-    File.write!(link, link_json())
-    Application.put_env(:pont, :link_path, link)
-    Application.put_env(:pont, :agent_module, Pont.OpenCode)
-    Application.put_env(:pont, :mode, :all)
-    Application.put_env(:pont, :port, @port)
-    Application.put_env(:pont, :workdir, dir)
-    Application.put_env(:pont, :master_token, "live-token")
-    assert {:ok, _} = Pont.Application.start(:normal, [])
-    dir
+  defp paths_under(home) do
+    root = System.user_home!()
+    {under_home(Pont.Paths.link(), root, home), under_home(Pont.Paths.default_workdir(), root, home)}
   end
 
   defp start_binary(bin, dir, wrapper) do
@@ -148,18 +111,6 @@ defmodule Pont.OpenCodeLiveTest do
 
     Agent.update(wrapper, fn _ -> port end)
     page_dir
-  end
-
-  defp paths_under(home) do
-    root = System.user_home!()
-    previous_link = Application.get_env(:pont, :link_path)
-    Application.delete_env(:pont, :link_path)
-
-    paths =
-      {under_home(Pont.Paths.link(), root, home), under_home(Pont.Paths.default_workdir(), root, home)}
-
-    if previous_link, do: Application.put_env(:pont, :link_path, previous_link)
-    paths
   end
 
   defp under_home(path, root, home) do
@@ -252,33 +203,6 @@ defmodule Pont.OpenCodeLiveTest do
         []
     end
   end
-
-  defp stop_app do
-    case Process.whereis(Pont.Supervisor) do
-      nil ->
-        :ok
-
-      pid ->
-        Process.unlink(pid)
-        Supervisor.stop(pid, :shutdown, 10_000)
-    end
-  catch
-    :exit, _ -> :ok
-  end
-
-  defp restore_env(previous) do
-    Application.put_env(:pont, :agent_module, previous.agent_module)
-    Application.put_env(:pont, :mode, previous.mode)
-    Application.put_env(:pont, :port, previous.port)
-    Application.put_env(:pont, :workdir, previous.workdir)
-    restore_link(previous.link_path)
-    restore_token(previous.token)
-  end
-
-  defp restore_link(nil), do: Application.delete_env(:pont, :link_path)
-  defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
-  defp restore_token(nil), do: Application.delete_env(:pont, :master_token)
-  defp restore_token(token), do: Application.put_env(:pont, :master_token, token)
 end
 
 defmodule Pont.LiveClient do

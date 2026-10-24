@@ -2,7 +2,7 @@
 
 Pont is the control plane and the agent relay. It proxies ACP between apps and agent runtimes. The web UI is not in this directory.
 
-Mix. `mix test` skips `:integration`. The OpenCode test is `mix test --only integration`.
+Mix. `mix test` skips `:wrapped`. The OpenCode test is `PONT_BIN=./burrito_out/pont_linux mix test --only wrapped`.
 
 Read the matching file when the task touches that area:
 

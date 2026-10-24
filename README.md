@@ -86,6 +86,4 @@ The workspace is `$HOME/.pont/workspace`. `Pont.OpenCode` runs `opencode` from `
 
 ## Tests
 
-`mix test` does not start OpenCode.
-
-`mix test --only integration` starts `opencode acp` and asks it to write a page. The test parses that page and checks the document. `PONT_BIN=./burrito_out/pont_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped` runs that session against the wrapped binary.
+`mix test` does not start OpenCode. `PONT_BIN=./burrito_out/pont_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped` starts the wrapped binary, asks OpenCode to write a page, and checks that page. Set `OPENCODE_BIN` when `opencode` is not on `PATH`.

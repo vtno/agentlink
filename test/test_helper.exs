@@ -1,3 +1,3 @@
-ExUnit.start(exclude: [:integration, :wrapped])
+ExUnit.start(exclude: [:wrapped])
 
 
