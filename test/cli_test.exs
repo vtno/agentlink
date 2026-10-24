@@ -1,6 +1,13 @@
 defmodule Pont.CLITest do
   use ExUnit.Case, async: false
 
+  test "a wrapped binary reads the wrapper arguments" do
+    System.put_env("__BURRITO", "1")
+    on_exit(fn -> System.delete_env("__BURRITO") end)
+
+    assert Pont.CLI.argv_from_launch() == Enum.map(:init.get_plain_arguments(), &to_string/1)
+  end
+
   test "no arguments run the plane and the relay" do
     assert {:ok, %Pont.CLI{mode: :all, port: nil, token: nil}} = Pont.CLI.parse([])
   end

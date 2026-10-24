@@ -6,7 +6,32 @@ Pont proxies [Agent Client Protocol](https://agentclientprotocol.com) traffic be
 
 ACP is JSON-RPC. The agent writes JSONL on its standard output. Pont sends one JSON value in each WebSocket text frame.
 
-## Run Pont
+## Binary
+
+The build machine needs Elixir 1.17 or newer, [Zig 0.16.0](https://ziglang.org/download/0.16.0/), and `xz`. A Windows binary also needs `7z` or `7zz`. The machine that runs Pont does not need Elixir.
+
+```sh
+mix deps.get
+MIX_ENV=prod mix release
+```
+
+That writes three binaries to `burrito_out/`:
+
+| File | Machine |
+|---|---|
+| `pont_linux` | Linux x86_64 |
+| `pont_macos` | macOS Apple Silicon |
+| `pont_windows.exe` | Windows x86_64 |
+
+`BURRITO_TARGET=linux` builds one of them. The names are `linux`, `macos`, and `windows`. Put the binary on `PATH` as `pont`.
+
+```sh
+pont
+pont plane --port 8090
+pont relay --token 'the-token'
+```
+
+## Run from source
 
 You need Elixir 1.17. To run an agent, you also need the `opencode` binary.
 

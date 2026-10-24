@@ -8,7 +8,8 @@ defmodule Pont.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
-      deps: deps()
+      deps: deps(),
+      releases: releases()
     ]
   end
 
@@ -33,7 +34,23 @@ defmodule Pont.MixProject do
       {:plug, "~> 1.16"},
       {:mint, "~> 1.6"},
       {:mint_web_socket, "~> 1.0"},
-      {:floki, "~> 0.37", only: :test}
+      {:floki, "~> 0.37", only: :test},
+      {:burrito, "~> 1.6", runtime: false}
+    ]
+  end
+
+  defp releases do
+    [
+      pont: [
+        steps: [:assemble, &Burrito.wrap/1],
+        burrito: [
+          targets: [
+            linux: [os: :linux, cpu: :x86_64],
+            macos: [os: :darwin, cpu: :aarch64],
+            windows: [os: :windows, cpu: :x86_64]
+          ]
+        ]
+      ]
     ]
   end
 end

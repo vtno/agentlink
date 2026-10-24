@@ -7,7 +7,9 @@ defmodule Pont.CLI do
   defstruct mode: :all, port: nil, token: nil, opencode_bin: nil
 
   @doc "Read the command and store the mode, port, token, and OpenCode executable."
-  def apply(argv \\ System.argv()) do
+  def apply(argv \\ nil) do
+    argv = argv || argv_from_launch()
+
     case parse(argv) do
       {:ok, :help} ->
         IO.puts(usage())
@@ -20,6 +22,15 @@ defmodule Pont.CLI do
       {:error, message} ->
         IO.puts(:stderr, message)
         {:error, message}
+    end
+  end
+
+  @doc "Arguments from the wrapped binary, or from the normal Elixir launch."
+  def argv_from_launch do
+    if System.get_env("__BURRITO") != nil do
+      :init.get_plain_arguments() |> Enum.map(&to_string/1)
+    else
+      System.argv()
     end
   end
 
