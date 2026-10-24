@@ -15,11 +15,11 @@ defmodule Pont.CLITest do
              Pont.CLI.parse(["plane", "--port", "9000", "--token", "sekret"])
   end
 
-  test "agent takes a token and does not listen" do
-    assert {:ok, %Pont.CLI{mode: :agent, token: "sekret"}} = Pont.CLI.parse(["agent", "--token", "sekret"])
-    assert {:error, message} = Pont.CLI.parse(["agent", "--port", "1", "--token", "sekret"])
+  test "relay takes a token and does not listen" do
+    assert {:ok, %Pont.CLI{mode: :relay, token: "sekret"}} = Pont.CLI.parse(["relay", "--token", "sekret"])
+    assert {:error, message} = Pont.CLI.parse(["relay", "--port", "1", "--token", "sekret"])
     assert message =~ "does not listen"
-    assert {:error, message} = Pont.CLI.parse(["agent"])
+    assert {:error, message} = Pont.CLI.parse(["relay"])
     assert message =~ "needs --token"
   end
 
@@ -32,23 +32,25 @@ defmodule Pont.CLITest do
   end
 
   test "apply stores the command" do
-    previous = {
-      Application.get_env(:pont, :mode),
-      Application.get_env(:pont, :port),
-      Application.get_env(:pont, :plane_url),
-      Application.get_env(:pont, :master_token)
+    previous = %{
+      mode: Application.get_env(:pont, :mode),
+      port: Application.get_env(:pont, :port),
+      plane_url: Application.get_env(:pont, :plane_url),
+      token: Application.get_env(:pont, :master_token)
     }
 
     assert :ok = Pont.CLI.apply(["plane", "--port", "9001", "--token", "sekret"])
     assert Application.get_env(:pont, :mode) == :plane
     assert Application.get_env(:pont, :port) == 9001
-    assert Application.get_env(:pont, :plane_url) == "ws://127.0.0.1:9001/agent"
+    assert Application.get_env(:pont, :plane_url) == Pont.Paths.plane_url(9001)
     assert Application.get_env(:pont, :master_token) == "sekret"
 
-    {mode, port, url, token} = previous
-    if mode, do: Application.put_env(:pont, :mode, mode)
-    if port, do: Application.put_env(:pont, :port, port)
-    if url, do: Application.put_env(:pont, :plane_url, url)
-    if token, do: Application.put_env(:pont, :master_token, token), else: Application.delete_env(:pont, :master_token)
+    restore(:mode, previous.mode)
+    restore(:port, previous.port)
+    restore(:plane_url, previous.plane_url)
+    restore(:master_token, previous.token)
   end
+
+  defp restore(key, nil), do: Application.delete_env(:pont, key)
+  defp restore(key, value), do: Application.put_env(:pont, key, value)
 end

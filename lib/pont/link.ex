@@ -1,7 +1,7 @@
 defmodule Pont.Link do
   @moduledoc """
-  The agent relay's link file. The uplink sends this name when it dials.
-  A missing file stops the agent relay. The file is the name and the plane URL.
+  The relay's link file. The uplink sends this name when it dials.
+  A missing file stops the relay. The file holds the name, the label, the program, and the plane URL.
   """
 
   defstruct name: "opencode",
@@ -49,7 +49,7 @@ defmodule Pont.Link do
       name: name,
       label: label,
       program: present(raw["program"]) || "opencode",
-      plane_url: present(raw["plane_url"]) || "ws://127.0.0.1:8090/agent"
+      plane_url: present(raw["plane_url"]) || Pont.Paths.plane_url()
     }
   end
 
@@ -62,7 +62,7 @@ defmodule Pont.Link do
       "name": "opencode",
       "label": "this machine",
       "program": "opencode",
-      "plane_url": "ws://127.0.0.1:8090/agent"
+      "plane_url": "#{Pont.Paths.plane_url()}"
     }
     """
   end

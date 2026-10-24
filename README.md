@@ -20,10 +20,10 @@ That starts the plane and the agent relay. Arguments go after `--`.
 ```sh
 mix run --no-halt -- --port 8090 --token 'the-token'
 mix run --no-halt -- plane --port 8090
-mix run --no-halt -- agent --token 'the-token'
+mix run --no-halt -- relay --token 'the-token'
 ```
 
-`plane` is the plane alone. `agent` is the relay alone. The relay reads `$HOME/.pont/agent.link.json` for its name and plane URL. `--port` is the plane's port. `--token` is the single-player token. A plane with no token mints one and prints `pont agent --token '…'`.
+`plane` is the plane alone. `relay` starts the relay alone. The relay reads `$HOME/.pont/agent.link.json` for the name, the label, the program, and the plane URL. `--port` is the plane's port. `--token` is the single-player token. A plane with no token mints one and prints `pont relay --token '…'`.
 
 ## Routes
 

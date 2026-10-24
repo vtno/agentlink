@@ -6,7 +6,8 @@ defmodule Pont.PathsTest do
     assert Pont.Paths.root() == root
     assert Pont.Paths.link() == Path.join(root, "agent.link.json")
     assert Pont.Link.path() == Pont.Paths.link()
-    assert Pont.Paths.default_workdir() == Path.join(root, "workspace")
+    assert Pont.Paths.plane_url() == "ws://127.0.0.1:8090/agent"
+    assert Pont.Paths.plane_url(9001) == "ws://127.0.0.1:9001/agent"
   end
 
   test "the opencode executable defaults to PATH, then ~/.local/bin" do

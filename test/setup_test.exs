@@ -23,14 +23,14 @@ defmodule Pont.SetupTest do
     assert minted_text =~ minted
     assert minted_text =~ "Pass the same --token"
 
-    assert {:ok, reused} = Pont.Access.Single.prepare(:agent)
+    assert {:ok, reused} = Pont.Access.Single.prepare(:relay)
     assert Application.get_env(:pont, :master_token) == minted
     assert reused =~ "using the token from --token."
   end
 
   test "an agent does not mint a token" do
     Application.delete_env(:pont, :master_token)
-    assert {:error, message} = Pont.Access.Single.prepare(:agent)
+    assert {:error, message} = Pont.Access.Single.prepare(:relay)
     assert message =~ "Pass --token"
   end
 

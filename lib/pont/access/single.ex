@@ -33,9 +33,9 @@ defmodule Pont.Access.Single do
     end
   end
 
-  @doc "The shell line that starts this binary as an agent relay."
+  @doc "The shell line that starts this binary as the relay."
   def command(token) when is_binary(token) do
-    "pont agent --token '#{String.replace(token, "'", "'\\''")}'"
+    "pont relay --token '#{String.replace(token, "'", "'\\''")}'"
   end
 
   defp ensure_token(mode) do
@@ -54,7 +54,7 @@ defmodule Pont.Access.Single do
   end
 
   defp message(mode, token, source) do
-    url = Application.get_env(:pont, :plane_url) || "ws://127.0.0.1:8090/agent"
+    url = Application.get_env(:pont, :plane_url) || Pont.Paths.plane_url()
 
     origin =
       case source do
@@ -88,7 +88,7 @@ defmodule Pont.Access.Single do
         #{command(token)}
         """
 
-      :agent ->
+      :relay ->
         "#{origin}\nThe uplink will dial the plane_url in the link file.\n"
     end
   end
