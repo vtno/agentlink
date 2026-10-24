@@ -11,7 +11,7 @@ defmodule Pont.SetupTest do
   test "an existing token is kept" do
     Application.put_env(:pont, :master_token, "from-env")
     assert {:ok, text} = Pont.Access.Single.prepare(:plane)
-    assert text =~ "using PONT_MASTER_TOKEN"
+    assert text =~ "using the token from --token."
     assert Application.get_env(:pont, :master_token) == "from-env"
   end
 
@@ -21,29 +21,29 @@ defmodule Pont.SetupTest do
     minted = Application.get_env(:pont, :master_token)
     assert is_binary(minted)
     assert minted_text =~ minted
-    assert minted_text =~ "Set PONT_MASTER_TOKEN"
+    assert minted_text =~ "Pass the same --token"
 
     assert {:ok, reused} = Pont.Access.Single.prepare(:agent)
     assert Application.get_env(:pont, :master_token) == minted
-    assert reused =~ "using PONT_MASTER_TOKEN"
+    assert reused =~ "using the token from --token."
   end
 
   test "an agent does not mint a token" do
     Application.delete_env(:pont, :master_token)
     assert {:error, message} = Pont.Access.Single.prepare(:agent)
-    assert message =~ "PONT_MASTER_TOKEN is not set"
+    assert message =~ "Pass --token"
   end
 
   test "standalone mode prints a command and waits" do
     Application.put_env(:pont, :plane_url, "wss://plane.example/agent")
     Application.put_env(:pont, :master_token, "sekret")
     assert {:ok, text} = Pont.Access.Single.prepare(:plane)
-    assert text =~ Pont.Access.Single.command("sekret", "wss://plane.example/agent")
+    assert text =~ Pont.Access.Single.command("sekret")
     assert text =~ "Waiting for the uplink to connect."
 
     assert {:ok, local} = Pont.Access.Single.prepare(:all)
     assert local =~ "sekret"
-    assert local =~ Pont.Access.Single.command("sekret", "wss://plane.example/agent")
+    assert local =~ Pont.Access.Single.command("sekret")
     assert local =~ "agent relay on this machine is starting"
   end
 

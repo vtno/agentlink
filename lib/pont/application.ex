@@ -1,17 +1,17 @@
 defmodule Pont.Application do
   @moduledoc """
-  `PONT_MODE=all` runs the plane and the agent relay in one BEAM. They still talk
-  over the agent WebSocket, so `plane` and `agent` can later be split onto
-  two VMs with `PONT_PLANE_URL`.
+  `pont` runs the plane and the agent relay in one BEAM. `pont plane` and
+  `pont agent` split them onto two machines. They still talk over the agent
+  WebSocket. The link file has the plane URL.
   """
 
   use Application
 
   @impl true
   def start(_type, _args) do
-    Pont.Setup.prepare()
-
-    with :ok <- ensure_link() do
+    with :ok <- command(),
+         :ok <- prepare(),
+         :ok <- ensure_link() do
       children =
         case Application.fetch_env!(:pont, :mode) do
           :plane -> [Pont.Plane.Supervisor]
@@ -25,6 +25,25 @@ defmodule Pont.Application do
         max_seconds: 20,
         name: Pont.Supervisor
       )
+    end
+  end
+
+  defp command do
+    if Application.get_env(:pont, :cli, true) do
+      case Pont.CLI.apply() do
+        :ok -> :ok
+        {:halt, code} -> System.halt(code)
+        {:error, message} -> {:error, message}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp prepare do
+    case Pont.Setup.prepare() do
+      :ok -> :ok
+      {:error, message} -> {:error, message}
     end
   end
 

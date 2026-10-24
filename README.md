@@ -12,12 +12,17 @@ You need Elixir 1.17. To run an agent, you also need the `opencode` binary.
 
 ```sh
 mix deps.get
-PONT_MODE=all mix run --no-halt
+mix run --no-halt
 ```
 
-`all` starts the plane and the agent relay in one BEAM. The plane listens only on `127.0.0.1`.
+That starts the plane and the agent relay. Arguments go after `--`.
 
-To start the plane alone, set `PONT_MODE=plane`. For the agent relay alone, set `PONT_MODE=agent`.
+```sh
+mix run --no-halt -- plane --port 8090
+mix run --no-halt -- agent --token 'the-token'
+```
+
+`plane` is the plane alone. `agent` is the relay alone. The relay reads `$HOME/.pont/agent.link.json` for its name and plane URL. `--port` is the plane's port. `--token` is the single-player token. A plane with no token mints one and prints `pont agent --token '…'`.
 
 ## Routes
 
@@ -34,33 +39,24 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 
 ## Link file
 
-`Pont.Link` reads `$HOME/.pont/agent.link.json`. The agent relay refuses to start until that file exists.
+`Pont.Link` reads `$HOME/.pont/agent.link.json`. The agent relay refuses to start until that file exists. The file is the name, the label, the program, and the plane URL.
 
 ```json
 {
   "name": "opencode",
   "label": "this machine",
+  "program": "opencode",
   "plane_url": "ws://127.0.0.1:8090/agent"
 }
 ```
 
-`name` is the agent id. `label` is the display name.
+`name` is the agent id. `label` is the display name. `program` is the product name, such as `opencode`.
 
-## Environment
+The plane listens only on `127.0.0.1`. On another machine, set `plane_url` to an address that machine can reach.
 
-`PONT_RUNTIME_NAME` overrides `name` in the link file. `PONT_PLANE_URL` overrides `plane_url`. `PONT_MASTER_TOKEN` is the single-player token. If it is unset, the plane mints one for this process and prints it. `/acp`, `/agent`, and `/status` then require that token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The uplink sends the header. `/health` stays open.
+`/acp`, `/agent`, and `/status` require the token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The uplink sends the header. `/health` stays open.
 
-| Variable | Default |
-|---|---|
-| `PONT_MODE` | `all` |
-| `PONT_PORT` | `8090` |
-| `PONT_PLANE_URL` | `ws://127.0.0.1:8090/agent` |
-| `PONT_RUNTIME_NAME` | `opencode`, or `name` from the link file |
-| `PONT_WORKDIR` | `$HOME/.pont/workspace` |
-| `OPENCODE_BIN` | `opencode` on `PATH`, otherwise `$HOME/.local/bin/opencode` |
-| `PONT_MASTER_TOKEN` | minted for this process when unset |
-
-`OPENCODE_BIN` is the `opencode` executable. `Pont.OpenCode` runs it as `opencode acp`.
+The workspace is `$HOME/.pont/workspace`. `Pont.OpenCode` runs `opencode` from `PATH`, or `$HOME/.local/bin/opencode`.
 
 ## Tests
 

@@ -1,8 +1,7 @@
 defmodule Pont.Link do
   @moduledoc """
   The agent relay's link file. The uplink sends this name when it dials.
-  A missing file stops the agent relay. `PONT_RUNTIME_NAME` and `PONT_PLANE_URL`
-  still override a file that exists.
+  A missing file stops the agent relay. The file is the name and the plane URL.
   """
 
   defstruct name: "opencode",
@@ -43,14 +42,14 @@ defmodule Pont.Link do
 
   defp from_map(raw) do
     label = present(raw["label"]) || present(raw["name"]) || "this machine"
-    name = slug(System.get_env("PONT_RUNTIME_NAME") || raw["name"] || label)
+    name = slug(present(raw["name"]) || label)
     name = if name == "", do: "opencode", else: name
 
     %__MODULE__{
       name: name,
       label: label,
       program: present(raw["program"]) || "opencode",
-      plane_url: System.get_env("PONT_PLANE_URL") || raw["plane_url"] || "ws://127.0.0.1:8090/agent"
+      plane_url: present(raw["plane_url"]) || "ws://127.0.0.1:8090/agent"
     }
   end
 

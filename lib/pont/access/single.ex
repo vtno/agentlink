@@ -1,8 +1,8 @@
 defmodule Pont.Access.Single do
   @moduledoc """
-  One operator. `PONT_MASTER_TOKEN` is the token. When it is unset, a plane
-  mints one for this process and prints it. That admin owns every uplink and may
-  use every uplink.
+  One operator. `--token` is the token. When it is unset, a plane mints one
+  for this process and prints it. That admin owns every uplink and may use
+  every uplink.
   """
 
   @behaviour Pont.Access
@@ -27,15 +27,15 @@ defmodule Pont.Access.Single do
   @impl true
   def prepare(mode) do
     case ensure_token(mode) do
-      {:existing, token} -> {:ok, message(mode, token, :env)}
+      {:existing, token} -> {:ok, message(mode, token, :given)}
       {:minted, token} -> {:ok, message(mode, token, :minted)}
-      :missing -> {:error, "PONT_MASTER_TOKEN is not set.\n"}
+      :missing -> {:error, "Pass --token. The plane prints it.\n"}
     end
   end
 
-  @doc "The shell line that starts an agent relay against this plane."
-  def command(token, url) when is_binary(token) and is_binary(url) do
-    "PONT_MODE=agent PONT_MASTER_TOKEN='#{token}' PONT_PLANE_URL='#{url}' mix run --no-halt"
+  @doc "The shell line that starts this binary as an agent relay."
+  def command(token) when is_binary(token) do
+    "pont agent --token '#{String.replace(token, "'", "'\\''")}'"
   end
 
   defp ensure_token(mode) do
@@ -59,10 +59,10 @@ defmodule Pont.Access.Single do
     origin =
       case source do
         :minted ->
-          "Pont created a master token for this process. Set PONT_MASTER_TOKEN to this value to keep it."
+          "Pont created a token for this process. Pass the same --token to start again."
 
-        :env ->
-          "Pont is using PONT_MASTER_TOKEN."
+        :given ->
+          "Pont is using the token from --token."
       end
 
     case mode do
@@ -71,9 +71,9 @@ defmodule Pont.Access.Single do
         #{origin}
         Run this on the machine that should host the agent:
 
-        #{command(token, url)}
+        #{command(token)}
 
-        The plane listens on 127.0.0.1. If that machine is not this one, set PONT_PLANE_URL to an address it can reach.
+        The plane listens on 127.0.0.1. On that machine, set plane_url in the link file to an address it can reach. This plane is #{url} when it is this machine.
         Waiting for the uplink to connect.
         """
 
@@ -85,11 +85,11 @@ defmodule Pont.Access.Single do
         The agent relay on this machine is starting.
         Another machine can dial with:
 
-        #{command(token, url)}
+        #{command(token)}
         """
 
       :agent ->
-        "#{origin}\nThe uplink will dial #{url}.\n"
+        "#{origin}\nThe uplink will dial the plane_url in the link file.\n"
     end
   end
 

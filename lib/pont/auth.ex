@@ -12,7 +12,7 @@ defmodule Pont.Auth do
     end
   end
 
-  @doc "True when PONT_MASTER_TOKEN is set to a non-empty value."
+  @doc "True when a token is set."
   def enabled?, do: is_binary(token())
 
   @doc "True when auth is off, or the request presents the configured token."

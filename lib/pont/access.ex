@@ -48,7 +48,7 @@ defmodule Pont.Access do
   def agent_caller(conn) do
     cond do
       not Pont.Auth.enabled?() ->
-        {:reject, "PONT_MASTER_TOKEN is not set."}
+        {:reject, "No token is set."}
 
       not Pont.Auth.allowed?(conn) ->
         {:reject, "The master token did not match."}
