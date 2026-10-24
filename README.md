@@ -66,4 +66,4 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 
 `mix test` does not start OpenCode.
 
-`mix test --only integration` starts `opencode acp` and asks it to write a page.
+`mix test --only integration` starts `opencode acp` and asks it to write a page. The test parses that page and checks the document.
