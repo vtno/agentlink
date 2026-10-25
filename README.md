@@ -61,7 +61,7 @@ The plane serves these paths on port 8090.
 | `GET /acp` | WebSocket for an ACP client. |
 | `GET /agent` | WebSocket the uplink dials. |
 
-A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `session/new`, `session/load`, and `session/prompt`. Pont returns a permission question only to the client that started that turn.
+A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `session/new`, `session/load`, and `session/prompt`. Pont returns a permission question only to the client that started that turn. File and terminal requests go to that client only when its own `initialize` advertised them. Otherwise the agent is answered with JSON-RPC `-32601`.
 
 ## Link file
 

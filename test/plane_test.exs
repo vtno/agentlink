@@ -86,6 +86,91 @@ defmodule Pont.PlaneTest do
     refute_receive {:agent, _}, 50
   end
 
+  test "fs and terminal go only to the client that advertised them" do
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    call(id, "runtime/select", %{"name" => "lab"}, 1)
+    reply!()
+
+    caps =
+      initialize!(id, 2, %{
+        "fs" => %{"readTextFile" => true, "writeTextFile" => true},
+        "terminal" => true
+      })
+
+    assert caps == %{
+             "fs" => %{"readTextFile" => true, "writeTextFile" => true},
+             "terminal" => true
+           }
+
+    {other, other_id} = spawn_client()
+    call(other_id, "runtime/select", %{"name" => "lab"}, 1)
+    assert %{"id" => 1} = client_reply!(other)
+
+    call(other_id, "initialize", %{
+      "protocolVersion" => 1,
+      "clientCapabilities" => %{"fs" => false, "terminal" => false},
+      "clientInfo" => %{"name" => "acp-ui", "version" => "0.1.0"}
+    }, 2)
+
+    assert %{"id" => 2, "result" => _} = client_reply!(other)
+    refute_receive {:agent, _}, 50
+
+    call(other_id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 3)
+    assert {:agent, %{"id" => new_id}} = from_agent!()
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => new_id, "result" => %{"sessionId" => "ses_web"}}))
+    assert %{"result" => %{"sessionId" => "ses_web"}} = client_reply!(other)
+
+    call(other_id, "session/prompt", %{"sessionId" => "ses_web", "prompt" => [%{"type" => "text", "text" => "go"}]}, 4)
+    assert %{"method" => "session/update"} = client_reply!(other)
+    assert {:agent, %{"id" => prompt_id, "method" => "session/prompt"}} = from_agent!()
+
+    agent_ask("ses_web", "read", "fs/read_text_file")
+    agent_ask("ses_web", "write", "fs/write_text_file")
+    agent_ask("ses_web", "term", "terminal/create")
+    agent_ask("ses_web", "perm", "session/request_permission")
+    unsupported!("read")
+    unsupported!("write")
+    unsupported!("term")
+    assert %{"method" => "session/request_permission"} = client_reply!(other)
+    refute_receive {^other, {:send, _}}, 50
+    refute_receive {:send, _}, 50
+
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => prompt_id, "result" => %{"stopReason" => "end_turn"}}))
+    assert %{"id" => 4} = client_reply!(other)
+    assert %{"method" => "session/update"} = client_reply!(other)
+
+    open_session!(id, "ses_zed")
+    prompt!(id, "ses_zed", 5)
+
+    agent_ask("ses_zed", "read", "fs/read_text_file")
+    agent_ask("ses_zed", "write", "fs/write_text_file")
+    agent_ask("ses_zed", "term", "terminal/create")
+    assert %{"method" => "fs/read_text_file"} = reply!()
+    assert %{"method" => "fs/write_text_file"} = reply!()
+    assert %{"method" => "terminal/create"} = reply!()
+    refute_receive {:agent, _}, 50
+    refute_receive {^other, {:send, _}}, 50
+  end
+
+  test "fs read and write are gated on their own flags" do
+    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    initialize!(id, 1, %{"fs" => %{"readTextFile" => true, "writeTextFile" => false}, "terminal" => false})
+    open_session!(id, "ses_1")
+    prompt!(id, "ses_1", 2)
+
+    agent_ask("ses_1", "read", "fs/read_text_file")
+    agent_ask("ses_1", "write", "fs/write_text_file")
+    agent_ask("ses_1", "term", "terminal/create")
+    agent_ask("ses_1", "other", "fs/read_bytes")
+    assert %{"method" => "fs/read_text_file"} = reply!()
+    unsupported!("write")
+    unsupported!("term")
+    unsupported!("other")
+    refute_receive {:send, _}, 50
+  end
+
   test "a failed initialize is not cached" do
     id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
@@ -442,6 +527,33 @@ defmodule Pont.PlaneTest do
   defp client_reply!(pid) do
     assert_receive {^pid, {:send, json}}, 500
     Jason.decode!(json)
+  end
+
+  defp initialize!(id, req_id, capabilities) do
+    call(id, "initialize", %{"protocolVersion" => 1, "clientCapabilities" => capabilities}, req_id)
+    assert {:agent, %{"id" => agent_id, "method" => "initialize", "params" => %{"clientCapabilities" => caps}}} = from_agent!()
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{"agentCapabilities" => %{}}}))
+    assert %{"id" => ^req_id} = reply!()
+    caps
+  end
+
+  defp prompt!(id, session_id, req_id) do
+    call(id, "session/prompt", %{"sessionId" => session_id, "prompt" => [%{"type" => "text", "text" => "go"}]}, req_id)
+    assert %{"method" => "session/update"} = reply!()
+    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+  end
+
+  defp agent_ask(session_id, req_id, method) do
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{
+      "jsonrpc" => "2.0",
+      "id" => req_id,
+      "method" => method,
+      "params" => %{"sessionId" => session_id}
+    }))
+  end
+
+  defp unsupported!(req_id) do
+    assert {:agent, %{"id" => ^req_id, "error" => %{"code" => -32601, "message" => "client does not support this method"}}} = from_agent!()
   end
 
   defp open_session!(id, session_id) do

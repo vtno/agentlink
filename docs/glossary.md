@@ -12,6 +12,6 @@ Uplink. `Pont.Uplink` is the process that dials. `Pont.Registry.Uplink` is the r
 
 Agent. The stdio behaviour. `Pont.OpenCode` implements it and runs the binary. The relay opens the behaviour. The relay does not spawn the binary.
 
-Client. One app already connected to the plane. Not `Pont.Relay.Client`, and not `Pont.ClientSocket`.
+Client. One app already connected to the plane. Not `Pont.Relay.Client`, and not `Pont.ClientSocket`. Its capabilities are the `clientCapabilities` from that app's own `initialize`.
 
-Slot. The plane's session state for one connected agent. Prompt queue, the in-flight turn, and the cached `initialize`.
+Slot. The plane's session state for one connected agent. Prompt queue, the in-flight turn, and the cached `initialize`. The cache is the agent's reply, not the client's capabilities.
