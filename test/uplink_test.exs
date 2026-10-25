@@ -222,6 +222,47 @@ defmodule Pont.UplinkTest do
     refute :sys.get_state(Pont.Uplink).name_taken
   end
 
+  test "an instance-too-long close does not redial" do
+    url = "ws://127.0.0.1:18115/agent"
+
+    start_supervised!(
+      {Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_115, ip: {127, 0, 0, 1}}
+    )
+
+    write_link!(url)
+    start_supervised!({Pont.Uplink, owner: self()})
+
+    assert_receive {:socket, socket}
+    assert_receive {:ws, hello}
+    assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
+
+    reason = Pont.AgentSocket.instance_too_long_reason()
+    code = Pont.AgentSocket.instance_too_long_close_code()
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(socket, {:close, code, reason})
+        assert await_instance_too_long()
+      end)
+
+    assert log =~ "uplink rejected name=opencode"
+    assert log =~ reason
+    assert log =~ "This relay will not reconnect"
+
+    send(Pont.Uplink, :connect)
+    write_link!(url, %{"label" => "other label"})
+    send(Pont.Uplink, :watch)
+    write_link!(url, %{"name" => "other"})
+    send(Pont.Uplink, :watch)
+    refute_receive {:socket, _}, 1_000
+
+    state = :sys.get_state(Pont.Uplink)
+    assert state.instance_too_long
+    refute state.name_taken
+    assert is_nil(state.websocket)
+    assert Process.alive?(Process.whereis(Pont.Uplink))
+  end
+
   test "a label change redials while the previous plane socket is still alive" do
     holder = start_plane(18_113)
     [{_, %Pont.Registry.Uplink{instance: instance}}] = :ets.lookup(:pont_runtimes, "opencode")
@@ -351,6 +392,15 @@ defmodule Pont.UplinkTest do
     true
   end
 
+  defp await_instance_too_long(attempts \\ 50) do
+    if :sys.get_state(Pont.Uplink).instance_too_long or attempts == 0 do
+      assert :sys.get_state(Pont.Uplink).instance_too_long
+    else
+      Process.sleep(20)
+      await_instance_too_long(attempts - 1)
+    end
+  end
+
   defp await_name_taken(attempts \\ 50) do
     if :sys.get_state(Pont.Uplink).name_taken or attempts == 0 do
       assert :sys.get_state(Pont.Uplink).name_taken
@@ -361,8 +411,9 @@ defmodule Pont.UplinkTest do
   end
 
   defp write_link!(url, attrs \\ %{}) do
-    File.write!(
-      Application.fetch_env!(:pont, :link_path),
+    path = Application.fetch_env!(:pont, :link_path)
+
+    body =
       Jason.encode!(
         Map.merge(
           %{
@@ -374,7 +425,10 @@ defmodule Pont.UplinkTest do
           attrs
         )
       )
-    )
+
+    tmp = path <> ".tmp"
+    File.write!(tmp, body)
+    File.rename!(tmp, path)
   end
 
   defp restore_link(nil), do: Application.delete_env(:pont, :link_path)

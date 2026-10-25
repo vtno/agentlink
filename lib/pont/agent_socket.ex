@@ -3,15 +3,18 @@ defmodule Pont.AgentSocket do
   The plane's agent socket. The first frame is `pont.uplink` and lands in the registry.
   Later frames are ACP from that runtime. A hello from the same relay stops this
   socket so the new one can take the name. A hello from another relay, while this
-  name is live, closes that new socket and leaves this one up.
+  name is live, closes that new socket and leaves this one up. A hello whose
+  instance id is too long closes that new socket and leaves any holder up.
   """
 
   @behaviour WebSock
   require Logger
 
-  # Private-use WebSocket close (RFC 6455, 4000-4999). The relay treats this
-  # code as "this name is already in use" and does not redial.
+  # Private-use WebSocket closes (RFC 6455, 4000-4999). The relay does not redial
+  # after either code: 4001 means the name is already in use, 4002 means the
+  # instance id is longer than the plane allows.
   @name_taken_close_code 4001
+  @instance_too_long_close_code 4002
 
   defstruct name: nil, subject: nil
 
@@ -24,6 +27,14 @@ defmodule Pont.AgentSocket do
   end
 
   def name_taken_reason(_name), do: "name is in use; stop the other relay or change name"
+
+  @doc "Close code for a hello whose instance id is longer than the plane allows."
+  def instance_too_long_close_code, do: @instance_too_long_close_code
+
+  @doc "Close reason telling the rejected relay that its instance id is too long."
+  def instance_too_long_reason do
+    "instance id is too long; max is #{Pont.Registry.max_instance_bytes()} bytes"
+  end
 
   @doc "Wait for the uplink hello. The subject is whoever the router authenticated."
   @impl true
@@ -50,6 +61,9 @@ defmodule Pont.AgentSocket do
 
           {:error, {:name_taken, name}} ->
             {:stop, :normal, {@name_taken_close_code, name_taken_reason(name)}, state}
+
+          {:error, :instance_too_long} ->
+            {:stop, :normal, {@instance_too_long_close_code, instance_too_long_reason()}, state}
 
           {:error, reason} ->
             {:stop, reason, state}

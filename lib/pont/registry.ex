@@ -2,13 +2,18 @@ defmodule Pont.Registry.Uplink do
   @moduledoc """
   The row recorded after an uplink says hello. `name` comes from the link. `label` is the machine.
   `program` is the agent product name, not the `Pont.Agent` module. `instance` identifies the
-  relay VM. A later hello with the same instance is that relay dialing again.
+  relay VM. A later hello with the same instance is that relay dialing again. An id longer
+  than the plane's maximum is rejected.
   """
 
   defstruct [:name, :label, :program, :pid, :instance, :connected_at]
 end
 
 defmodule Pont.Registry do
+  # Stock relays send 16 random bytes as unpadded base64url, which is 22 bytes.
+  # 128 leaves room for a longer token without storing an unbounded id.
+  @max_instance_bytes 128
+
   @moduledoc """
   Live uplinks. One row is one uplink that has said hello.
   The socket is the source of truth.
@@ -20,6 +25,9 @@ defmodule Pont.Registry do
   still have one winner. A row whose pid is already dead is stale: the socket
   is gone, and the new hello takes the name. When the holder process exits,
   the name is free.
+
+  An instance id longer than #{@max_instance_bytes} bytes is rejected. That
+  hello does not change the existing row.
   """
 
   use GenServer
@@ -40,6 +48,9 @@ defmodule Pont.Registry do
     {:ok, %__MODULE__{}}
   end
 
+  @doc "The longest relay instance id this plane will accept, in bytes."
+  def max_instance_bytes, do: @max_instance_bytes
+
   @doc "An uplink said hello. The access policy accepts this subject. A live holder of the name keeps the socket."
   def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject)
       when is_pid(pid) do
@@ -53,12 +64,13 @@ defmodule Pont.Registry do
         %__MODULE__{} = state
       ) do
     with {:ok, name} <- normalize_name(uplink.name),
-         :ok <- Pont.Access.claim(subject, name) do
+         :ok <- Pont.Access.claim(subject, name),
+         {:ok, instance} <- instance_id(uplink.instance) do
       uplink = %Pont.Registry.Uplink{
         name: name,
         label: clip(uplink.label, name),
         program: clip(uplink.program, "opencode"),
-        instance: instance_id(uplink.instance),
+        instance: instance,
         pid: pid,
         connected_at: System.system_time(:second)
       }
@@ -90,7 +102,15 @@ defmodule Pont.Registry do
           {:reply, :ok, remember(state, pid, uplink)}
       end
     else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      {:error, :instance_too_long} ->
+        Logger.warning(
+          "uplink rejected name=#{String.trim(uplink.name)} instance id is too long; max is #{@max_instance_bytes} bytes"
+        )
+
+        {:reply, {:error, :instance_too_long}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -195,16 +215,22 @@ defmodule Pont.Registry do
 
   defp clip(_value, fallback), do: fallback
 
-  # Empty and missing ids never match, including nil with nil. The id is
-  # kept whole so a shared prefix cannot make two relays the same.
+  # Empty and missing ids never match, including nil with nil. A present id
+  # is kept whole. An id over the maximum is an error, not a missing id.
   defp instance_id(value) when is_binary(value) do
     case String.trim(value) do
-      "" -> nil
-      text -> text
+      "" ->
+        {:ok, nil}
+
+      text when byte_size(text) <= @max_instance_bytes ->
+        {:ok, text}
+
+      _text ->
+        {:error, :instance_too_long}
     end
   end
 
-  defp instance_id(_value), do: nil
+  defp instance_id(_value), do: {:ok, nil}
 
   defp same_relay?(%Pont.Registry.Uplink{instance: id}, %Pont.Registry.Uplink{instance: id})
        when is_binary(id),

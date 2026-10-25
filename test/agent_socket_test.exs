@@ -117,4 +117,52 @@ defmodule Pont.AgentSocketTest do
 
     assert stop_log =~ "agent socket superseded name=lab the same relay dialed again"
   end
+
+  test "an oversized instance id closes the new socket and leaves the holder up" do
+    subject = %Pont.Access.Subject{id: "admin", role: :admin}
+    {:ok, state} = Pont.AgentSocket.init(subject)
+    reason = Pont.AgentSocket.instance_too_long_reason()
+    assert byte_size(reason) <= 123
+
+    hello =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "pont.uplink",
+        "params" => %{"name" => "lab", "label" => "Bench", "instance" => "relay-a"}
+      })
+
+    assert {:ok, named} = Pont.AgentSocket.handle_in({hello, [opcode: :text]}, state)
+    holder = self()
+    parent = self()
+    too_long = String.duplicate("c", Pont.Registry.max_instance_bytes() + 1)
+
+    rejected =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "pont.uplink",
+        "params" => %{"name" => "lab", "label" => "Other", "instance" => too_long}
+      })
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        spawn(fn ->
+          {:ok, other} = Pont.AgentSocket.init(subject)
+
+          send(
+            parent,
+            {:rejected, Pont.AgentSocket.handle_in({rejected, [opcode: :text]}, other)}
+          )
+        end)
+
+        assert_receive {:rejected, result}
+        send(parent, {:checked, result})
+      end)
+
+    code = Pont.AgentSocket.instance_too_long_close_code()
+    assert_receive {:checked, {:stop, :normal, {^code, ^reason}, _other}}
+    assert log =~ "uplink rejected name=lab instance id is too long"
+    assert Pont.Registry.pid("lab") == holder
+    assert named.name == "lab"
+    refute_received :superseded
+  end
 end

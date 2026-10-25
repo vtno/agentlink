@@ -131,6 +131,47 @@ defmodule Pont.RegistryTest do
     assert stored == holder_id
   end
 
+  test "an instance id at the size limit is kept whole" do
+    max = Pont.Registry.max_instance_bytes()
+    id = String.duplicate("a", max)
+    other_id = String.duplicate("a", max - 1) <> "b"
+    first = spawn(fn -> Process.sleep(:infinity) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    assert byte_size(id) == max
+    assert :ok = hello(first, "lab", "a", "  #{id}  ")
+
+    [{_, %Pont.Registry.Uplink{instance: stored}}] = :ets.lookup(:pont_runtimes, "lab")
+    assert stored == id
+
+    assert {:error, {:name_taken, "lab"}} = hello(second, "lab", "b", other_id)
+    assert Pont.Registry.pid("lab") == first
+    assert Process.info(first, :messages) == {:messages, []}
+  end
+
+  test "an oversized instance id is rejected and the holder stays" do
+    max = Pont.Registry.max_instance_bytes()
+    too_long = String.duplicate("b", max + 1)
+    holder = spawn(fn -> Process.sleep(:infinity) end)
+    other = spawn(fn -> Process.sleep(:infinity) end)
+    fresh = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(holder, "lab", "a", "relay-a")
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, :instance_too_long} = hello(other, "lab", "b", too_long)
+        assert {:error, :instance_too_long} = hello(fresh, "bench", "c", "  #{too_long}")
+      end)
+
+    assert log =~ "uplink rejected name=lab instance id is too long; max is #{max} bytes"
+    assert log =~ "uplink rejected name=bench instance id is too long; max is #{max} bytes"
+    assert Pont.Registry.pid("lab") == holder
+    assert [%{"name" => "lab", "label" => "a"}] = Pont.Registry.list()
+    assert Pont.Registry.pid("bench") == nil
+    assert Process.info(holder, :messages) == {:messages, []}
+    assert Process.alive?(holder)
+    assert Process.alive?(other)
+  end
+
   test "the same long instance id still releases the previous socket" do
     id = String.duplicate("a", 90)
     first = spawn(fn -> Process.sleep(:infinity) end)
