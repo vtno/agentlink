@@ -195,12 +195,12 @@ defmodule Pont.Registry do
 
   defp clip(_value, fallback), do: fallback
 
-  # Empty and missing ids never match, including nil with nil. Only this
-  # relay's own redial carries the same id.
+  # Empty and missing ids never match, including nil with nil. The id is
+  # kept whole so a shared prefix cannot make two relays the same.
   defp instance_id(value) when is_binary(value) do
     case String.trim(value) do
       "" -> nil
-      text -> String.slice(text, 0, 80)
+      text -> text
     end
   end
 

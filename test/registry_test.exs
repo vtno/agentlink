@@ -113,13 +113,31 @@ defmodule Pont.RegistryTest do
     assert Pont.Registry.pid("lab") == first
   end
 
-  test "a long instance is clipped and still matches that relay" do
+  test "distinct instance ids that share a long prefix leave the holder up" do
+    prefix = String.duplicate("a", 80)
+    holder_id = prefix <> "FIRST"
+    other_id = prefix <> "SECOND"
+    first = spawn(fn -> Process.sleep(:infinity) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(first, "lab", "a", holder_id)
+
+    assert {:error, {:name_taken, "lab"}} = hello(second, "lab", "b", other_id)
+    assert Pont.Registry.pid("lab") == first
+    assert [%{"label" => "a"}] = Pont.Registry.list()
+    assert Process.info(first, :messages) == {:messages, []}
+    assert Process.alive?(first)
+
+    [{_, %Pont.Registry.Uplink{instance: stored}}] = :ets.lookup(:pont_runtimes, "lab")
+    assert stored == holder_id
+  end
+
+  test "the same long instance id still releases the previous socket" do
     id = String.duplicate("a", 90)
     first = spawn(fn -> Process.sleep(:infinity) end)
     second = spawn(fn -> Process.sleep(:infinity) end)
     assert :ok = hello(first, "lab", "a", id)
     [{_, %Pont.Registry.Uplink{instance: stored}}] = :ets.lookup(:pont_runtimes, "lab")
-    assert stored == String.duplicate("a", 80)
+    assert stored == id
     assert :ok = hello(second, "lab", "b", id)
     assert Pont.Registry.pid("lab") == second
     assert Process.info(first, :messages) == {:messages, [:superseded]}
