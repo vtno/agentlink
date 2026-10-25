@@ -35,7 +35,7 @@ defmodule Pont.AccessTest do
     Application.delete_env(:pont, :master_token)
     assert :reject = Pont.Access.authenticate(conn("/acp"))
     refute Pont.Access.allowed?(%Pont.Access.Subject{}, "opencode")
-    assert {:error, "uplink is not allowed"} = Pont.Access.claim(%Pont.Access.Subject{}, "opencode")
+    assert {:error, :not_allowed} = Pont.Access.claim(%Pont.Access.Subject{}, "opencode")
   end
 
   test "the admin may use any runtime" do
@@ -56,7 +56,8 @@ defmodule Pont.AccessTest do
     Application.put_env(:pont, :access, Pont.AccessTest.Deny)
     assert :reject = Pont.Access.authenticate(conn("/acp"))
     refute Pont.Access.allowed?(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
-    assert {:error, "uplink is not allowed"} = Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
+    assert {:error, :not_allowed} =
+             Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
   end
 
   test "the agent socket caller must present the master token" do

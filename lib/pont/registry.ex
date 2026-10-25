@@ -10,10 +10,6 @@ defmodule Pont.Registry.Uplink do
 end
 
 defmodule Pont.Registry do
-  # Stock relays send 16 random bytes as unpadded base64url, which is 22 bytes.
-  # 128 leaves room for a longer token without storing an unbounded id.
-  @max_instance_bytes 128
-
   @moduledoc """
   Live uplinks. One row is one uplink that has said hello.
   The socket is the source of truth.
@@ -26,8 +22,8 @@ defmodule Pont.Registry do
   is gone, and the new hello takes the name. When the holder process exits,
   the name is free.
 
-  An instance id longer than #{@max_instance_bytes} bytes is rejected. That
-  hello does not change the existing row.
+  An instance id above the byte limit in `Pont.Hello.max_instance_bytes/0` is
+  rejected. That hello does not change the existing row.
   """
 
   use GenServer
@@ -48,10 +44,10 @@ defmodule Pont.Registry do
     {:ok, %__MODULE__{}}
   end
 
-  @doc "The longest relay instance id this plane will accept, in bytes."
-  def max_instance_bytes, do: @max_instance_bytes
-
-  @doc "An uplink said hello. The access policy accepts this subject. A live holder of the name keeps the socket."
+  @doc """
+  Register an uplink hello under its normalized name. A live holder keeps the name.
+  Returns `{:ok, name}` or `{:error, rejection}` from the shared hello protocol.
+  """
   def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject)
       when is_pid(pid) do
     GenServer.call(__MODULE__, {:register, pid, uplink, subject})
@@ -77,34 +73,34 @@ defmodule Pont.Registry do
 
       case :ets.lookup(@table, name) do
         [{^name, %Pont.Registry.Uplink{pid: ^pid}}] ->
-          {:reply, :ok, state}
+          {:reply, {:ok, name}, state}
 
         [{^name, %Pont.Registry.Uplink{pid: holder} = current}] ->
           cond do
             Process.alive?(holder) and same_relay?(current, uplink) ->
               Logger.info("uplink reconnect name=#{name} the same relay dialed again")
               send(holder, :superseded)
-              {:reply, :ok, remember(drop_pid(state, holder), pid, uplink)}
+              {:reply, {:ok, name}, remember(drop_pid(state, holder), pid, uplink)}
 
             Process.alive?(holder) ->
               Logger.warning(
                 "uplink rejected name=#{name} another uplink is already connected with this name"
               )
 
-              {:reply, {:error, {:name_taken, name}}, state}
+              {:reply, {:error, :name_taken}, state}
 
             true ->
               Logger.warning("uplink stale name=#{name} the previous holder was already dead")
-              {:reply, :ok, remember(drop_pid(state, holder), pid, uplink)}
+              {:reply, {:ok, name}, remember(drop_pid(state, holder), pid, uplink)}
           end
 
         [] ->
-          {:reply, :ok, remember(state, pid, uplink)}
+          {:reply, {:ok, name}, remember(state, pid, uplink)}
       end
     else
       {:error, :instance_too_long} ->
         Logger.warning(
-          "uplink rejected name=#{String.trim(uplink.name)} instance id is too long; max is #{@max_instance_bytes} bytes"
+          "uplink rejected name=#{String.trim(uplink.name)} #{Pont.Hello.reason(:instance_too_long)}"
         )
 
         {:reply, {:error, :instance_too_long}, state}
@@ -200,11 +196,11 @@ defmodule Pont.Registry do
     if String.match?(name, ~r/^[a-z0-9][a-z0-9_-]{0,40}$/) do
       {:ok, name}
     else
-      {:error, "link name must be a short slug"}
+      {:error, :bad_name}
     end
   end
 
-  defp normalize_name(_), do: {:error, "link name must be a short slug"}
+  defp normalize_name(_), do: {:error, :bad_name}
 
   defp clip(value, fallback) when is_binary(value) do
     case String.trim(value) do
@@ -218,11 +214,13 @@ defmodule Pont.Registry do
   # Empty and missing ids never match, including nil with nil. A present id
   # is kept whole. An id over the maximum is an error, not a missing id.
   defp instance_id(value) when is_binary(value) do
+    max = Pont.Hello.max_instance_bytes()
+
     case String.trim(value) do
       "" ->
         {:ok, nil}
 
-      text when byte_size(text) <= @max_instance_bytes ->
+      text when byte_size(text) <= max ->
         {:ok, text}
 
       _text ->

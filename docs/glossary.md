@@ -15,3 +15,5 @@ Agent. The stdio behaviour. `Pont.OpenCode` implements it and runs the binary. T
 Client. One app already connected to the plane. Not `Pont.Relay.Client`, and not `Pont.ClientSocket`. Its capabilities are the `clientCapabilities` from that app's own `initialize`.
 
 Slot. The plane's session state for one connected agent. Prompt queue, the in-flight turn, and the cached `initialize`. The cache is the agent's reply, not the client's capabilities.
+
+Hello rejection. `Pont.Hello` defines the shared permanent-rejection close codes: 4001 name taken, 4002 instance too long (maximum 128 bytes), 4003 bad name, 4004 not allowed. Each parks the uplink with a logged reason. Restart retries any rejection; changing the link name or plane URL retries all except 4002. Other closes and transient failures retry after 500ms.

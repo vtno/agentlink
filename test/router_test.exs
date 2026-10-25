@@ -1,6 +1,15 @@
 defmodule Pont.RouterTest do
   use ExUnit.Case, async: false
 
+  defmodule DenyClaim do
+    @behaviour Pont.Access
+
+    def authenticate(_conn), do: {:ok, %Pont.Access.Subject{id: "admin", role: :admin}}
+    def allowed?(_subject, _name), do: true
+    def claim(_subject, _name), do: :reject
+    def prepare(_mode), do: {:ok, ""}
+  end
+
   setup do
     previous = Application.get_env(:pont, :master_token)
     start_supervised!(Pont.Registry)
@@ -79,7 +88,7 @@ defmodule Pont.RouterTest do
       end)
 
     assert_receive {:rejected, frames, conn2}
-    assert {:close, 4001, Pont.AgentSocket.name_taken_reason("opencode")} in frames
+    assert {:close, 4001, Pont.Hello.reason(:name_taken, "opencode")} in frames
 
     assert log =~
              "uplink rejected name=opencode another uplink is already connected with this name"
@@ -123,6 +132,31 @@ defmodule Pont.RouterTest do
     Mint.HTTP.close(conn)
   end
 
+  test "bad-name, not-allowed, and oversized-instance rejections reach the wire" do
+    Application.put_env(:pont, :master_token, "sekret")
+    previous = Application.get_env(:pont, :access)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:pont, :access, previous),
+        else: Application.delete_env(:pont, :access)
+    end)
+
+    for {name, attrs, policy, code, reason} <- [
+          {nil, %{}, Pont.Access.Single, 4003, "link name must be a short slug"},
+          {"lab", %{"instance" => String.duplicate("a", Pont.Hello.max_instance_bytes() + 1)},
+           Pont.Access.Single, 4002, "instance id is too long; max is 128 bytes"},
+          {"lab", %{}, DenyClaim, 4004, "uplink is not allowed"}
+        ] do
+      Application.put_env(:pont, :access, policy)
+      assert {:ok, conn, ref, websocket} = upgrade("/agent", [{"authorization", "Bearer sekret"}])
+      {conn, websocket} = say_hello(conn, ref, websocket, name, attrs)
+      assert {:close, code, reason} in recv_until_close(conn, websocket)
+      assert Pont.Registry.list() == []
+      Mint.HTTP.close(conn)
+    end
+  end
+
   defp request(method, path, headers \\ []) do
     {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", 18_091, mode: :passive)
     {:ok, conn, ref} = Mint.HTTP.request(conn, method, path, headers, nil)
@@ -157,12 +191,12 @@ defmodule Pont.RouterTest do
     end
   end
 
-  defp say_hello(conn, ref, websocket, name) do
+  defp say_hello(conn, ref, websocket, name, attrs \\ %{}) do
     hello =
       Jason.encode!(%{
         "jsonrpc" => "2.0",
         "method" => "pont.uplink",
-        "params" => %{"name" => name, "label" => "Bench"}
+        "params" => Map.merge(%{"name" => name, "label" => "Bench"}, attrs)
       })
 
     {:ok, websocket, data} = Mint.WebSocket.encode(websocket, {:text, hello})

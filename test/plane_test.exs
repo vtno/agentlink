@@ -479,7 +479,12 @@ defmodule Pont.PlaneTest do
   defp agent!(name) do
     parent = self()
     pid = spawn(fn -> agent_loop(parent) end)
-    :ok = Pont.Registry.register(pid, %Pont.Registry.Uplink{name: name, label: name}, %Pont.Access.Subject{id: "admin", role: :admin})
+    {:ok, ^name} =
+      Pont.Registry.register(
+        pid,
+        %Pont.Registry.Uplink{name: name, label: name},
+        %Pont.Access.Subject{id: "admin", role: :admin}
+      )
     pid
   end
 
