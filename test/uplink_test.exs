@@ -272,7 +272,7 @@ defmodule Pont.UplinkTest do
     write_link!("ws://127.0.0.1:18113/agent", %{"label" => "renamed"})
 
     log =
-      capture_info(fn ->
+      Pont.TestHelpers.capture_info(fn ->
         send(Pont.Uplink, :watch)
         assert await_settled_pid("opencode", holder)
       end)
@@ -294,7 +294,7 @@ defmodule Pont.UplinkTest do
     assert :sys.suspend(holder) == :ok
 
     log =
-      capture_info(fn ->
+      Pont.TestHelpers.capture_info(fn ->
         send(Pont.Uplink, :connect)
         assert await_settled_pid("opencode", holder)
       end)
@@ -321,17 +321,6 @@ defmodule Pont.UplinkTest do
     refute :sys.get_state(Pont.Uplink).name_taken
   end
 
-  defp capture_info(fun) do
-    level = Logger.level()
-    Logger.configure(level: :info)
-
-    try do
-      ExUnit.CaptureLog.capture_log(fun)
-    after
-      Logger.configure(level: level)
-    end
-  end
-
   defp start_plane(port) do
     previous = Application.get_env(:pont, :master_token)
     Application.put_env(:pont, :master_token, "sekret")
@@ -344,21 +333,7 @@ defmodule Pont.UplinkTest do
 
     write_link!("ws://127.0.0.1:#{port}/agent")
     start_supervised!({Pont.Uplink, owner: self()})
-    await_pid("opencode")
-  end
-
-  defp await_pid(name, attempts \\ 100) do
-    case Pont.Registry.pid(name) do
-      pid when is_pid(pid) ->
-        pid
-
-      nil when attempts > 0 ->
-        Process.sleep(20)
-        await_pid(name, attempts - 1)
-
-      nil ->
-        flunk("uplink #{name} did not register")
-    end
+    Pont.TestHelpers.await_pid("opencode")
   end
 
   defp await_settled_pid(name, holder, attempts \\ 40) do

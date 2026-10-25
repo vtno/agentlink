@@ -3,7 +3,7 @@ defmodule Pont.AuthTest do
 
   setup do
     previous = Application.get_env(:pont, :master_token)
-    on_exit(fn -> restore(previous) end)
+    on_exit(fn -> Pont.TestHelpers.restore(:master_token, previous) end)
     :ok
   end
 
@@ -30,7 +30,4 @@ defmodule Pont.AuthTest do
     Plug.Test.conn(method, path, nil)
     |> Map.put(:req_headers, headers)
   end
-
-  defp restore(nil), do: Application.delete_env(:pont, :master_token)
-  defp restore(value), do: Application.put_env(:pont, :master_token, value)
 end

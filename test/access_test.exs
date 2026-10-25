@@ -24,8 +24,8 @@ defmodule Pont.AccessTest do
     access = Application.get_env(:pont, :access)
 
     on_exit(fn ->
-      restore(:master_token, token)
-      restore(:access, access)
+      Pont.TestHelpers.restore(:master_token, token)
+      Pont.TestHelpers.restore(:access, access)
     end)
 
     :ok
@@ -95,7 +95,4 @@ defmodule Pont.AccessTest do
   end
 
   defp conn(path), do: Plug.Test.conn(:get, path)
-
-  defp restore(key, nil), do: Application.delete_env(:pont, key)
-  defp restore(key, value), do: Application.put_env(:pont, key, value)
 end

@@ -6,8 +6,8 @@ defmodule Pont.SetupTest do
     url = Application.get_env(:pont, :plane_url)
 
     on_exit(fn ->
-      restore(:master_token, token)
-      restore(:plane_url, url)
+      Pont.TestHelpers.restore(:master_token, token)
+      Pont.TestHelpers.restore(:plane_url, url)
     end)
 
     :ok
@@ -72,7 +72,4 @@ defmodule Pont.SetupTest do
     assert connected =~ "Uplink connected: opencode (this machine)."
     assert rejected =~ "master token did not match"
   end
-
-  defp restore(key, nil), do: Application.delete_env(:pont, key)
-  defp restore(key, value), do: Application.put_env(:pont, key, value)
 end

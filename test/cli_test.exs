@@ -84,8 +84,8 @@ defmodule Pont.CLITest do
     assert :ok = Pont.CLI.apply(["--opencode-bin", path])
     assert Application.get_env(:pont, :opencode_bin) == Path.expand(path)
 
-    restore(:opencode_bin, previous)
-    restore(:mode, mode)
+    Pont.TestHelpers.restore(:opencode_bin, previous)
+    Pont.TestHelpers.restore(:mode, mode)
   end
 
   test "apply stores the command" do
@@ -102,12 +102,9 @@ defmodule Pont.CLITest do
     assert Application.get_env(:pont, :plane_url) == Pont.Paths.plane_url(9001)
     assert Application.get_env(:pont, :master_token) == "sekret"
 
-    restore(:mode, previous.mode)
-    restore(:port, previous.port)
-    restore(:plane_url, previous.plane_url)
-    restore(:master_token, previous.token)
+    Pont.TestHelpers.restore(:mode, previous.mode)
+    Pont.TestHelpers.restore(:port, previous.port)
+    Pont.TestHelpers.restore(:plane_url, previous.plane_url)
+    Pont.TestHelpers.restore(:master_token, previous.token)
   end
-
-  defp restore(key, nil), do: Application.delete_env(:pont, key)
-  defp restore(key, value), do: Application.put_env(:pont, key, value)
 end
