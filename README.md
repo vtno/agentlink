@@ -84,6 +84,8 @@ The plane listens only on `127.0.0.1`. On another machine, set `plane_url` to an
 
 The workspace is `$HOME/.pont/workspace`. `Pont.OpenCode` runs `opencode` from `PATH`, or `$HOME/.local/bin/opencode`.
 
+For `session/new` and `session/load`, the agent relay fills a missing, null, or empty `cwd` with its workspace before forwarding to the agent. An explicit `cwd` is passed through unchanged and refers to a path on the agent's machine.
+
 ## Tests
 
 `mix test` does not start OpenCode. `PONT_BIN=./burrito_out/pont_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped` starts the wrapped binary, asks OpenCode to write a page, and checks that page. Set `OPENCODE_BIN` when `opencode` is not on `PATH`.

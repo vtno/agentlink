@@ -112,8 +112,22 @@ defmodule Pont.Relay.Agent do
   end
 
   defp write(%{agent_module: agent_module, agent: agent}, message) do
+    message = default_cwd(message)
     agent_module.write(agent, [Jason.encode!(message), ?\n])
   end
+
+  defp default_cwd(%{"method" => method} = message)
+       when method in ["session/new", "session/load"] do
+    params = Map.get(message, "params", %{})
+
+    if is_map(params) and Map.get(params, "cwd") in [nil, ""] do
+      Map.put(message, "params", Map.put(params, "cwd", Pont.Paths.workdir()))
+    else
+      message
+    end
+  end
+
+  defp default_cwd(message), do: message
 
   defp take_lines(buffer), do: take_lines(buffer, [])
 

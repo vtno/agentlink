@@ -43,6 +43,74 @@ defmodule Pont.Relay.AgentTest do
     assert %{"method" => "ping"} = Jason.decode!(String.trim(line))
   end
 
+  for method <- ["session/new", "session/load"] do
+    for {description, cwd_params} <- [
+          {"missing", %{}},
+          {"null", %{"cwd" => nil}},
+          {"empty", %{"cwd" => ""}}
+        ] do
+      test "#{method} fills #{description} cwd with the relay workspace" do
+        _agent = start_relay!()
+
+        params =
+          Map.merge(
+            %{"sessionId" => "session-1", "mcpServers" => []},
+            unquote(Macro.escape(cwd_params))
+          )
+
+        message = %{
+          "jsonrpc" => "2.0",
+          "id" => 7,
+          "method" => unquote(method),
+          "params" => params
+        }
+
+        expected = put_in(message, ["params", "cwd"], Pont.Paths.workdir())
+
+        send(Pont.Relay.Agent, {:from_plane, message})
+
+        assert_receive {:agent_write, line}
+        assert Jason.decode!(line) == expected
+      end
+    end
+
+    test "#{method} preserves an explicit cwd" do
+      _agent = start_relay!()
+
+      message = %{
+        "jsonrpc" => "2.0",
+        "id" => 7,
+        "method" => unquote(method),
+        "params" => %{"cwd" => "/some/explicit/workspace", "mcpServers" => []}
+      }
+
+      send(Pont.Relay.Agent, {:from_plane, message})
+
+      assert_receive {:agent_write, line}
+      assert Jason.decode!(line) == message
+    end
+  end
+
+  test "send_message defaults cwd when session/new has no params" do
+    _agent = start_relay!()
+    message = %{"jsonrpc" => "2.0", "id" => 7, "method" => "session/new"}
+
+    assert :ok = Pont.Relay.Agent.send_message(message)
+
+    assert_receive {:agent_write, line}
+    assert Jason.decode!(line) == Map.put(message, "params", %{"cwd" => Pont.Paths.workdir()})
+  end
+
+  test "other methods keep an empty cwd unchanged" do
+    _agent = start_relay!()
+    message = %{"method" => "session/prompt", "params" => %{"cwd" => ""}}
+
+    send(Pont.Relay.Agent, {:from_plane, message})
+
+    assert_receive {:agent_write, line}
+    assert Jason.decode!(line) == message
+  end
+
   test "a closed agent stops the agent relay" do
     agent = start_relay!()
     relay = Process.whereis(Pont.Relay.Agent)
