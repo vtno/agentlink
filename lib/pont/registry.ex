@@ -1,10 +1,11 @@
 defmodule Pont.Registry.Uplink do
   @moduledoc """
   The row recorded after an uplink says hello. `name` comes from the link. `label` is the machine.
-  `program` is the agent product name, not the `Pont.Agent` module.
+  `program` is the agent product name, not the `Pont.Agent` module. `instance` identifies the
+  relay VM. A later hello with the same instance is that relay dialing again.
   """
 
-  defstruct [:name, :label, :program, :pid, :connected_at]
+  defstruct [:name, :label, :program, :pid, :instance, :connected_at]
 end
 
 defmodule Pont.Registry do
@@ -12,11 +13,13 @@ defmodule Pont.Registry do
   Live uplinks. One row is one uplink that has said hello.
   The socket is the source of truth.
 
-  The first live socket to claim a name keeps it. A later hello for that
-  name is rejected, and the existing row is left alone. Register calls run
-  one at a time, so two hellos at the same moment still have one winner.
-  A row whose pid is already dead is stale: the socket is gone, and the new
-  hello takes the name. When the holder process exits, the name is free.
+  The first live socket to claim a name keeps it. A later hello from that
+  same relay releases the previous socket and the new one keeps the name.
+  A later hello from another relay is rejected, and the existing row is left
+  alone. Register calls run one at a time, so two hellos at the same moment
+  still have one winner. A row whose pid is already dead is stale: the socket
+  is gone, and the new hello takes the name. When the holder process exits,
+  the name is free.
   """
 
   use GenServer
@@ -55,6 +58,7 @@ defmodule Pont.Registry do
         name: name,
         label: clip(uplink.label, name),
         program: clip(uplink.program, "opencode"),
+        instance: instance_id(uplink.instance),
         pid: pid,
         connected_at: System.system_time(:second)
       }
@@ -63,16 +67,23 @@ defmodule Pont.Registry do
         [{^name, %Pont.Registry.Uplink{pid: ^pid}}] ->
           {:reply, :ok, state}
 
-        [{^name, %Pont.Registry.Uplink{pid: holder}}] ->
-          if Process.alive?(holder) do
-            Logger.warning(
-              "uplink rejected name=#{name} another uplink is already connected with this name"
-            )
+        [{^name, %Pont.Registry.Uplink{pid: holder} = current}] ->
+          cond do
+            Process.alive?(holder) and same_relay?(current, uplink) ->
+              Logger.info("uplink reconnect name=#{name} the same relay dialed again")
+              send(holder, :superseded)
+              {:reply, :ok, remember(drop_pid(state, holder), pid, uplink)}
 
-            {:reply, {:error, {:name_taken, name}}, state}
-          else
-            Logger.warning("uplink stale name=#{name} the previous holder was already dead")
-            {:reply, :ok, remember(drop_pid(state, holder), pid, uplink)}
+            Process.alive?(holder) ->
+              Logger.warning(
+                "uplink rejected name=#{name} another uplink is already connected with this name"
+              )
+
+              {:reply, {:error, {:name_taken, name}}, state}
+
+            true ->
+              Logger.warning("uplink stale name=#{name} the previous holder was already dead")
+              {:reply, :ok, remember(drop_pid(state, holder), pid, uplink)}
           end
 
         [] ->
@@ -183,4 +194,21 @@ defmodule Pont.Registry do
   end
 
   defp clip(_value, fallback), do: fallback
+
+  # Empty and missing ids never match, including nil with nil. Only this
+  # relay's own redial carries the same id.
+  defp instance_id(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      text -> String.slice(text, 0, 80)
+    end
+  end
+
+  defp instance_id(_value), do: nil
+
+  defp same_relay?(%Pont.Registry.Uplink{instance: id}, %Pont.Registry.Uplink{instance: id})
+       when is_binary(id),
+       do: true
+
+  defp same_relay?(_current, _uplink), do: false
 end

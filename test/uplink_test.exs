@@ -222,6 +222,49 @@ defmodule Pont.UplinkTest do
     refute :sys.get_state(Pont.Uplink).name_taken
   end
 
+  test "a label change redials while the previous plane socket is still alive" do
+    holder = start_plane(18_113)
+    [{_, %Pont.Registry.Uplink{instance: instance}}] = :ets.lookup(:pont_runtimes, "opencode")
+    assert is_binary(instance) and instance != ""
+    assert :sys.suspend(holder) == :ok
+
+    write_link!("ws://127.0.0.1:18113/agent", %{"label" => "renamed"})
+
+    log =
+      capture_info(fn ->
+        send(Pont.Uplink, :watch)
+        assert await_settled_pid("opencode", holder)
+      end)
+
+    assert log =~ "uplink reconnect name=opencode the same relay dialed again"
+    refute log =~ "uplink rejected name=opencode"
+    new_pid = Pont.Registry.pid("opencode")
+    assert [%{"label" => "renamed"}] = Pont.Registry.list()
+
+    [{_, %Pont.Registry.Uplink{instance: ^instance, pid: ^new_pid}}] =
+      :ets.lookup(:pont_runtimes, "opencode")
+
+    refute :sys.get_state(Pont.Uplink).name_taken
+    release_holder(holder, new_pid)
+  end
+
+  test "a reconnect redials while the previous plane socket is still alive" do
+    holder = start_plane(18_114)
+    assert :sys.suspend(holder) == :ok
+
+    log =
+      capture_info(fn ->
+        send(Pont.Uplink, :connect)
+        assert await_settled_pid("opencode", holder)
+      end)
+
+    assert log =~ "uplink reconnect name=opencode the same relay dialed again"
+    refute log =~ "uplink rejected name=opencode"
+    new_pid = Pont.Registry.pid("opencode")
+    refute :sys.get_state(Pont.Uplink).name_taken
+    release_holder(holder, new_pid)
+  end
+
   test "a normal close still redials" do
     start_supervised!(
       {Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_112, ip: {127, 0, 0, 1}}
@@ -235,6 +278,77 @@ defmodule Pont.UplinkTest do
     send(socket, {:close, 1001, "going away"})
     assert_receive {:socket, _}, 1_000
     refute :sys.get_state(Pont.Uplink).name_taken
+  end
+
+  defp capture_info(fun) do
+    level = Logger.level()
+    Logger.configure(level: :info)
+
+    try do
+      ExUnit.CaptureLog.capture_log(fun)
+    after
+      Logger.configure(level: level)
+    end
+  end
+
+  defp start_plane(port) do
+    previous = Application.get_env(:pont, :master_token)
+    Application.put_env(:pont, :master_token, "sekret")
+    on_exit(fn -> restore_token(previous) end)
+
+    start_supervised!(Pont.Registry)
+    start_supervised!(Pont.Plane)
+
+    start_supervised!({Bandit, plug: Pont.Router, scheme: :http, port: port, ip: {127, 0, 0, 1}})
+
+    write_link!("ws://127.0.0.1:#{port}/agent")
+    start_supervised!({Pont.Uplink, owner: self()})
+    await_pid("opencode")
+  end
+
+  defp await_pid(name, attempts \\ 100) do
+    case Pont.Registry.pid(name) do
+      pid when is_pid(pid) ->
+        pid
+
+      nil when attempts > 0 ->
+        Process.sleep(20)
+        await_pid(name, attempts - 1)
+
+      nil ->
+        flunk("uplink #{name} did not register")
+    end
+  end
+
+  defp await_settled_pid(name, holder, attempts \\ 40) do
+    case Pont.Registry.pid(name) do
+      pid when is_pid(pid) and pid != holder ->
+        Process.sleep(50)
+
+        case Pont.Registry.pid(name) do
+          ^pid -> pid
+          _ when attempts > 0 -> await_settled_pid(name, holder, attempts - 1)
+          _ -> flunk("uplink #{name} dropped during reconnect")
+        end
+
+      _ when attempts > 0 ->
+        Process.sleep(20)
+        await_settled_pid(name, holder, attempts - 1)
+
+      _ ->
+        flunk("uplink #{name} stayed on the previous socket")
+    end
+  end
+
+  defp release_holder(holder, new_pid) do
+    ref = Process.monitor(holder)
+    assert :sys.resume(holder) == :ok
+    assert_receive {:DOWN, ^ref, :process, ^holder, _}, 1_000
+    Process.sleep(50)
+    assert Pont.Registry.pid("opencode") == new_pid
+    assert Process.alive?(new_pid)
+    refute :sys.get_state(Pont.Uplink).name_taken
+    true
   end
 
   defp await_name_taken(attempts \\ 50) do

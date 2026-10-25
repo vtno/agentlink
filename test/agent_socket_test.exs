@@ -75,5 +75,46 @@ defmodule Pont.AgentSocketTest do
     assert Pont.Registry.pid("lab") == holder
     assert named.name == "lab"
     assert {:ok, ^named} = Pont.AgentSocket.handle_info(:other, named)
+    refute_received :superseded
+  end
+
+  test "the same relay's hello stops the previous socket" do
+    subject = %Pont.Access.Subject{id: "admin", role: :admin}
+    {:ok, state} = Pont.AgentSocket.init(subject)
+
+    hello =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "pont.uplink",
+        "params" => %{"name" => "lab", "label" => "Bench", "instance" => "relay-a"}
+      })
+
+    assert {:ok, named} = Pont.AgentSocket.handle_in({hello, [opcode: :text]}, state)
+    parent = self()
+    level = Logger.level()
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: level) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        spawn(fn ->
+          {:ok, other} = Pont.AgentSocket.init(subject)
+          send(parent, {:accepted, Pont.AgentSocket.handle_in({hello, [opcode: :text]}, other)})
+          Process.sleep(:infinity)
+        end)
+
+        assert_receive {:accepted, {:ok, _other}}
+      end)
+
+    assert log =~ "uplink reconnect name=lab the same relay dialed again"
+    assert_receive :superseded
+    assert Pont.Registry.pid("lab") != self()
+
+    stop_log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:stop, :normal, ^named} = Pont.AgentSocket.handle_info(:superseded, named)
+      end)
+
+    assert stop_log =~ "agent socket superseded name=lab the same relay dialed again"
   end
 end

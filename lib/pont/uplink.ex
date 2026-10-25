@@ -4,8 +4,10 @@ defmodule Pont.Uplink do
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
   process directly.
 
-  A dropped socket redials. A close that means this name is already in use
-  logs the clash and waits until the link name or plane URL changes.
+  A dropped socket redials. The hello carries this VM's relay instance, so
+  the plane can release this relay's previous socket when this process dials
+  again. A close that means this name is already in use logs the clash and
+  waits until the link name or plane URL changes.
   """
 
   use GenServer
@@ -338,8 +340,29 @@ defmodule Pont.Uplink do
     %{
       "jsonrpc" => "2.0",
       "method" => "pont.uplink",
-      "params" => %{"name" => link.name, "label" => link.label, "program" => link.program}
+      "params" => %{
+        "name" => link.name,
+        "label" => link.label,
+        "program" => link.program,
+        "instance" => relay_instance()
+      }
     }
+  end
+
+  # One id per VM. A new `Pont.Uplink` process in this BEAM is still this relay.
+  # A second OS process has a different id and cannot take the name.
+  defp relay_instance do
+    key = {__MODULE__, :instance}
+
+    case :persistent_term.get(key, nil) do
+      id when is_binary(id) and id != "" ->
+        id
+
+      _ ->
+        id = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+        :persistent_term.put(key, id)
+        id
+    end
   end
 
   defp endpoint(url) do

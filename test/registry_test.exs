@@ -54,6 +54,77 @@ defmodule Pont.RegistryTest do
     assert Process.alive?(second)
   end
 
+  test "the same relay instance releases the live holder and keeps the new socket" do
+    first = spawn(fn -> Process.sleep(:infinity) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(first, "lab", "a", "relay-a")
+
+    log =
+      capture_info(fn ->
+        assert :ok = hello(second, "lab", "b", "relay-a")
+      end)
+
+    assert log =~ "uplink reconnect name=lab the same relay dialed again"
+    refute log =~ "uplink rejected name=lab"
+    assert Pont.Registry.pid("lab") == second
+    assert [%{"label" => "b"}] = Pont.Registry.list()
+    assert Process.info(first, :messages) == {:messages, [:superseded]}
+
+    Process.exit(first, :kill)
+    Process.sleep(50)
+    assert Pont.Registry.pid("lab") == second
+    assert Process.alive?(second)
+  end
+
+  test "a different relay instance leaves the holder up and unsignaled" do
+    first = spawn(fn -> Process.sleep(:infinity) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(first, "lab", "a", "relay-a")
+
+    assert {:error, {:name_taken, "lab"}} = hello(second, "lab", "b", "relay-b")
+    assert Pont.Registry.pid("lab") == first
+    assert [%{"label" => "a"}] = Pont.Registry.list()
+    assert Process.info(first, :messages) == {:messages, []}
+    assert Process.alive?(first)
+  end
+
+  test "a missing instance does not match a present one, or another missing one" do
+    holder = spawn(fn -> Process.sleep(:infinity) end)
+    other = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(holder, "lab", "a", "relay-a")
+    assert {:error, {:name_taken, "lab"}} = hello(other, "lab", "b")
+    assert Process.info(holder, :messages) == {:messages, []}
+
+    plain = spawn(fn -> Process.sleep(:infinity) end)
+    challenger = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(plain, "bench", "a")
+    assert {:error, {:name_taken, "bench"}} = hello(challenger, "bench", "b", "relay-a")
+    assert Process.info(plain, :messages) == {:messages, []}
+    assert Pont.Registry.pid("lab") == holder
+    assert Pont.Registry.pid("bench") == plain
+  end
+
+  test "a blank instance does not count as the same relay" do
+    first = spawn(fn -> Process.sleep(:infinity) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(first, "lab", "a", "  ")
+    assert {:error, {:name_taken, "lab"}} = hello(second, "lab", "b", "  ")
+    assert Process.info(first, :messages) == {:messages, []}
+    assert Pont.Registry.pid("lab") == first
+  end
+
+  test "a long instance is clipped and still matches that relay" do
+    id = String.duplicate("a", 90)
+    first = spawn(fn -> Process.sleep(:infinity) end)
+    second = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(first, "lab", "a", id)
+    [{_, %Pont.Registry.Uplink{instance: stored}}] = :ets.lookup(:pont_runtimes, "lab")
+    assert stored == String.duplicate("a", 80)
+    assert :ok = hello(second, "lab", "b", id)
+    assert Pont.Registry.pid("lab") == second
+    assert Process.info(first, :messages) == {:messages, [:superseded]}
+  end
+
   test "the holder registering again leaves the row untouched" do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     assert :ok = hello(pid, "lab", "a")
@@ -123,10 +194,21 @@ defmodule Pont.RegistryTest do
     assert Process.alive?(next)
   end
 
-  defp hello(pid, name, label) do
+  defp capture_info(fun) do
+    level = Logger.level()
+    Logger.configure(level: :info)
+
+    try do
+      ExUnit.CaptureLog.capture_log(fun)
+    after
+      Logger.configure(level: level)
+    end
+  end
+
+  defp hello(pid, name, label, instance \\ nil) do
     Pont.Registry.register(
       pid,
-      %Pont.Registry.Uplink{name: name, label: label},
+      %Pont.Registry.Uplink{name: name, label: label, instance: instance},
       %Pont.Access.Subject{id: "admin", role: :admin}
     )
   end

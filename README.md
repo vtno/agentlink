@@ -76,7 +76,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 }
 ```
 
-`name` is the agent id. One plane keeps a single uplink for each name. The first uplink to register a name keeps the socket. A later hello for that name is rejected with WebSocket code 4001 and the reason `name "<name>" is in use; stop the other relay or change name`. That relay logs the clash and does not redial until `name` or `plane_url` in this file changes. When the holder disconnects, the name is free for a new dial. `label` is the display name. `program` is the product name, such as `opencode`.
+`name` is the agent id. One plane keeps a single uplink for each name. The first uplink to register a name keeps the socket. That same relay can dial again, including after a label or program change and after a dropped socket: the plane releases the previous socket and keeps the new one. A hello from a different relay is rejected with WebSocket code 4001 and the reason `name "<name>" is in use; stop the other relay or change name`. That relay logs the clash and does not redial until `name` or `plane_url` in this file changes. When the holder disconnects, the name is free for a new dial. `label` is the display name. `program` is the product name, such as `opencode`.
 
 The plane listens only on `127.0.0.1`. On another machine, set `plane_url` to an address that machine can reach.
 

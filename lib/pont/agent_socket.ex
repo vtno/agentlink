@@ -1,8 +1,9 @@
 defmodule Pont.AgentSocket do
   @moduledoc """
   The plane's agent socket. The first frame is `pont.uplink` and lands in the registry.
-  Later frames are ACP from that runtime. A hello for a name that is already live
-  closes this socket. The earlier socket stays up.
+  Later frames are ACP from that runtime. A hello from the same relay stops this
+  socket so the new one can take the name. A hello from another relay, while this
+  name is live, closes that new socket and leaves this one up.
   """
 
   @behaviour WebSock
@@ -39,7 +40,8 @@ defmodule Pont.AgentSocket do
         uplink = %Pont.Registry.Uplink{
           name: params["name"],
           label: params["label"],
-          program: params["program"] || "opencode"
+          program: params["program"] || "opencode",
+          instance: params["instance"]
         }
 
         case Pont.Registry.register(self(), uplink, state.subject) do
@@ -66,6 +68,11 @@ defmodule Pont.AgentSocket do
   def handle_in(_frame, state), do: {:ok, state}
 
   @impl true
+  def handle_info(:superseded, state) do
+    Logger.info("agent socket superseded name=#{state.name} the same relay dialed again")
+    {:stop, :normal, state}
+  end
+
   def handle_info({:send, json}, state) when is_binary(json) do
     {:push, [{:text, json}], state}
   end
