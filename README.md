@@ -76,7 +76,7 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 }
 ```
 
-`name` is the agent id. `label` is the display name. `program` is the product name, such as `opencode`.
+`name` is the agent id. One plane keeps a single uplink for each name. When another uplink registers that name, the plane closes the earlier socket with WebSocket code 4001 and the reason `another uplink registered as "<name>"`. That relay logs the clash and does not redial until `name` or `plane_url` in this file changes. `label` is the display name. `program` is the product name, such as `opencode`.
 
 The plane listens only on `127.0.0.1`. On another machine, set `plane_url` to an address that machine can reach.
 

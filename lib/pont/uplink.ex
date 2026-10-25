@@ -3,6 +3,9 @@ defmodule Pont.Uplink do
   Dials the plane's agent socket. Outbound text frames are one JSON object.
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
   process directly.
+
+  A dropped socket redials. A close that means another uplink took this name
+  logs the clash and waits until the link name or plane URL changes.
   """
 
   use GenServer
@@ -14,7 +17,8 @@ defmodule Pont.Uplink do
     :websocket,
     :ref,
     :link,
-    outbox: []
+    outbox: [],
+    replaced: false
   ]
 
   @doc "Dial the plane's agent socket. A remote relay never calls the plane process directly."
@@ -53,6 +57,8 @@ defmodule Pont.Uplink do
   end
 
   @impl true
+  def handle_info(:connect, %__MODULE__{replaced: true} = state), do: {:noreply, state}
+
   def handle_info(:connect, %__MODULE__{} = state) do
     close_conn(state)
 
@@ -68,11 +74,7 @@ defmodule Pont.Uplink do
   def handle_info(:watch, %__MODULE__{} = state) do
     case read_link() do
       {:ok, link} ->
-        if state.conn && link != state.link do
-          Logger.info("agent link changed, redialing as #{link.name}")
-          send(self(), :connect)
-        end
-
+        state = maybe_redial(state, link)
         Process.send_after(self(), :watch, 1_000)
         {:noreply, state}
 
@@ -89,7 +91,7 @@ defmodule Pont.Uplink do
 
       {:error, conn, reason, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &apply_response/2)
-        Logger.warning("uplink error #{inspect(reason)}")
+        unless state.replaced, do: Logger.warning("uplink error #{inspect(reason)}")
         close_conn(state)
         schedule(%{state | conn: nil, websocket: nil, ref: nil})
 
@@ -121,9 +123,16 @@ defmodule Pont.Uplink do
     send_frame(state, {:pong, payload})
   end
 
-  defp apply_frame({:close, _code, _reason}, state) do
+  defp apply_frame({:close, code, reason}, state) do
     close_conn(state)
-    %{state | conn: nil, websocket: nil, ref: nil}
+    state = %{state | conn: nil, websocket: nil, ref: nil}
+
+    if code == Pont.AgentSocket.duplicate_close_code() do
+      log_replaced(state, reason)
+      %{state | replaced: true}
+    else
+      state
+    end
   end
 
   defp apply_frame({:error, reason}, state) do
@@ -253,9 +262,49 @@ defmodule Pont.Uplink do
     end)
   end
 
+  # Redialing after this close replaces the other uplink, which then redials, and the two fight.
+  defp schedule(%__MODULE__{replaced: true} = state), do: {:noreply, state}
+
   defp schedule(state) do
     Process.send_after(self(), :connect, 500)
     {:noreply, state}
+  end
+
+  defp maybe_redial(%__MODULE__{} = state, link) do
+    cond do
+      state.replaced and link_target_changed?(state.link, link) ->
+        Logger.info("agent link changed, redialing as #{link.name}")
+        send(self(), :connect)
+        %{state | replaced: false}
+
+      state.conn && link != state.link ->
+        Logger.info("agent link changed, redialing as #{link.name}")
+        send(self(), :connect)
+        state
+
+      true ->
+        state
+    end
+  end
+
+  defp link_target_changed?(current, link) do
+    link.name != current.name or link.plane_url != current.plane_url
+  end
+
+  defp log_replaced(%__MODULE__{} = state, reason) do
+    detail =
+      if is_binary(reason) and reason != "" do
+        reason
+      else
+        Pont.AgentSocket.duplicate_reason(state.link.name)
+      end
+
+    Logger.error(
+      "uplink replaced name=#{state.link.name} #{detail}. " <>
+        "Another relay is connected with this name. " <>
+        "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}. " <>
+        "This relay will not reconnect until name or plane_url changes"
+    )
   end
 
   defp transmit(message, %__MODULE__{websocket: nil} = state) do

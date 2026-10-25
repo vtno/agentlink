@@ -8,7 +8,7 @@ Relay. Copies JSON-RPC between a local stdio and a plane socket. `Pont.Relay.Age
 
 Link. The file. Name, label, program, and plane URL. Not the live connection. The uplink reads it when it dials. A missing file stops the relay.
 
-Uplink. `Pont.Uplink` is the process that dials. `Pont.Registry.Uplink` is the row recorded after that dial says hello.
+Uplink. `Pont.Uplink` is the process that dials. `Pont.Registry.Uplink` is the row recorded after that dial says hello. A second hello with the same name closes the earlier socket, and that relay does not redial.
 
 Agent. The stdio behaviour. `Pont.OpenCode` implements it and runs the binary. The relay opens the behaviour. The relay does not spawn the binary.
 

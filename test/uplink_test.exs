@@ -20,6 +20,7 @@ defmodule Pont.UplinkTest do
 
     @impl true
     def handle_info({:push, frame}, owner), do: {:push, [frame], owner}
+    def handle_info({:close, code, reason}, owner), do: {:stop, :normal, {code, reason}, owner}
     def handle_info(_message, owner), do: {:ok, owner}
   end
 
@@ -111,7 +112,11 @@ defmodule Pont.UplinkTest do
     Application.put_env(:pont, :master_token, "sekret")
     on_exit(fn -> restore_token(previous) end)
 
-    start_supervised!({Bandit, plug: {Pont.UplinkTest.AuthPlug, self()}, scheme: :http, port: 18_093, ip: {127, 0, 0, 1}})
+    start_supervised!(
+      {Bandit,
+       plug: {Pont.UplinkTest.AuthPlug, self()}, scheme: :http, port: 18_093, ip: {127, 0, 0, 1}}
+    )
+
     write_link!("ws://127.0.0.1:18093/agent")
     start_supervised!({Pont.Uplink, owner: self()})
     assert_receive {:auth, ["Bearer sekret"]}
@@ -137,7 +142,10 @@ defmodule Pont.UplinkTest do
   end
 
   test "a connected uplink sends, receives, and redials when the link changes" do
-    start_supervised!({Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_095, ip: {127, 0, 0, 1}})
+    start_supervised!(
+      {Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_095, ip: {127, 0, 0, 1}}
+    )
+
     write_link!("ws://127.0.0.1:18095/agent")
     start_supervised!({Pont.Uplink, owner: self()})
 
@@ -165,15 +173,93 @@ defmodule Pont.UplinkTest do
     assert :sys.get_state(Pont.Uplink).websocket == nil
   end
 
-  defp write_link!(url) do
+  test "a duplicate close does not redial until the link name changes" do
+    url = "ws://127.0.0.1:18111/agent"
+
+    start_supervised!(
+      {Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_111, ip: {127, 0, 0, 1}}
+    )
+
+    write_link!(url)
+    start_supervised!({Pont.Uplink, owner: self()})
+
+    assert_receive {:socket, socket}
+    assert_receive {:ws, hello}
+    assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
+
+    reason = ~s(another uplink registered as "opencode")
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(socket, {:close, 4001, reason})
+        assert await_replaced()
+      end)
+
+    assert log =~ "uplink replaced name=opencode"
+    assert log =~ reason
+    assert log =~ "Another relay is connected with this name"
+
+    assert log =~
+             "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}"
+
+    assert log =~ "will not reconnect until name or plane_url changes"
+
+    send(Pont.Uplink, :connect)
+    write_link!(url, %{"label" => "other label"})
+    send(Pont.Uplink, :watch)
+    refute_receive {:socket, _}, 1_000
+
+    state = :sys.get_state(Pont.Uplink)
+    assert state.replaced
+    assert is_nil(state.websocket)
+    assert Process.alive?(Process.whereis(Pont.Uplink))
+
+    write_link!(url, %{"name" => "other"})
+    send(Pont.Uplink, :watch)
+    assert_receive {:socket, _}, 1_000
+    assert_receive {:ws, hello}
+    assert %{"params" => %{"name" => "other"}} = Jason.decode!(hello)
+    refute :sys.get_state(Pont.Uplink).replaced
+  end
+
+  test "a normal close still redials" do
+    start_supervised!(
+      {Bandit, plug: {WsPlug, self()}, scheme: :http, port: 18_112, ip: {127, 0, 0, 1}}
+    )
+
+    write_link!("ws://127.0.0.1:18112/agent")
+    start_supervised!({Pont.Uplink, owner: self()})
+
+    assert_receive {:socket, socket}
+    assert_receive {:ws, _hello}
+    send(socket, {:close, 1001, "going away"})
+    assert_receive {:socket, _}, 1_000
+    refute :sys.get_state(Pont.Uplink).replaced
+  end
+
+  defp await_replaced(attempts \\ 50) do
+    if :sys.get_state(Pont.Uplink).replaced or attempts == 0 do
+      assert :sys.get_state(Pont.Uplink).replaced
+    else
+      Process.sleep(20)
+      await_replaced(attempts - 1)
+    end
+  end
+
+  defp write_link!(url, attrs \\ %{}) do
     File.write!(
       Application.fetch_env!(:pont, :link_path),
-      Jason.encode!(%{
-        "name" => "opencode",
-        "label" => "this machine",
-        "program" => "opencode",
-        "plane_url" => url
-      })
+      Jason.encode!(
+        Map.merge(
+          %{
+            "name" => "opencode",
+            "label" => "this machine",
+            "program" => "opencode",
+            "plane_url" => url
+          },
+          attrs
+        )
+      )
     )
   end
 
