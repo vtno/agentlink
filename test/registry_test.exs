@@ -25,6 +25,19 @@ defmodule Pont.RegistryTest do
     assert Pont.Registry.pid("nope") == nil
   end
 
+  test "a name at the character limit is kept, and a longer one is rejected" do
+    max = Pont.Registry.max_name_chars()
+    at_max = String.duplicate("a", max)
+    too_long = String.duplicate("b", max + 1)
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    assert :ok = hello(pid, at_max, "x")
+    assert Pont.Registry.pid(at_max) == pid
+
+    other = spawn(fn -> Process.sleep(:infinity) end)
+    assert {:error, "link name must be a short slug"} = hello(other, too_long, "x")
+    assert Pont.Registry.pid(too_long) == nil
+  end
+
   test "an empty label uses the name, and a long label is cut" do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     :ok = hello(pid, "lab", "  ")

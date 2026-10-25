@@ -14,6 +14,11 @@ defmodule Pont.Registry do
   # 128 leaves room for a longer token without storing an unbounded id.
   @max_instance_bytes 128
 
+  # Link names are slugs, and Link.slug/1 cuts one to this length. The plane
+  # rejects a longer name instead of storing an unbounded id.
+  @max_name_chars 40
+  @name_regex ~r/^[a-z0-9][a-z0-9_-]{0,#{@max_name_chars - 1}}$/
+
   @moduledoc """
   Live uplinks. One row is one uplink that has said hello.
   The socket is the source of truth.
@@ -50,6 +55,9 @@ defmodule Pont.Registry do
 
   @doc "The longest relay instance id this plane will accept, in bytes."
   def max_instance_bytes, do: @max_instance_bytes
+
+  @doc "The longest link name this plane will accept, in characters."
+  def max_name_chars, do: @max_name_chars
 
   @doc "An uplink said hello. The access policy accepts this subject. A live holder of the name keeps the socket."
   def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject)
@@ -197,7 +205,7 @@ defmodule Pont.Registry do
   defp normalize_name(name) when is_binary(name) do
     name = String.trim(name)
 
-    if String.match?(name, ~r/^[a-z0-9][a-z0-9_-]{0,40}$/) do
+    if String.match?(name, @name_regex) do
       {:ok, name}
     else
       {:error, "link name must be a short slug"}
