@@ -86,7 +86,7 @@ defmodule Pont.OpenCodeLiveTest do
   end
 
   defp tmp_dir do
-    dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "pont-live-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     dir
   end
