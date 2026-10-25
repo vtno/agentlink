@@ -215,13 +215,8 @@ defmodule Pont.Plane do
     end
   end
 
-  defp on_runtime(state, client_id, message) do
-    if message["id"] do
-      reply(state, client_id, message["id"], {:error, "runtime request needs an id"})
-    else
-      state
-    end
-  end
+  # A runtime request without an id is a notice. Ignore it.
+  defp on_runtime(state, _client_id, _message), do: state
 
   defp with_runtime(state, client_id, message, fun) do
     case ensure_runtime(state, client_id) do
