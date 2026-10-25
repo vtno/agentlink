@@ -437,33 +437,23 @@ defmodule Pont.Plane do
                    fan_pending: Map.put(slot.fan_pending, fan_id, %{agent_id: message["id"], client_id: client_id})
                }}
             else
-              decline_method(state, slot, message)
+              decline(state, slot, message, -32601, "client does not support this method")
             end
 
           _ ->
-            decline_action(state, slot, message)
+            decline(state, slot, message, -32000, "no app is attached to this session")
         end
 
       _ ->
-        decline_action(state, slot, message)
+        decline(state, slot, message, -32000, "no app is attached to this session")
     end
   end
 
-  defp decline_action(state, slot, message) do
+  defp decline(state, slot, message, code, reason) do
     write_agent(slot, %{
       "jsonrpc" => "2.0",
       "id" => message["id"],
-      "error" => %{"code" => -32000, "message" => "no app is attached to this session"}
-    })
-
-    {state, slot}
-  end
-
-  defp decline_method(state, slot, message) do
-    write_agent(slot, %{
-      "jsonrpc" => "2.0",
-      "id" => message["id"],
-      "error" => %{"code" => -32601, "message" => "client does not support this method"}
+      "error" => %{"code" => code, "message" => reason}
     })
 
     {state, slot}

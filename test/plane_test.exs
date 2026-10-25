@@ -92,24 +92,16 @@ defmodule Pont.PlaneTest do
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
 
-    call(id, "initialize", %{
-      "protocolVersion" => 1,
-      "clientCapabilities" => %{
+    caps =
+      initialize!(id, 2, %{
         "fs" => %{"readTextFile" => true, "writeTextFile" => true},
         "terminal" => true
-      },
-      "clientInfo" => %{"name" => "zed", "version" => "0.1.0"}
-    }, 2)
-
-    assert {:agent, %{"id" => agent_id, "method" => "initialize", "params" => %{"clientCapabilities" => caps}}} = from_agent!()
+      })
 
     assert caps == %{
              "fs" => %{"readTextFile" => true, "writeTextFile" => true},
              "terminal" => true
            }
-
-    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{"agentCapabilities" => %{}}}))
-    assert %{"id" => 2} = reply!()
 
     {other, other_id} = spawn_client()
     call(other_id, "runtime/select", %{"name" => "lab"}, 1)
@@ -149,9 +141,7 @@ defmodule Pont.PlaneTest do
     assert %{"method" => "session/update"} = client_reply!(other)
 
     open_session!(id, "ses_zed")
-    call(id, "session/prompt", %{"sessionId" => "ses_zed", "prompt" => [%{"type" => "text", "text" => "go"}]}, 5)
-    assert %{"method" => "session/update"} = reply!()
-    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+    prompt!(id, "ses_zed", 5)
 
     agent_ask("ses_zed", "read", "fs/read_text_file")
     agent_ask("ses_zed", "write", "fs/write_text_file")
@@ -166,23 +156,9 @@ defmodule Pont.PlaneTest do
   test "fs read and write are gated on their own flags" do
     id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
-
-    call(id, "initialize", %{
-      "protocolVersion" => 1,
-      "clientCapabilities" => %{
-        "fs" => %{"readTextFile" => true, "writeTextFile" => false},
-        "terminal" => false
-      }
-    }, 1)
-
-    assert {:agent, %{"id" => agent_id}} = from_agent!()
-    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{"agentCapabilities" => %{}}}))
-    assert %{"id" => 1} = reply!()
+    initialize!(id, 1, %{"fs" => %{"readTextFile" => true, "writeTextFile" => false}, "terminal" => false})
     open_session!(id, "ses_1")
-
-    call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => [%{"type" => "text", "text" => "go"}]}, 2)
-    assert %{"method" => "session/update"} = reply!()
-    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+    prompt!(id, "ses_1", 2)
 
     agent_ask("ses_1", "read", "fs/read_text_file")
     agent_ask("ses_1", "write", "fs/write_text_file")
@@ -551,6 +527,20 @@ defmodule Pont.PlaneTest do
   defp client_reply!(pid) do
     assert_receive {^pid, {:send, json}}, 500
     Jason.decode!(json)
+  end
+
+  defp initialize!(id, req_id, capabilities) do
+    call(id, "initialize", %{"protocolVersion" => 1, "clientCapabilities" => capabilities}, req_id)
+    assert {:agent, %{"id" => agent_id, "method" => "initialize", "params" => %{"clientCapabilities" => caps}}} = from_agent!()
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{"agentCapabilities" => %{}}}))
+    assert %{"id" => ^req_id} = reply!()
+    caps
+  end
+
+  defp prompt!(id, session_id, req_id) do
+    call(id, "session/prompt", %{"sessionId" => session_id, "prompt" => [%{"type" => "text", "text" => "go"}]}, req_id)
+    assert %{"method" => "session/update"} = reply!()
+    assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
   end
 
   defp agent_ask(session_id, req_id, method) do
