@@ -32,7 +32,7 @@ defmodule Pont.Access do
         raise ArgumentError, "access module #{inspect(module)} is not loaded"
 
       not function_exported?(module, :authenticate, 1) or
-          not function_exported?(module, :allowed?, 2) or
+        not function_exported?(module, :allowed?, 2) or
           not function_exported?(module, :prepare, 1) ->
         raise ArgumentError, "access module #{inspect(module)} does not implement Pont.Access"
 

@@ -29,9 +29,14 @@ defmodule Pont.CLI do
   def argv_from_launch(argv \\ nil) do
     argv =
       cond do
-        is_list(argv) -> argv
-        System.get_env("__BURRITO") != nil -> :init.get_plain_arguments() |> Enum.map(&to_string/1)
-        true -> System.argv()
+        is_list(argv) ->
+          argv
+
+        System.get_env("__BURRITO") != nil ->
+          :init.get_plain_arguments() |> Enum.map(&to_string/1)
+
+        true ->
+          System.argv()
       end
 
     if System.get_env("__BURRITO") != nil, do: drop_launcher_prefix(argv), else: argv

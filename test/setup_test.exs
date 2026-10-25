@@ -4,7 +4,12 @@ defmodule Pont.SetupTest do
   setup do
     token = Application.get_env(:pont, :master_token)
     url = Application.get_env(:pont, :plane_url)
-    on_exit(fn -> restore(:master_token, token); restore(:plane_url, url) end)
+
+    on_exit(fn ->
+      restore(:master_token, token)
+      restore(:plane_url, url)
+    end)
+
     :ok
   end
 

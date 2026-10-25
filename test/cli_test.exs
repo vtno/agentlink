@@ -39,7 +39,9 @@ defmodule Pont.CLITest do
   end
 
   test "relay takes a token and does not listen" do
-    assert {:ok, %Pont.CLI{mode: :relay, token: "sekret"}} = Pont.CLI.parse(["relay", "--token", "sekret"])
+    assert {:ok, %Pont.CLI{mode: :relay, token: "sekret"}} =
+             Pont.CLI.parse(["relay", "--token", "sekret"])
+
     assert {:error, message} = Pont.CLI.parse(["relay", "--port", "1", "--token", "sekret"])
     assert message =~ "does not listen"
     assert {:error, message} = Pont.CLI.parse(["relay"])

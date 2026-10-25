@@ -108,7 +108,8 @@ defmodule Pont.Uplink do
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp apply_response({:data, ref, data}, %__MODULE__{ref: ref, websocket: websocket} = state) when not is_nil(websocket) do
+  defp apply_response({:data, ref, data}, %__MODULE__{ref: ref, websocket: websocket} = state)
+       when not is_nil(websocket) do
     case Mint.WebSocket.decode(websocket, data) do
       {:ok, websocket, frames} ->
         state = %{state | websocket: websocket}
@@ -226,7 +227,11 @@ defmodule Pont.Uplink do
   defp connect(link, %__MODULE__{} = state) do
     {ws_scheme, http_scheme, host, port, path} = endpoint(link.plane_url)
 
-    case Mint.HTTP.connect(http_scheme, host, port, protocols: [:http1], mode: :passive, timeout: 3_000) do
+    case Mint.HTTP.connect(http_scheme, host, port,
+           protocols: [:http1],
+           mode: :passive,
+           timeout: 3_000
+         ) do
       {:ok, conn} ->
         case upgrade(conn, ws_scheme, path) do
           {:ok, conn, ref, websocket} ->
@@ -240,7 +245,9 @@ defmodule Pont.Uplink do
 
               true ->
                 case Mint.HTTP.set_mode(state.conn, :active) do
-                  {:ok, conn} -> {:noreply, flush(%{state | conn: conn})}
+                  {:ok, conn} ->
+                    {:noreply, flush(%{state | conn: conn})}
+
                   {:error, conn, reason} ->
                     Logger.warning("uplink active mode failed #{inspect(reason)}")
                     Mint.HTTP.close(conn)

@@ -5,12 +5,21 @@ defmodule Pont.Relay.AgentTest do
     Application.put_env(:pont, :agent_listener, self())
     previous = Application.get_env(:pont, :link_path)
     path = Path.join(System.tmp_dir!(), "pont-relay-#{System.unique_integer([:positive])}.json")
-    File.write!(path, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"}))
+
+    File.write!(
+      path,
+      ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"})
+    )
+
     Application.put_env(:pont, :link_path, path)
 
     on_exit(fn ->
       Application.delete_env(:pont, :agent_listener)
-      if previous, do: Application.put_env(:pont, :link_path, previous), else: Application.delete_env(:pont, :link_path)
+
+      if previous,
+        do: Application.put_env(:pont, :link_path, previous),
+        else: Application.delete_env(:pont, :link_path)
+
       File.rm(path)
       stop(Pont.Relay.Agent)
       stop(Pont.Uplink)
@@ -138,7 +147,12 @@ defmodule Pont.Relay.AgentTest do
 
   test "a missing link file stops the agent relay and closes the agent" do
     Process.flag(:trap_exit, true)
-    Application.put_env(:pont, :link_path, "/tmp/pont-relay-missing-#{System.unique_integer([:positive])}.json")
+
+    Application.put_env(
+      :pont,
+      :link_path,
+      "/tmp/pont-relay-missing-#{System.unique_integer([:positive])}.json"
+    )
 
     assert {:error, {:shutdown, message}} = Pont.Relay.Agent.start_link([])
     assert message =~ "No link file"
