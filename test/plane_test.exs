@@ -434,6 +434,218 @@ defmodule Pont.PlaneTest do
     assert %{"error" => %{"message" => "runtime is down"}} = reply!()
   end
 
+  test "a question delivered before its client disconnects is declined and the prompt queue resumes" do
+    agent!("lab")
+    survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    open_session!(survivor, "ses_1")
+    {pid, id} = spawn_client()
+    load_client_session!(pid, id, "ses_1")
+    call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 1)
+    assert {:agent, %{"method" => "session/prompt", "id" => prompt_id}} = from_agent!()
+
+    agent_ask("ses_1", "perm", "session/request_permission")
+    assert %{"method" => "session/request_permission"} = client_reply!(pid)
+
+    call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 3)
+    call(survivor, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 2)
+    disconnect_client!(pid, id)
+
+    assert {:agent, %{"id" => "perm", "error" => %{"code" => -32000, "message" => "no app is attached to this session"}}} = from_agent!()
+    assert [%{client_id: ^survivor}] = :queue.to_list(:sys.get_state(Pont.Plane).slots["lab"].prompt_queue)
+    refute_receive {:agent, %{"method" => "session/prompt"}}, 50
+
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => prompt_id, "result" => %{"stopReason" => "end_turn"}}))
+    assert %{"params" => %{"update" => %{"_meta" => %{"stopReason" => "end_turn"}}}} = reply!()
+    assert {:agent, %{"method" => "session/prompt", "id" => next_id}} = from_agent!()
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => next_id, "result" => %{"stopReason" => "end_turn"}}))
+    assert %{"id" => 2, "result" => %{"stopReason" => "end_turn"}} = reply!()
+    assert %{"method" => "session/update"} = reply!()
+    slot = :sys.get_state(Pont.Plane).slots["lab"]
+    assert slot.fan_pending == %{}
+    assert slot.agent_pending == %{}
+    refute slot.prompt_inflight
+  end
+
+  for order <- [:reply_first, :down_first] do
+    test "a client reply racing DOWN is handled once: #{order}" do
+      agent!("lab")
+      {pid, id} = spawn_client()
+      call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 1)
+      assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+      agent_ask("ses_1", "perm", "session/request_permission")
+      assert %{"id" => fan_id} = client_reply!(pid)
+      response = Jason.encode!(%{"jsonrpc" => "2.0", "id" => fan_id, "result" => %{"outcome" => "allow"}})
+
+      case unquote(order) do
+        :reply_first ->
+          Pont.Plane.client_frame(id, response)
+          assert :sys.get_state(Pont.Plane).slots["lab"].fan_pending == %{}
+          disconnect_client!(pid, id)
+          assert {:agent, %{"id" => "perm", "result" => %{"outcome" => "allow"}}} = from_agent!()
+
+        :down_first ->
+          disconnect_client!(pid, id)
+          Pont.Plane.client_frame(id, response)
+          assert :sys.get_state(Pont.Plane).slots["lab"].fan_pending == %{}
+          assert {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}} = from_agent!()
+      end
+
+      assert Process.alive?(Process.whereis(Pont.Plane))
+      refute_receive {:agent, _}, 50
+    end
+  end
+
+  test "disconnecting a loading client declines all its questions but preserves a peer's prompt and questions" do
+    agent!("lab")
+    survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    initialize!(survivor, 1, %{})
+    open_session!(survivor, "ses_1")
+    {pid, id} = spawn_client()
+    call(id, "initialize", %{"clientCapabilities" => %{"fs" => %{"readTextFile" => true}, "terminal" => true}}, 1)
+    assert %{"id" => 1, "result" => _} = client_reply!(pid)
+    load_client_session!(pid, id, "ses_1")
+
+    call(id, "session/load", %{"sessionId" => "ses_2", "cwd" => "/tmp", "mcpServers" => []}, 2)
+    assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
+    call(survivor, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 3)
+    assert {:agent, %{"method" => "session/prompt", "id" => prompt_id}} = from_agent!()
+
+    agent_ask("ses_2", "read", "fs/read_text_file")
+    agent_ask("ses_2", "term", "terminal/create")
+    agent_ask("ses_1", "perm", "session/request_permission")
+    assert %{"method" => "fs/read_text_file"} = client_reply!(pid)
+    assert %{"method" => "terminal/create"} = client_reply!(pid)
+    assert %{"id" => fan_id, "method" => "session/request_permission"} = reply!()
+    disconnect_client!(pid, id)
+
+    for req_id <- ["read", "term"] do
+      assert_receive {:agent, %{"id" => ^req_id, "error" => %{"code" => -32000, "message" => "no app is attached to this session"}}}, 500
+    end
+
+    slot = :sys.get_state(Pont.Plane).slots["lab"]
+    assert %{^fan_id => %{client_id: ^survivor}} = slot.fan_pending
+    assert map_size(slot.fan_pending) == 1
+    assert slot.prompt_inflight
+    Pont.Plane.client_frame(survivor, Jason.encode!(%{"jsonrpc" => "2.0", "id" => fan_id, "result" => %{}}))
+    assert {:agent, %{"id" => "perm", "result" => %{}}} = from_agent!()
+
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}}))
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => prompt_id, "result" => %{"stopReason" => "end_turn"}}))
+    assert %{"id" => 3, "result" => _} = reply!()
+    assert %{"method" => "session/update"} = reply!()
+    state = :sys.get_state(Pont.Plane)
+    assert state.clients[survivor].session_id == "ses_1"
+    assert state.slots["lab"].agent_pending == %{}
+    refute state.slots["lab"].prompt_inflight
+    refute_receive {:agent, _}, 50
+  end
+
+  for leaving <- [:issuer, :waiter] do
+    test "disconnecting an initialize #{leaving} removes only its waiters and preserves the shared initialize" do
+      agent!("lab")
+      {pid, id} = spawn_client()
+      survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+      {first, second} = if unquote(leaving) == :issuer, do: {id, survivor}, else: {survivor, id}
+      call(first, "initialize", %{}, 1)
+      assert {:agent, %{"method" => "initialize", "id" => init_id}} = from_agent!()
+      call(second, "initialize", %{}, 2)
+      assert length(:sys.get_state(Pont.Plane).slots["lab"].init_waiters) == 2
+      call(id, "initialize", %{}, 3)
+      assert length(:sys.get_state(Pont.Plane).slots["lab"].init_waiters) == 3
+      disconnect_client!(pid, id)
+
+      slot = :sys.get_state(Pont.Plane).slots["lab"]
+      assert [%{client_id: ^survivor, id: survivor_req_id}] = slot.init_waiters
+      assert slot.init_sent
+      Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => init_id, "result" => %{"ok" => true}}))
+      assert %{"id" => ^survivor_req_id, "result" => %{"ok" => true}} = reply!()
+      call(survivor, "initialize", %{}, 4)
+      assert %{"id" => 4, "result" => %{"ok" => true}} = reply!()
+      assert :sys.get_state(Pont.Plane).slots["lab"].init_waiters == []
+      refute_receive {:agent, _}, 50
+    end
+  end
+
+  for order <- [:cancel_reply_first, :down_first] do
+    test "disconnect and a cancelled prompt response do not release the next prompt early: #{order}" do
+      agent!("lab")
+      {pid, id} = spawn_client()
+      survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+      call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 1)
+      assert {:agent, %{"method" => "session/prompt", "id" => prompt_id}} = from_agent!()
+      agent_ask("ses_1", "perm", "session/request_permission")
+      assert %{"method" => "session/request_permission"} = client_reply!(pid)
+      call(survivor, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 2)
+      Pont.Plane.client_frame(survivor, ~s({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"ses_1"}}))
+      assert {:agent, %{"method" => "session/cancel"}} = from_agent!()
+
+      cancelled = Jason.encode!(%{"jsonrpc" => "2.0", "id" => prompt_id, "result" => %{"stopReason" => "cancelled"}})
+
+      case unquote(order) do
+        :cancel_reply_first ->
+          Pont.Plane.agent_frame("lab", cancelled)
+          assert %{"id" => 1, "result" => %{"stopReason" => "cancelled"}} = client_reply!(pid)
+          disconnect_client!(pid, id)
+
+        :down_first ->
+          disconnect_client!(pid, id)
+          refute_receive {:agent, %{"method" => "session/prompt"}}, 50
+          Pont.Plane.agent_frame("lab", cancelled)
+      end
+
+      # The two agent writes can arrive in either order relative to one another.
+      assert_receive {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}}, 500
+      assert_receive {:agent, %{"method" => "session/prompt", "id" => next_id}}, 500
+      slot = :sys.get_state(Pont.Plane).slots["lab"]
+      assert slot.prompt_inflight
+      refute Map.has_key?(slot.agent_pending, prompt_id)
+      assert %{client_id: ^survivor} = slot.agent_pending[next_id]
+      assert slot.fan_pending == %{}
+
+      Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => next_id, "result" => %{"stopReason" => "end_turn"}}))
+      assert %{"id" => 2, "result" => _} = reply!()
+      refute :sys.get_state(Pont.Plane).slots["lab"].prompt_inflight
+      refute_receive {:agent, _}, 50
+    end
+  end
+
+  test "client cleanup covers slots left behind by runtime selection" do
+    agent!("lab")
+    agent!("other")
+    {pid, id} = spawn_client()
+
+    for name <- ["lab", "other"] do
+      call(id, "runtime/select", %{"name" => name}, 1)
+      assert %{"id" => 1} = client_reply!(pid)
+      call(id, "initialize", %{}, 2)
+      assert {:agent, %{"method" => "initialize"}} = from_agent!()
+      call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 3)
+      assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+      Pont.Plane.agent_frame(name, Jason.encode!(%{"jsonrpc" => "2.0", "id" => name, "method" => "session/request_permission", "params" => %{"sessionId" => "ses_1"}}))
+      assert %{"method" => "session/request_permission"} = client_reply!(pid)
+    end
+
+    disconnect_client!(pid, id)
+    for name <- ["lab", "other"] do
+      assert_receive {:agent, %{"id" => ^name, "error" => %{"code" => -32000}}}, 500
+    end
+
+    for {name, slot} <- :sys.get_state(Pont.Plane).slots do
+      assert slot.fan_pending == %{}
+      assert slot.init_waiters == []
+
+      for {req_id, pending} <- slot.agent_pending do
+        result = if pending.kind == :prompt, do: %{"stopReason" => "end_turn"}, else: %{}
+        Pont.Plane.agent_frame(name, Jason.encode!(%{"jsonrpc" => "2.0", "id" => req_id, "result" => result}))
+      end
+    end
+
+    for slot <- Map.values(:sys.get_state(Pont.Plane).slots) do
+      assert slot.agent_pending == %{}
+      refute slot.prompt_inflight
+    end
+  end
+
   test "a permission for a dead issuer is declined" do
     agent!("lab")
     {pid, id} = spawn_client()
@@ -474,6 +686,28 @@ defmodule Pont.PlaneTest do
 
     call(id, "runtime/select", %{"name" => "hidden"}, 2)
     assert %{"error" => %{"message" => "runtime is not allowed"}} = reply!()
+  end
+
+  defp load_client_session!(pid, id, session_id) do
+    call(id, "session/load", %{"sessionId" => session_id, "cwd" => "/tmp", "mcpServers" => []}, 1)
+    assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
+    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}}))
+    assert %{"id" => 1, "result" => %{}} = client_reply!(pid)
+  end
+
+  defp disconnect_client!(pid, id) do
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    await_client_down!(id, System.monotonic_time(:millisecond) + 500)
+  end
+
+  defp await_client_down!(id, deadline) do
+    if Map.has_key?(:sys.get_state(Pont.Plane).clients, id) do
+      assert System.monotonic_time(:millisecond) < deadline, "plane did not process client DOWN"
+      Process.sleep(1)
+      await_client_down!(id, deadline)
+    end
   end
 
   defp agent!(name) do
