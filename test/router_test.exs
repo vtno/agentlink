@@ -5,10 +5,15 @@ defmodule Pont.RouterTest do
     previous = Application.get_env(:pont, :master_token)
     start_supervised!(Pont.Registry)
     start_supervised!(Pont.Plane)
-    start_supervised!({Bandit, plug: Pont.Router, scheme: :http, port: 18_091, ip: {127, 0, 0, 1}})
+
+    start_supervised!(
+      {Bandit, plug: Pont.Router, scheme: :http, port: 18_091, ip: {127, 0, 0, 1}}
+    )
 
     on_exit(fn ->
-      if previous, do: Application.put_env(:pont, :master_token, previous), else: Application.delete_env(:pont, :master_token)
+      if previous,
+        do: Application.put_env(:pont, :master_token, previous),
+        else: Application.delete_env(:pont, :master_token)
     end)
 
     :ok
@@ -34,11 +39,20 @@ defmodule Pont.RouterTest do
     Application.put_env(:pont, :master_token, "sekret")
 
     on_exit(fn ->
-      if previous, do: Application.put_env(:pont, :master_token, previous), else: Application.delete_env(:pont, :master_token)
+      if previous,
+        do: Application.put_env(:pont, :master_token, previous),
+        else: Application.delete_env(:pont, :master_token)
     end)
 
     assert {:ok, conn, ref, websocket} = upgrade("/agent", [{"authorization", "Bearer sekret"}])
-    hello = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "pont.uplink", "params" => %{"name" => "lab", "label" => "Bench"}})
+
+    hello =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "pont.uplink",
+        "params" => %{"name" => "lab", "label" => "Bench"}
+      })
+
     {:ok, _websocket, data} = Mint.WebSocket.encode(websocket, {:text, hello})
     {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)
     {:ok, _conn} = Mint.HTTP.set_mode(conn, :active)
@@ -47,11 +61,52 @@ defmodule Pont.RouterTest do
     Mint.HTTP.close(conn)
   end
 
+  test "a second hello for a live name is rejected and the holder stays up" do
+    Application.put_env(:pont, :master_token, "sekret")
+    headers = [{"authorization", "Bearer sekret"}]
+
+    assert {:ok, conn1, ref1, websocket1} = upgrade("/agent", headers)
+    {conn1, websocket1} = say_hello(conn1, ref1, websocket1, "opencode")
+    {:ok, conn1} = Mint.HTTP.set_mode(conn1, :active)
+    first = await_pid("opencode")
+
+    assert {:ok, conn2, ref2, websocket2} = upgrade("/agent", headers)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        {conn2, websocket2} = say_hello(conn2, ref2, websocket2, "opencode")
+        send(self(), {:rejected, recv_until_close(conn2, websocket2), conn2})
+      end)
+
+    assert_receive {:rejected, frames, conn2}
+    assert {:close, 4001, Pont.AgentSocket.name_taken_reason("opencode")} in frames
+
+    assert log =~
+             "uplink rejected name=opencode another uplink is already connected with this name"
+
+    holder_frames = collect_frames(conn1, websocket1, 200)
+    refute Enum.any?(holder_frames, &match?({:close, _, _}, &1))
+    assert Pont.Registry.pid("opencode") == first
+    assert Process.alive?(first)
+
+    frame = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "session/update", "params" => %{}})
+    {:ok, _websocket1, data} = Mint.WebSocket.encode(websocket1, {:text, frame})
+    assert {:ok, _conn1} = Mint.WebSocket.stream_request_body(conn1, ref1, data)
+    Process.sleep(30)
+    assert Pont.Registry.pid("opencode") == first
+    assert Process.alive?(first)
+    Mint.HTTP.close(conn1)
+    Mint.HTTP.close(conn2)
+  end
+
   test "a token guards status and both sockets, and health stays open" do
     previous = Application.get_env(:pont, :master_token)
     Application.put_env(:pont, :master_token, "sekret")
+
     on_exit(fn ->
-      if previous, do: Application.put_env(:pont, :master_token, previous), else: Application.delete_env(:pont, :master_token)
+      if previous,
+        do: Application.put_env(:pont, :master_token, previous),
+        else: Application.delete_env(:pont, :master_token)
     end)
 
     assert request("GET", "/health") == {200, "ok"}
@@ -72,14 +127,26 @@ defmodule Pont.RouterTest do
     {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", 18_091, mode: :passive)
     {:ok, conn, ref} = Mint.HTTP.request(conn, method, path, headers, nil)
     assert {:ok, _conn, responses} = Mint.HTTP.recv(conn, 0, 1_000)
-    status = Enum.find_value(responses, fn {:status, ^ref, code} -> code; _ -> nil end)
-    body = Enum.find_value(responses, "", fn {:data, ^ref, chunk} -> chunk; _ -> nil end)
+
+    status =
+      Enum.find_value(responses, fn
+        {:status, ^ref, code} -> code
+        _ -> nil
+      end)
+
+    body =
+      Enum.find_value(responses, "", fn
+        {:data, ^ref, chunk} -> chunk
+        _ -> nil
+      end)
+
     Mint.HTTP.close(conn)
     {status, body}
   end
 
   defp upgrade(path, headers \\ []) do
-    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", 18_091, protocols: [:http1], mode: :passive)
+    {:ok, conn} =
+      Mint.HTTP.connect(:http, "127.0.0.1", 18_091, protocols: [:http1], mode: :passive)
 
     with {:ok, conn, ref} <- Mint.WebSocket.upgrade(:ws, conn, path, headers),
          {:ok, conn, status, headers} <- await(conn, ref, []),
@@ -90,10 +157,115 @@ defmodule Pont.RouterTest do
     end
   end
 
+  defp say_hello(conn, ref, websocket, name) do
+    hello =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "pont.uplink",
+        "params" => %{"name" => name, "label" => "Bench"}
+      })
+
+    {:ok, websocket, data} = Mint.WebSocket.encode(websocket, {:text, hello})
+    {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)
+    {conn, websocket}
+  end
+
+  defp await_pid(name, attempts \\ 50) do
+    case Pont.Registry.pid(name) do
+      pid when is_pid(pid) ->
+        pid
+
+      nil when attempts > 0 ->
+        Process.sleep(20)
+        await_pid(name, attempts - 1)
+
+      nil ->
+        flunk("uplink #{name} did not register")
+    end
+  end
+
+  defp recv_until_close(conn, websocket, frames \\ []) do
+    case Mint.WebSocket.recv(conn, 0, 1_000) do
+      {:ok, conn, responses} ->
+        {websocket, extra} = decode_frames(websocket, responses)
+        frames = frames ++ extra
+
+        if Enum.any?(frames, &match?({:close, _, _}, &1)) do
+          frames
+        else
+          recv_until_close(conn, websocket, frames)
+        end
+
+      {:error, _conn, _reason, responses} ->
+        {_websocket, extra} = decode_frames(websocket, responses)
+        frames ++ extra
+    end
+  end
+
+  defp collect_frames(conn, websocket, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    {_, _, frames} = collect_frames(conn, websocket, [], deadline)
+    frames
+  end
+
+  defp collect_frames(conn, websocket, frames, deadline) do
+    wait = deadline - System.monotonic_time(:millisecond)
+
+    if wait <= 0 do
+      {conn, websocket, frames}
+    else
+      receive do
+        message ->
+          case Mint.WebSocket.stream(conn, message) do
+            {:ok, conn, responses} ->
+              {websocket, extra} = decode_frames(websocket, responses)
+              frames = frames ++ extra
+
+              if Enum.any?(frames, &match?({:close, _, _}, &1)) do
+                {conn, websocket, frames}
+              else
+                collect_frames(conn, websocket, frames, deadline)
+              end
+
+            {:error, conn, _reason, responses} ->
+              {_websocket, extra} = decode_frames(websocket, responses)
+              {conn, websocket, frames ++ extra}
+
+            :unknown ->
+              collect_frames(conn, websocket, frames, deadline)
+          end
+      after
+        wait ->
+          {conn, websocket, frames}
+      end
+    end
+  end
+
+  defp decode_frames(websocket, responses) do
+    Enum.reduce(responses, {websocket, []}, fn
+      {:data, _ref, data}, {websocket, frames} ->
+        {:ok, websocket, extra} = Mint.WebSocket.decode(websocket, data)
+        {websocket, frames ++ extra}
+
+      _, acc ->
+        acc
+    end)
+  end
+
   defp await(conn, ref, acc) do
     if Enum.any?(acc, &match?({:done, ^ref}, &1)) do
-      status = Enum.find_value(acc, fn {:status, ^ref, status} -> status; _ -> nil end)
-      headers = Enum.find_value(acc, fn {:headers, ^ref, headers} -> headers; _ -> nil end) || []
+      status =
+        Enum.find_value(acc, fn
+          {:status, ^ref, status} -> status
+          _ -> nil
+        end)
+
+      headers =
+        Enum.find_value(acc, fn
+          {:headers, ^ref, headers} -> headers
+          _ -> nil
+        end) || []
+
       {:ok, conn, status, headers}
     else
       {:ok, conn, responses} = Mint.HTTP.recv(conn, 0, 1_000)

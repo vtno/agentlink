@@ -3,6 +3,12 @@ defmodule Pont.Uplink do
   Dials the plane's agent socket. Outbound text frames are one JSON object.
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
   process directly.
+
+  A dropped socket redials. The hello carries this VM's relay instance, so
+  the plane can release this relay's previous socket when this process dials
+  again. A close that means this name is already in use logs the clash and
+  waits until the link name or plane URL changes. A close that means the
+  instance id is too long logs the error and does not redial.
   """
 
   use GenServer
@@ -14,7 +20,9 @@ defmodule Pont.Uplink do
     :websocket,
     :ref,
     :link,
-    outbox: []
+    outbox: [],
+    name_taken: false,
+    instance_too_long: false
   ]
 
   @doc "Dial the plane's agent socket. A remote relay never calls the plane process directly."
@@ -53,6 +61,10 @@ defmodule Pont.Uplink do
   end
 
   @impl true
+  def handle_info(:connect, %__MODULE__{name_taken: true} = state), do: {:noreply, state}
+
+  def handle_info(:connect, %__MODULE__{instance_too_long: true} = state), do: {:noreply, state}
+
   def handle_info(:connect, %__MODULE__{} = state) do
     close_conn(state)
 
@@ -68,11 +80,7 @@ defmodule Pont.Uplink do
   def handle_info(:watch, %__MODULE__{} = state) do
     case read_link() do
       {:ok, link} ->
-        if state.conn && link != state.link do
-          Logger.info("agent link changed, redialing as #{link.name}")
-          send(self(), :connect)
-        end
-
+        state = maybe_redial(state, link)
         Process.send_after(self(), :watch, 1_000)
         {:noreply, state}
 
@@ -89,7 +97,7 @@ defmodule Pont.Uplink do
 
       {:error, conn, reason, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &apply_response/2)
-        Logger.warning("uplink error #{inspect(reason)}")
+        unless parked?(state), do: Logger.warning("uplink error #{inspect(reason)}")
         close_conn(state)
         schedule(%{state | conn: nil, websocket: nil, ref: nil})
 
@@ -121,9 +129,22 @@ defmodule Pont.Uplink do
     send_frame(state, {:pong, payload})
   end
 
-  defp apply_frame({:close, _code, _reason}, state) do
+  defp apply_frame({:close, code, reason}, state) do
     close_conn(state)
-    %{state | conn: nil, websocket: nil, ref: nil}
+    state = %{state | conn: nil, websocket: nil, ref: nil}
+
+    cond do
+      code == Pont.AgentSocket.name_taken_close_code() ->
+        log_name_taken(state, reason)
+        %{state | name_taken: true}
+
+      code == Pont.AgentSocket.instance_too_long_close_code() ->
+        log_instance_too_long(state, reason)
+        %{state | instance_too_long: true}
+
+      true ->
+        state
+    end
   end
 
   defp apply_frame({:error, reason}, state) do
@@ -253,9 +274,71 @@ defmodule Pont.Uplink do
     end)
   end
 
-  defp schedule(state) do
-    Process.send_after(self(), :connect, 500)
-    {:noreply, state}
+  # The plane rejected this dial for a reason that will not change on its own.
+  defp schedule(%__MODULE__{} = state) do
+    if parked?(state) do
+      {:noreply, state}
+    else
+      Process.send_after(self(), :connect, 500)
+      {:noreply, state}
+    end
+  end
+
+  defp parked?(%__MODULE__{name_taken: true}), do: true
+  defp parked?(%__MODULE__{instance_too_long: true}), do: true
+  defp parked?(%__MODULE__{}), do: false
+
+  defp maybe_redial(%__MODULE__{} = state, link) do
+    cond do
+      state.name_taken and link_target_changed?(state.link, link) ->
+        Logger.info("agent link changed, redialing as #{link.name}")
+        send(self(), :connect)
+        %{state | name_taken: false}
+
+      state.conn && link != state.link ->
+        Logger.info("agent link changed, redialing as #{link.name}")
+        send(self(), :connect)
+        state
+
+      true ->
+        state
+    end
+  end
+
+  defp link_target_changed?(current, link) do
+    link.name != current.name or link.plane_url != current.plane_url
+  end
+
+  defp log_name_taken(%__MODULE__{} = state, reason) do
+    detail =
+      if is_binary(reason) and reason != "" do
+        reason
+      else
+        Pont.AgentSocket.name_taken_reason(state.link.name)
+      end
+
+    Logger.error(
+      "uplink rejected name=#{state.link.name} #{detail}. " <>
+        "Another relay is already connected with this name. " <>
+        "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}. " <>
+        "This relay will not reconnect until name or plane_url changes"
+    )
+  end
+
+  # The instance id is not in the link file, so a new name or plane URL would
+  # send the same id and be rejected again.
+  defp log_instance_too_long(%__MODULE__{} = state, reason) do
+    detail =
+      if is_binary(reason) and reason != "" do
+        reason
+      else
+        Pont.AgentSocket.instance_too_long_reason()
+      end
+
+    Logger.error(
+      "uplink rejected name=#{state.link.name} #{detail}. " <>
+        "This relay will not reconnect"
+    )
   end
 
   defp transmit(message, %__MODULE__{websocket: nil} = state) do
@@ -289,8 +372,29 @@ defmodule Pont.Uplink do
     %{
       "jsonrpc" => "2.0",
       "method" => "pont.uplink",
-      "params" => %{"name" => link.name, "label" => link.label, "program" => link.program}
+      "params" => %{
+        "name" => link.name,
+        "label" => link.label,
+        "program" => link.program,
+        "instance" => relay_instance()
+      }
     }
+  end
+
+  # One id per VM. A new `Pont.Uplink` process in this BEAM is still this relay.
+  # A second OS process has a different id and cannot take the name.
+  defp relay_instance do
+    key = {__MODULE__, :instance}
+
+    case :persistent_term.get(key, nil) do
+      id when is_binary(id) and id != "" ->
+        id
+
+      _ ->
+        id = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+        :persistent_term.put(key, id)
+        id
+    end
   end
 
   defp endpoint(url) do
