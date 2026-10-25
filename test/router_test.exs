@@ -61,7 +61,7 @@ defmodule Pont.RouterTest do
     Mint.HTTP.close(conn)
   end
 
-  test "a replaced uplink is closed with the duplicate name" do
+  test "a second hello for a live name is rejected and the holder stays up" do
     Application.put_env(:pont, :master_token, "sekret")
     headers = [{"authorization", "Bearer sekret"}]
 
@@ -74,16 +74,27 @@ defmodule Pont.RouterTest do
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        {conn2, _websocket2} = say_hello(conn2, ref2, websocket2, "opencode")
-        assert await_replacement("opencode", first)
-        send(self(), {:frames, collect_frames(conn1, websocket1, 1_000), conn2})
+        {conn2, websocket2} = say_hello(conn2, ref2, websocket2, "opencode")
+        send(self(), {:rejected, recv_until_close(conn2, websocket2), conn2})
       end)
 
-    assert_receive {:frames, frames, conn2}
-    assert {:close, 4001, ~s(another uplink registered as "opencode")} in frames
-    assert log =~ "uplink replaced name=opencode another uplink registered with the same name"
-    assert is_pid(Pont.Registry.pid("opencode"))
-    refute Pont.Registry.pid("opencode") == first
+    assert_receive {:rejected, frames, conn2}
+    assert {:close, 4001, Pont.AgentSocket.name_taken_reason("opencode")} in frames
+
+    assert log =~
+             "uplink rejected name=opencode another uplink is already connected with this name"
+
+    holder_frames = collect_frames(conn1, websocket1, 200)
+    refute Enum.any?(holder_frames, &match?({:close, _, _}, &1))
+    assert Pont.Registry.pid("opencode") == first
+    assert Process.alive?(first)
+
+    frame = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "session/update", "params" => %{}})
+    {:ok, _websocket1, data} = Mint.WebSocket.encode(websocket1, {:text, frame})
+    assert {:ok, _conn1} = Mint.WebSocket.stream_request_body(conn1, ref1, data)
+    Process.sleep(30)
+    assert Pont.Registry.pid("opencode") == first
+    assert Process.alive?(first)
     Mint.HTTP.close(conn1)
     Mint.HTTP.close(conn2)
   end
@@ -173,17 +184,21 @@ defmodule Pont.RouterTest do
     end
   end
 
-  defp await_replacement(name, old, attempts \\ 50) do
-    case Pont.Registry.pid(name) do
-      pid when is_pid(pid) and pid != old ->
-        pid
+  defp recv_until_close(conn, websocket, frames \\ []) do
+    case Mint.WebSocket.recv(conn, 0, 1_000) do
+      {:ok, conn, responses} ->
+        {websocket, extra} = decode_frames(websocket, responses)
+        frames = frames ++ extra
 
-      _ when attempts > 0 ->
-        Process.sleep(20)
-        await_replacement(name, old, attempts - 1)
+        if Enum.any?(frames, &match?({:close, _, _}, &1)) do
+          frames
+        else
+          recv_until_close(conn, websocket, frames)
+        end
 
-      _ ->
-        flunk("uplink #{name} was not replaced")
+      {:error, _conn, _reason, responses} ->
+        {_websocket, extra} = decode_frames(websocket, responses)
+        frames ++ extra
     end
   end
 

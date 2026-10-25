@@ -1,24 +1,28 @@
 defmodule Pont.AgentSocket do
   @moduledoc """
   The plane's agent socket. The first frame is `pont.uplink` and lands in the registry.
-  Later frames are ACP from that runtime. A later hello with the same name closes this socket.
+  Later frames are ACP from that runtime. A hello for a name that is already live
+  closes this socket. The earlier socket stays up.
   """
 
   @behaviour WebSock
   require Logger
 
   # Private-use WebSocket close (RFC 6455, 4000-4999). The relay treats this
-  # code as "another uplink took my name" and does not redial.
-  @duplicate_close_code 4001
+  # code as "this name is already in use" and does not redial.
+  @name_taken_close_code 4001
 
   defstruct name: nil, subject: nil
 
-  @doc "Close code for an uplink whose name was taken by a later hello."
-  def duplicate_close_code, do: @duplicate_close_code
+  @doc "Close code for a hello whose name is already held by a live uplink."
+  def name_taken_close_code, do: @name_taken_close_code
 
-  @doc "Close reason naming the link that was claimed twice."
-  def duplicate_reason(name) when is_binary(name), do: ~s(another uplink registered as "#{name}")
-  def duplicate_reason(_name), do: "another uplink registered with the same name"
+  @doc "Close reason telling the rejected relay that this name is taken."
+  def name_taken_reason(name) when is_binary(name) do
+    ~s(name "#{name}" is in use; stop the other relay or change name)
+  end
+
+  def name_taken_reason(_name), do: "name is in use; stop the other relay or change name"
 
   @doc "Wait for the uplink hello. The subject is whoever the router authenticated."
   @impl true
@@ -39,8 +43,14 @@ defmodule Pont.AgentSocket do
         }
 
         case Pont.Registry.register(self(), uplink, state.subject) do
-          :ok -> {:ok, %{state | name: params["name"]}}
-          {:error, reason} -> {:stop, reason, state}
+          :ok ->
+            {:ok, %{state | name: params["name"]}}
+
+          {:error, {:name_taken, name}} ->
+            {:stop, :normal, {@name_taken_close_code, name_taken_reason(name)}, state}
+
+          {:error, reason} ->
+            {:stop, reason, state}
         end
 
       _ ->
@@ -58,12 +68,6 @@ defmodule Pont.AgentSocket do
   @impl true
   def handle_info({:send, json}, state) when is_binary(json) do
     {:push, [{:text, json}], state}
-  end
-
-  def handle_info(:replaced, %__MODULE__{name: name} = state) do
-    reason = duplicate_reason(name)
-    Logger.warning("uplink replaced name=#{name} another uplink registered with the same name")
-    {:stop, :normal, {@duplicate_close_code, reason}, state}
   end
 
   def handle_info(_message, state), do: {:ok, state}

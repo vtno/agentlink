@@ -40,14 +40,40 @@ defmodule Pont.AgentSocketTest do
     assert {:ok, ^named} = Pont.AgentSocket.handle_in({<<9>>, [opcode: :binary]}, named)
     assert {:push, [{:text, "{}"}], ^named} = Pont.AgentSocket.handle_info({:send, "{}"}, named)
     assert {:ok, ^named} = Pont.AgentSocket.handle_info(:other, named)
+    assert :ok = Pont.AgentSocket.terminate(:normal, named)
+  end
+
+  test "a second hello for a live name closes only the new socket" do
+    subject = %Pont.Access.Subject{id: "admin", role: :admin}
+    {:ok, state} = Pont.AgentSocket.init(subject)
+
+    hello =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "pont.uplink",
+        "params" => %{"name" => "lab", "label" => "Bench"}
+      })
+
+    assert {:ok, named} = Pont.AgentSocket.handle_in({hello, [opcode: :text]}, state)
+    holder = self()
+    parent = self()
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert {:stop, :normal, {4001, ~s(another uplink registered as "lab")}, ^named} =
-                 Pont.AgentSocket.handle_info(:replaced, named)
+        spawn(fn ->
+          {:ok, other} = Pont.AgentSocket.init(subject)
+          send(parent, {:rejected, Pont.AgentSocket.handle_in({hello, [opcode: :text]}, other)})
+        end)
+
+        assert_receive {:rejected, result}
+        send(parent, {:checked, result})
       end)
 
-    assert log =~ "uplink replaced name=lab another uplink registered with the same name"
-    assert :ok = Pont.AgentSocket.terminate(:normal, named)
+    reason = Pont.AgentSocket.name_taken_reason("lab")
+    assert_receive {:checked, {:stop, :normal, {4001, ^reason}, _other}}
+    assert log =~ "uplink rejected name=lab another uplink is already connected with this name"
+    assert Pont.Registry.pid("lab") == holder
+    assert named.name == "lab"
+    assert {:ok, ^named} = Pont.AgentSocket.handle_info(:other, named)
   end
 end

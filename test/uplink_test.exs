@@ -173,7 +173,7 @@ defmodule Pont.UplinkTest do
     assert :sys.get_state(Pont.Uplink).websocket == nil
   end
 
-  test "a duplicate close does not redial until the link name changes" do
+  test "a name-taken close does not redial until the link name changes" do
     url = "ws://127.0.0.1:18111/agent"
 
     start_supervised!(
@@ -187,17 +187,17 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, hello}
     assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
 
-    reason = ~s(another uplink registered as "opencode")
+    reason = Pont.AgentSocket.name_taken_reason("opencode")
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
         send(socket, {:close, 4001, reason})
-        assert await_replaced()
+        assert await_name_taken()
       end)
 
-    assert log =~ "uplink replaced name=opencode"
+    assert log =~ "uplink rejected name=opencode"
     assert log =~ reason
-    assert log =~ "Another relay is connected with this name"
+    assert log =~ "Another relay is already connected with this name"
 
     assert log =~
              "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}"
@@ -210,7 +210,7 @@ defmodule Pont.UplinkTest do
     refute_receive {:socket, _}, 1_000
 
     state = :sys.get_state(Pont.Uplink)
-    assert state.replaced
+    assert state.name_taken
     assert is_nil(state.websocket)
     assert Process.alive?(Process.whereis(Pont.Uplink))
 
@@ -219,7 +219,7 @@ defmodule Pont.UplinkTest do
     assert_receive {:socket, _}, 1_000
     assert_receive {:ws, hello}
     assert %{"params" => %{"name" => "other"}} = Jason.decode!(hello)
-    refute :sys.get_state(Pont.Uplink).replaced
+    refute :sys.get_state(Pont.Uplink).name_taken
   end
 
   test "a normal close still redials" do
@@ -234,15 +234,15 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, _hello}
     send(socket, {:close, 1001, "going away"})
     assert_receive {:socket, _}, 1_000
-    refute :sys.get_state(Pont.Uplink).replaced
+    refute :sys.get_state(Pont.Uplink).name_taken
   end
 
-  defp await_replaced(attempts \\ 50) do
-    if :sys.get_state(Pont.Uplink).replaced or attempts == 0 do
-      assert :sys.get_state(Pont.Uplink).replaced
+  defp await_name_taken(attempts \\ 50) do
+    if :sys.get_state(Pont.Uplink).name_taken or attempts == 0 do
+      assert :sys.get_state(Pont.Uplink).name_taken
     else
       Process.sleep(20)
-      await_replaced(attempts - 1)
+      await_name_taken(attempts - 1)
     end
   end
 

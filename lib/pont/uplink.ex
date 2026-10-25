@@ -4,7 +4,7 @@ defmodule Pont.Uplink do
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
   process directly.
 
-  A dropped socket redials. A close that means another uplink took this name
+  A dropped socket redials. A close that means this name is already in use
   logs the clash and waits until the link name or plane URL changes.
   """
 
@@ -18,7 +18,7 @@ defmodule Pont.Uplink do
     :ref,
     :link,
     outbox: [],
-    replaced: false
+    name_taken: false
   ]
 
   @doc "Dial the plane's agent socket. A remote relay never calls the plane process directly."
@@ -57,7 +57,7 @@ defmodule Pont.Uplink do
   end
 
   @impl true
-  def handle_info(:connect, %__MODULE__{replaced: true} = state), do: {:noreply, state}
+  def handle_info(:connect, %__MODULE__{name_taken: true} = state), do: {:noreply, state}
 
   def handle_info(:connect, %__MODULE__{} = state) do
     close_conn(state)
@@ -91,7 +91,7 @@ defmodule Pont.Uplink do
 
       {:error, conn, reason, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &apply_response/2)
-        unless state.replaced, do: Logger.warning("uplink error #{inspect(reason)}")
+        unless state.name_taken, do: Logger.warning("uplink error #{inspect(reason)}")
         close_conn(state)
         schedule(%{state | conn: nil, websocket: nil, ref: nil})
 
@@ -127,9 +127,9 @@ defmodule Pont.Uplink do
     close_conn(state)
     state = %{state | conn: nil, websocket: nil, ref: nil}
 
-    if code == Pont.AgentSocket.duplicate_close_code() do
-      log_replaced(state, reason)
-      %{state | replaced: true}
+    if code == Pont.AgentSocket.name_taken_close_code() do
+      log_name_taken(state, reason)
+      %{state | name_taken: true}
     else
       state
     end
@@ -262,8 +262,8 @@ defmodule Pont.Uplink do
     end)
   end
 
-  # Redialing after this close replaces the other uplink, which then redials, and the two fight.
-  defp schedule(%__MODULE__{replaced: true} = state), do: {:noreply, state}
+  # The plane rejected this name. Redialing would only be rejected again.
+  defp schedule(%__MODULE__{name_taken: true} = state), do: {:noreply, state}
 
   defp schedule(state) do
     Process.send_after(self(), :connect, 500)
@@ -272,10 +272,10 @@ defmodule Pont.Uplink do
 
   defp maybe_redial(%__MODULE__{} = state, link) do
     cond do
-      state.replaced and link_target_changed?(state.link, link) ->
+      state.name_taken and link_target_changed?(state.link, link) ->
         Logger.info("agent link changed, redialing as #{link.name}")
         send(self(), :connect)
-        %{state | replaced: false}
+        %{state | name_taken: false}
 
       state.conn && link != state.link ->
         Logger.info("agent link changed, redialing as #{link.name}")
@@ -291,17 +291,17 @@ defmodule Pont.Uplink do
     link.name != current.name or link.plane_url != current.plane_url
   end
 
-  defp log_replaced(%__MODULE__{} = state, reason) do
+  defp log_name_taken(%__MODULE__{} = state, reason) do
     detail =
       if is_binary(reason) and reason != "" do
         reason
       else
-        Pont.AgentSocket.duplicate_reason(state.link.name)
+        Pont.AgentSocket.name_taken_reason(state.link.name)
       end
 
     Logger.error(
-      "uplink replaced name=#{state.link.name} #{detail}. " <>
-        "Another relay is connected with this name. " <>
+      "uplink rejected name=#{state.link.name} #{detail}. " <>
+        "Another relay is already connected with this name. " <>
         "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}. " <>
         "This relay will not reconnect until name or plane_url changes"
     )

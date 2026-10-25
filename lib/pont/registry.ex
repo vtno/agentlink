@@ -11,6 +11,12 @@ defmodule Pont.Registry do
   @moduledoc """
   Live uplinks. One row is one uplink that has said hello.
   The socket is the source of truth.
+
+  The first live socket to claim a name keeps it. A later hello for that
+  name is rejected, and the existing row is left alone. Register calls run
+  one at a time, so two hellos at the same moment still have one winner.
+  A row whose pid is already dead is stale: the socket is gone, and the new
+  hello takes the name. When the holder process exits, the name is free.
   """
 
   use GenServer
@@ -31,13 +37,18 @@ defmodule Pont.Registry do
     {:ok, %__MODULE__{}}
   end
 
-  @doc "An uplink said hello. The access policy accepts this subject, then this table remembers the socket."
-  def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject) when is_pid(pid) do
+  @doc "An uplink said hello. The access policy accepts this subject. A live holder of the name keeps the socket."
+  def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject)
+      when is_pid(pid) do
     GenServer.call(__MODULE__, {:register, pid, uplink, subject})
   end
 
   @impl true
-  def handle_call({:register, pid, %Pont.Registry.Uplink{} = uplink, subject}, _from, %__MODULE__{} = state) do
+  def handle_call(
+        {:register, pid, %Pont.Registry.Uplink{} = uplink, subject},
+        _from,
+        %__MODULE__{} = state
+      ) do
     with {:ok, name} <- normalize_name(uplink.name),
          :ok <- Pont.Access.claim(subject, name) do
       uplink = %Pont.Registry.Uplink{
@@ -48,14 +59,25 @@ defmodule Pont.Registry do
         connected_at: System.system_time(:second)
       }
 
-      state = drop_pid(state, pid)
-      state = replace_name(state, name, pid)
-      ref = Process.monitor(pid)
-      :ets.insert(@table, {name, uplink})
-      Logger.info("uplink registered name=#{uplink.name} label=#{uplink.label} program=#{uplink.program}")
-      Pont.Setup.Watch.connected(uplink.name, uplink.label)
-      Pont.Plane.runtime_reset(name)
-      {:reply, :ok, %{state | pids: Map.put(state.pids, pid, {ref, name})}}
+      case :ets.lookup(@table, name) do
+        [{^name, %Pont.Registry.Uplink{pid: ^pid}}] ->
+          {:reply, :ok, state}
+
+        [{^name, %Pont.Registry.Uplink{pid: holder}}] ->
+          if Process.alive?(holder) do
+            Logger.warning(
+              "uplink rejected name=#{name} another uplink is already connected with this name"
+            )
+
+            {:reply, {:error, {:name_taken, name}}, state}
+          else
+            Logger.warning("uplink stale name=#{name} the previous holder was already dead")
+            {:reply, :ok, remember(drop_pid(state, holder), pid, uplink)}
+          end
+
+        [] ->
+          {:reply, :ok, remember(state, pid, uplink)}
+      end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -110,15 +132,18 @@ defmodule Pont.Registry do
     end
   end
 
-  defp replace_name(%__MODULE__{} = state, name, pid) do
-    case :ets.lookup(@table, name) do
-      [{^name, %Pont.Registry.Uplink{pid: old}}] when old != pid ->
-        send(old, :replaced)
-        drop_pid(state, old)
+  defp remember(%__MODULE__{} = state, pid, %Pont.Registry.Uplink{} = uplink) do
+    state = drop_pid(state, pid)
+    ref = Process.monitor(pid)
+    :ets.insert(@table, {uplink.name, uplink})
 
-      _ ->
-        state
-    end
+    Logger.info(
+      "uplink registered name=#{uplink.name} label=#{uplink.label} program=#{uplink.program}"
+    )
+
+    Pont.Setup.Watch.connected(uplink.name, uplink.label)
+    Pont.Plane.runtime_reset(uplink.name)
+    %{state | pids: Map.put(state.pids, pid, {ref, uplink.name})}
   end
 
   defp drop_pid(%__MODULE__{} = state, pid) do

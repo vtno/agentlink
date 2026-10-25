@@ -71,7 +71,7 @@ defmodule Pont.Plane do
   def agent_frame(name, text) when is_binary(name) and is_binary(text),
     do: GenServer.cast(__MODULE__, {:agent_frame, name, text})
 
-  @doc "The same uplink dialed again. Drop the cached slot so the next app initializes it fresh."
+  @doc "A new uplink registered this name. Drop the cached slot so the next app initializes it fresh."
   def runtime_reset(name) when is_binary(name), do: GenServer.cast(__MODULE__, {:runtime_reset, name})
 
   @doc "The agent socket closed. Fail whatever was still waiting on it."
