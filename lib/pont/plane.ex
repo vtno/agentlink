@@ -1,6 +1,6 @@
 defmodule Pont.Client do
   @moduledoc false
-  defstruct [:pid, :subject, runtime: nil, session_id: nil]
+  defstruct [:pid, :subject, runtime: nil, session_id: nil, capabilities: nil]
 end
 
 defmodule Pont.AgentSlot do
@@ -21,10 +21,17 @@ end
 
 defmodule Pont.Plane do
   @moduledoc """
-  WebSocket proxy for ACP stdio. `initialize` is cached per agent. Every other
-  method is forwarded. Clients on the same `{agent, sessionId}` share live
-  updates. An agent question goes only to the client whose prompt or load is
-  in flight. One agent process runs one prompt at a time.
+  WebSocket proxy for ACP stdio. `initialize` is cached per agent. The agent
+  sees the first client's `clientCapabilities`. Each client keeps the
+  advertisement from its own `initialize`. Every other method is forwarded.
+  Clients on the same `{agent, sessionId}` share live updates. An agent
+  question goes only to the client whose prompt or load is in flight.
+  `fs/read_text_file` is forwarded only when that client's `fs.readTextFile`
+  is true, and `fs/write_text_file` only when `fs.writeTextFile` is true.
+  `terminal/*` is forwarded only when `terminal` is true. Any other `fs/*`
+  or `terminal/*` request is not forwarded. The plane answers the agent with
+  JSON-RPC `-32601` and the message `client does not support this method`.
+  One agent process runs one prompt at a time.
   """
 
   use GenServer
@@ -252,6 +259,8 @@ defmodule Pont.Plane do
   end
 
   defp on_initialize(state, slot, client_id, message) do
+    state = remember_capabilities(state, client_id, message)
+
     cond do
       slot.init_cache ->
         {send_cache(state, client_id, message["id"], slot.init_cache), slot}
@@ -273,6 +282,17 @@ defmodule Pont.Plane do
 
         {state, slot}
     end
+  end
+
+  defp remember_capabilities(state, client_id, message) do
+    capabilities =
+      case get_in(message, ["params", "clientCapabilities"]) do
+        caps when is_map(caps) -> caps
+        _ -> nil
+      end
+
+    clients = Map.update!(state.clients, client_id, &%{&1 | capabilities: capabilities})
+    %{state | clients: clients}
   end
 
   defp forward(state, slot, client_id, message, kind) do
@@ -405,16 +425,20 @@ defmodule Pont.Plane do
     case issuer(slot, session_of(message)) do
       client_id when is_binary(client_id) ->
         case state.clients[client_id] do
-          %{pid: _pid} ->
-            fan_id = slot.next_fan_id
-            state = push(state, client_id, Map.put(message, "id", fan_id))
+          %Pont.Client{pid: _pid} = client ->
+            if supports?(client, message["method"]) do
+              fan_id = slot.next_fan_id
+              state = push(state, client_id, Map.put(message, "id", fan_id))
 
-            {state,
-             %{
-               slot
-               | next_fan_id: fan_id + 1,
-                 fan_pending: Map.put(slot.fan_pending, fan_id, %{agent_id: message["id"], client_id: client_id})
-             }}
+              {state,
+               %{
+                 slot
+                 | next_fan_id: fan_id + 1,
+                   fan_pending: Map.put(slot.fan_pending, fan_id, %{agent_id: message["id"], client_id: client_id})
+               }}
+            else
+              decline_method(state, slot, message)
+            end
 
           _ ->
             decline_action(state, slot, message)
@@ -434,6 +458,23 @@ defmodule Pont.Plane do
 
     {state, slot}
   end
+
+  defp decline_method(state, slot, message) do
+    write_agent(slot, %{
+      "jsonrpc" => "2.0",
+      "id" => message["id"],
+      "error" => %{"code" => -32601, "message" => "client does not support this method"}
+    })
+
+    {state, slot}
+  end
+
+  defp supports?(%Pont.Client{capabilities: %{"fs" => %{"readTextFile" => true}}}, "fs/read_text_file"), do: true
+  defp supports?(%Pont.Client{capabilities: %{"fs" => %{"writeTextFile" => true}}}, "fs/write_text_file"), do: true
+  defp supports?(%Pont.Client{}, "fs/" <> _), do: false
+  defp supports?(%Pont.Client{capabilities: %{"terminal" => true}}, "terminal/" <> _), do: true
+  defp supports?(%Pont.Client{}, "terminal/" <> _), do: false
+  defp supports?(%Pont.Client{}, _method), do: true
 
   defp issuer(slot, session_id) do
     matches =
