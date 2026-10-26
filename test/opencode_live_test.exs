@@ -35,17 +35,25 @@ defmodule Pont.OpenCodeLiveTest do
                  "fs" => %{"readTextFile" => false, "writeTextFile" => false},
                  "terminal" => false
                },
-               "clientInfo" => %{"name" => "pont-live-test", "title" => "Pont live test", "version" => "0.1.0"}
+               "clientInfo" => %{
+                 "name" => "pont-live-test",
+                 "title" => "Pont live test",
+                 "version" => "0.1.0"
+               }
              })
 
     assert {:ok, %{"result" => %{"sessionId" => session_id}}} =
-             Pont.LiveClient.request(client, "session/new", %{"cwd" => page_dir, "mcpServers" => []})
+             Pont.LiveClient.request(client, "session/new", %{
+               "cwd" => page_dir,
+               "mcpServers" => []
+             })
 
-    _ = Pont.LiveClient.request(client, "session/set_config_option", %{
-      "sessionId" => session_id,
-      "configId" => "model",
-      "value" => "xai/grok-4.20-0309-non-reasoning"
-    })
+    _ =
+      Pont.LiveClient.request(client, "session/set_config_option", %{
+        "sessionId" => session_id,
+        "configId" => "model",
+        "value" => "xai/grok-4.20-0309-non-reasoning"
+      })
 
     assert {:ok, %{"result" => %{"stopReason" => "end_turn"}}} =
              Pont.LiveClient.request(
@@ -78,14 +86,16 @@ defmodule Pont.OpenCodeLiveTest do
   end
 
   defp tmp_dir do
-    dir = Path.join(System.tmp_dir!(), "acp-live-#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "pont-live-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     dir
   end
 
   defp paths_under(home) do
     root = System.user_home!()
-    {under_home(Pont.Paths.link(), root, home), under_home(Pont.Paths.default_workdir(), root, home)}
+
+    {under_home(Pont.Paths.link(), root, home),
+     under_home(Pont.Paths.default_workdir(), root, home)}
   end
 
   defp start_binary(bin, dir, wrapper) do
@@ -105,7 +115,8 @@ defmodule Pont.OpenCodeLiveTest do
         :binary,
         :exit_status,
         :stderr_to_stdout,
-        {:args, ["--port", Integer.to_string(@port), "--token", "live-token", "--opencode-bin", opencode]},
+        {:args,
+         ["--port", Integer.to_string(@port), "--token", "live-token", "--opencode-bin", opencode]},
         {:env, binary_env(home)}
       ])
 
@@ -162,7 +173,9 @@ defmodule Pont.OpenCodeLiveTest do
     flush_binary()
 
     case status_runtimes() do
-      [%{"name" => "opencode"}] -> :ok
+      [%{"name" => "opencode"}] ->
+        :ok
+
       _ when left > 0 ->
         Process.sleep(500)
         wait_runtime(left - 1)
@@ -188,13 +201,18 @@ defmodule Pont.OpenCodeLiveTest do
   defp status_runtimes do
     case Mint.HTTP.connect(:http, "127.0.0.1", @port, mode: :passive) do
       {:ok, conn} ->
-        {:ok, conn, ref} = Mint.HTTP.request(conn, "GET", "/status", [{"authorization", "Bearer live-token"}], nil)
+        {:ok, conn, ref} =
+          Mint.HTTP.request(conn, "GET", "/status", [{"authorization", "Bearer live-token"}], nil)
+
         {:ok, _conn, responses} = Mint.HTTP.recv(conn, 0, 2_000)
         Mint.HTTP.close(conn)
 
         body =
           responses
-          |> Enum.flat_map(fn {:data, ^ref, chunk} -> [chunk]; _ -> [] end)
+          |> Enum.flat_map(fn
+            {:data, ^ref, chunk} -> [chunk]
+            _ -> []
+          end)
           |> IO.iodata_to_binary()
 
         Jason.decode!(body)["runtimes"]
@@ -218,7 +236,10 @@ defmodule Pont.LiveClient do
   @impl true
   def init(port) do
     {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", port, protocols: [:http1], mode: :passive)
-    {:ok, conn, ref} = Mint.WebSocket.upgrade(:ws, conn, "/acp", [{"authorization", "Bearer live-token"}])
+
+    {:ok, conn, ref} =
+      Mint.WebSocket.upgrade(:ws, conn, "/acp", [{"authorization", "Bearer live-token"}])
+
     {:ok, conn, 101, headers} = await(conn, ref, [])
     {:ok, conn, websocket} = Mint.WebSocket.new(conn, ref, 101, headers)
     {:ok, conn} = Mint.HTTP.set_mode(conn, :active)
@@ -228,7 +249,10 @@ defmodule Pont.LiveClient do
   @impl true
   def handle_call({:request, method, params}, from, state) do
     id = state.next
-    state = send_json(state, %{"jsonrpc" => "2.0", "id" => id, "method" => method, "params" => params})
+
+    state =
+      send_json(state, %{"jsonrpc" => "2.0", "id" => id, "method" => method, "params" => params})
+
     {:noreply, %{state | next: id + 1, waiters: Map.put(state.waiters, id, from)}}
   end
 
@@ -270,7 +294,9 @@ defmodule Pont.LiveClient do
 
       {:ok, %{"id" => id} = message} when not is_nil(id) ->
         case Map.pop(state.waiters, id) do
-          {nil, _} -> state
+          {nil, _} ->
+            state
+
           {from, waiters} ->
             GenServer.reply(from, {:ok, message})
             %{state | waiters: waiters}
@@ -315,8 +341,18 @@ defmodule Pont.LiveClient do
 
   defp await(conn, ref, acc) do
     if Enum.any?(acc, &match?({:done, ^ref}, &1)) do
-      status = Enum.find_value(acc, fn {:status, ^ref, status} -> status; _ -> nil end)
-      headers = Enum.find_value(acc, [], fn {:headers, ^ref, headers} -> headers; _ -> nil end)
+      status =
+        Enum.find_value(acc, fn
+          {:status, ^ref, status} -> status
+          _ -> nil
+        end)
+
+      headers =
+        Enum.find_value(acc, [], fn
+          {:headers, ^ref, headers} -> headers
+          _ -> nil
+        end)
+
       {:ok, conn, status, headers}
     else
       {:ok, conn, responses} = Mint.HTTP.recv(conn, 0, 5_000)

@@ -77,7 +77,7 @@ defmodule Pont.RouterTest do
     assert {:ok, conn1, ref1, websocket1} = upgrade("/agent", headers)
     {conn1, websocket1} = say_hello(conn1, ref1, websocket1, "opencode")
     {:ok, conn1} = Mint.HTTP.set_mode(conn1, :active)
-    first = await_pid("opencode")
+    first = Pont.TestHelpers.await_pid("opencode")
 
     assert {:ok, conn2, ref2, websocket2} = upgrade("/agent", headers)
 
@@ -205,20 +205,6 @@ defmodule Pont.RouterTest do
     {:ok, websocket, data} = Mint.WebSocket.encode(websocket, {:text, hello})
     {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)
     {conn, websocket}
-  end
-
-  defp await_pid(name, attempts \\ 50) do
-    case Pont.Registry.pid(name) do
-      pid when is_pid(pid) ->
-        pid
-
-      nil when attempts > 0 ->
-        Process.sleep(20)
-        await_pid(name, attempts - 1)
-
-      nil ->
-        flunk("uplink #{name} did not register")
-    end
   end
 
   defp recv_until_close(conn, websocket, frames \\ []) do

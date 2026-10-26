@@ -74,10 +74,12 @@ defmodule Pont.Plane do
     do: GenServer.cast(__MODULE__, {:agent_frame, name, text})
 
   @doc "A new uplink registered this name. Drop the cached slot so the next app initializes it fresh."
-  def runtime_reset(name) when is_binary(name), do: GenServer.cast(__MODULE__, {:runtime_reset, name})
+  def runtime_reset(name) when is_binary(name),
+    do: GenServer.cast(__MODULE__, {:runtime_reset, name})
 
   @doc "The agent socket closed. Fail whatever was still waiting on it."
-  def runtime_down(name) when is_binary(name), do: GenServer.cast(__MODULE__, {:runtime_down, name})
+  def runtime_down(name) when is_binary(name),
+    do: GenServer.cast(__MODULE__, {:runtime_down, name})
 
   @impl true
   def handle_cast({:frame, client_id, text}, %__MODULE__{} = state) do
@@ -86,7 +88,9 @@ defmodule Pont.Plane do
       |> String.split("\n", trim: true)
       |> Enum.reduce(state, fn line, acc ->
         case Jason.decode(line) do
-          {:ok, message} when is_map(message) -> on_client(acc, client_id, message)
+          {:ok, message} when is_map(message) ->
+            on_client(acc, client_id, message)
+
           {:ok, list} when is_list(list) ->
             push(acc, client_id, %{
               "jsonrpc" => "2.0",
@@ -120,8 +124,11 @@ defmodule Pont.Plane do
     {:noreply, state}
   end
 
-  def handle_cast({:runtime_reset, name}, %__MODULE__{} = state), do: {:noreply, drop_slot(state, name, "runtime reconnected")}
-  def handle_cast({:runtime_down, name}, %__MODULE__{} = state), do: {:noreply, drop_slot(state, name, "runtime disconnected")}
+  def handle_cast({:runtime_reset, name}, %__MODULE__{} = state),
+    do: {:noreply, drop_slot(state, name, "runtime reconnected")}
+
+  def handle_cast({:runtime_down, name}, %__MODULE__{} = state),
+    do: {:noreply, drop_slot(state, name, "runtime disconnected")}
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %__MODULE__{} = state) do
@@ -131,13 +138,21 @@ defmodule Pont.Plane do
 
       {client_id, monitors} ->
         slots = Map.new(state.slots, fn {name, slot} -> {name, drop_client(slot, client_id)} end)
-        {:noreply, %{state | clients: Map.delete(state.clients, client_id), monitors: monitors, slots: slots}}
+
+        {:noreply,
+         %{
+           state
+           | clients: Map.delete(state.clients, client_id),
+             monitors: monitors,
+             slots: slots
+         }}
     end
   end
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp on_client(%{clients: clients} = state, client_id, message) when is_map_key(clients, client_id) do
+  defp on_client(%{clients: clients} = state, client_id, message)
+       when is_map_key(clients, client_id) do
     cond do
       response?(message) ->
         with_runtime(state, client_id, message, &on_client_response/4)
@@ -159,7 +174,12 @@ defmodule Pont.Plane do
 
       message["method"] == "session/prompt" ->
         with_runtime(state, client_id, message, fn state, slot, client_id, message ->
-          slot = %{slot | prompt_queue: :queue.in(%{client_id: client_id, message: message}, slot.prompt_queue)}
+          slot = %{
+            slot
+            | prompt_queue:
+                :queue.in(%{client_id: client_id, message: message}, slot.prompt_queue)
+          }
+
           pump(state, slot)
         end)
 
@@ -208,13 +228,8 @@ defmodule Pont.Plane do
     end
   end
 
-  defp on_runtime(state, client_id, message) do
-    if message["id"] do
-      reply(state, client_id, message["id"], {:error, "runtime request needs an id"})
-    else
-      state
-    end
-  end
+  # A runtime request without an id is a notice. Ignore it.
+  defp on_runtime(state, _client_id, _message), do: state
 
   defp with_runtime(state, client_id, message, fun) do
     case ensure_runtime(state, client_id) do
@@ -224,7 +239,9 @@ defmodule Pont.Plane do
         %{state | slots: Map.put(state.slots, slot.name, slot)}
 
       {:error, state, reason} ->
-        if message["id"], do: reply(state, client_id, message["id"], {:error, reason}), else: state
+        if message["id"],
+          do: reply(state, client_id, message["id"], {:error, reason}),
+          else: state
     end
   end
 
@@ -271,10 +288,15 @@ defmodule Pont.Plane do
         {send_cache(state, client_id, message["id"], slot.init_cache), slot}
 
       slot.init_sent ->
-        {state, %{slot | init_waiters: slot.init_waiters ++ [%{client_id: client_id, id: message["id"]}]}}
+        {state,
+         %{slot | init_waiters: slot.init_waiters ++ [%{client_id: client_id, id: message["id"]}]}}
 
       true ->
-        slot = %{slot | init_waiters: slot.init_waiters ++ [%{client_id: client_id, id: message["id"]}]}
+        slot = %{
+          slot
+          | init_waiters: slot.init_waiters ++ [%{client_id: client_id, id: message["id"]}]
+        }
+
         agent_id = slot.next_agent_id
         {state, slot} = forward(state, slot, client_id, message, :initialize)
 
@@ -357,7 +379,8 @@ defmodule Pont.Plane do
     {state, slot}
   end
 
-  defp deliver(state, slot, %{kind: kind} = pending, message) when kind in [:session_new, :session_load] do
+  defp deliver(state, slot, %{kind: kind} = pending, message)
+       when kind in [:session_new, :session_load] do
     cache = cache_of(message)
     state = reply(state, pending.client_id, pending.client_req_id, cache)
 
@@ -439,7 +462,11 @@ defmodule Pont.Plane do
                %{
                  slot
                  | next_fan_id: fan_id + 1,
-                   fan_pending: Map.put(slot.fan_pending, fan_id, %{agent_id: message["id"], client_id: client_id})
+                   fan_pending:
+                     Map.put(slot.fan_pending, fan_id, %{
+                       agent_id: message["id"],
+                       client_id: client_id
+                     })
                }}
             else
               decline(state, slot, message, -32601, "client does not support this method")
@@ -467,8 +494,18 @@ defmodule Pont.Plane do
     })
   end
 
-  defp supports?(%Pont.Client{capabilities: %{"fs" => %{"readTextFile" => true}}}, "fs/read_text_file"), do: true
-  defp supports?(%Pont.Client{capabilities: %{"fs" => %{"writeTextFile" => true}}}, "fs/write_text_file"), do: true
+  defp supports?(
+         %Pont.Client{capabilities: %{"fs" => %{"readTextFile" => true}}},
+         "fs/read_text_file"
+       ),
+       do: true
+
+  defp supports?(
+         %Pont.Client{capabilities: %{"fs" => %{"writeTextFile" => true}}},
+         "fs/write_text_file"
+       ),
+       do: true
+
   defp supports?(%Pont.Client{}, "fs/" <> _), do: false
   defp supports?(%Pont.Client{capabilities: %{"terminal" => true}}, "terminal/" <> _), do: true
   defp supports?(%Pont.Client{}, "terminal/" <> _), do: false
@@ -559,7 +596,8 @@ defmodule Pont.Plane do
   end
 
   defp drop_client(slot, client_id) do
-    {orphaned, remaining} = Enum.split_with(slot.fan_pending, fn {_id, fan} -> fan.client_id == client_id end)
+    {orphaned, remaining} =
+      Enum.split_with(slot.fan_pending, fn {_id, fan} -> fan.client_id == client_id end)
 
     Enum.each(orphaned, fn {_id, fan} ->
       agent_error(slot, fan.agent_id, -32000, "no app is attached to this session")
@@ -644,8 +682,11 @@ defmodule Pont.Plane do
 
   defp bind_session(state, client_id, session_id) when is_binary(session_id) do
     case state.clients[client_id] do
-      nil -> state
-      client -> %{state | clients: Map.put(state.clients, client_id, %{client | session_id: session_id})}
+      nil ->
+        state
+
+      client ->
+        %{state | clients: Map.put(state.clients, client_id, %{client | session_id: session_id})}
     end
   end
 
@@ -683,15 +724,19 @@ defmodule Pont.Plane do
     push(state, client_id, %{"jsonrpc" => "2.0", "id" => id, "error" => error})
   end
 
-  defp send_cache(state, client_id, id, {:ok, result}), do: reply(state, client_id, id, {:ok, result})
-  defp send_cache(state, client_id, id, {:error, error}), do: reply(state, client_id, id, {:error, error})
+  defp send_cache(state, client_id, id, {:ok, result}),
+    do: reply(state, client_id, id, {:ok, result})
+
+  defp send_cache(state, client_id, id, {:error, error}),
+    do: reply(state, client_id, id, {:error, error})
 
   defp cache_of(%{"error" => error}) when is_map(error), do: {:error, error}
   defp cache_of(%{"result" => result}), do: {:ok, result}
   defp cache_of(_), do: {:error, "empty response"}
 
   defp response?(message) do
-    not is_nil(message["id"]) and (Map.has_key?(message, "result") or Map.has_key?(message, "error")) and
+    not is_nil(message["id"]) and
+      (Map.has_key?(message, "result") or Map.has_key?(message, "error")) and
       not is_binary(message["method"])
   end
 

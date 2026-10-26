@@ -98,7 +98,7 @@ defmodule Pont.RegistryTest do
     assert {:ok, "lab"} = hello(first, "lab", "a", "relay-a")
 
     log =
-      capture_info(fn ->
+      Pont.TestHelpers.capture_info(fn ->
         assert {:ok, "lab"} = hello(second, "lab", "b", "relay-a")
       end)
 
@@ -289,17 +289,6 @@ defmodule Pont.RegistryTest do
     Process.sleep(50)
     assert Pont.Registry.pid("lab") == next
     assert Process.alive?(next)
-  end
-
-  defp capture_info(fun) do
-    level = Logger.level()
-    Logger.configure(level: :info)
-
-    try do
-      ExUnit.CaptureLog.capture_log(fun)
-    after
-      Logger.configure(level: level)
-    end
   end
 
   defp hello(pid, name, label, instance \\ nil) do

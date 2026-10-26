@@ -11,7 +11,12 @@ defmodule Pont.ClientSocketTest do
     {:ok, state} = Pont.ClientSocket.init(%Pont.Access.Subject{})
     assert is_binary(state.id)
 
-    {:ok, state} = Pont.ClientSocket.handle_in({~s({"jsonrpc":"2.0","method":"runtime/list"}), [opcode: :text]}, state)
+    {:ok, state} =
+      Pont.ClientSocket.handle_in(
+        {~s({"jsonrpc":"2.0","method":"runtime/list"}), [opcode: :text]},
+        state
+      )
+
     {:ok, state} = Pont.ClientSocket.handle_in({<<1, 2>>, [opcode: :binary]}, state)
     assert {:push, [{:text, "{}"}], ^state} = Pont.ClientSocket.handle_info({:send, "{}"}, state)
     assert {:ok, ^state} = Pont.ClientSocket.handle_info(:other, state)

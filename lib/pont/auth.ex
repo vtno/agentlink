@@ -48,7 +48,8 @@ defmodule Pont.Auth do
   defp bearer(_), do: nil
 
   defp same_token?(presented, expected) when is_binary(presented) do
-    byte_size(presented) == byte_size(expected) and Plug.Crypto.secure_compare(presented, expected)
+    byte_size(presented) == byte_size(expected) and
+      Plug.Crypto.secure_compare(presented, expected)
   end
 
   defp same_token?(_, _), do: false

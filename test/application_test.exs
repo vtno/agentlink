@@ -3,7 +3,10 @@ defmodule Pont.ApplicationTest do
 
   setup do
     Application.put_env(:pont, :agent_listener, self())
-    previous = {Application.get_env(:pont, :mode), Application.get_env(:pont, :port), Application.get_env(:pont, :link_path)}
+
+    previous =
+      {Application.get_env(:pont, :mode), Application.get_env(:pont, :port),
+       Application.get_env(:pont, :link_path)}
 
     on_exit(fn ->
       Application.delete_env(:pont, :agent_listener)
@@ -33,7 +36,12 @@ defmodule Pont.ApplicationTest do
 
   test "relay mode stops when the link file is missing" do
     Application.put_env(:pont, :mode, :relay)
-    Application.put_env(:pont, :link_path, "/tmp/pont-missing-#{System.unique_integer([:positive])}.json")
+
+    Application.put_env(
+      :pont,
+      :link_path,
+      "/tmp/pont-missing-#{System.unique_integer([:positive])}.json"
+    )
 
     assert {:error, message} = Pont.Application.start(:normal, [])
     assert message =~ "No link file"
@@ -133,8 +141,14 @@ defmodule Pont.ApplicationTest do
   end
 
   defp write_link do
-    path = Path.join(System.tmp_dir!(), "pont-app-link-#{System.unique_integer([:positive])}.json")
-    File.write!(path, ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"}))
+    path =
+      Path.join(System.tmp_dir!(), "pont-app-link-#{System.unique_integer([:positive])}.json")
+
+    File.write!(
+      path,
+      ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"})
+    )
+
     Application.put_env(:pont, :link_path, path)
     path
   end

@@ -8,7 +8,10 @@ defmodule Pont.FakeAgent do
   @impl true
   def open(owner, cwd) do
     {:ok, pid} = GenServer.start_link(__MODULE__, owner)
-    if listener = Application.get_env(:pont, :agent_listener), do: send(listener, {:agent_opened, pid, cwd})
+
+    if listener = Application.get_env(:pont, :agent_listener),
+      do: send(listener, {:agent_opened, pid, cwd})
+
     {:ok, pid}
   end
 
@@ -25,10 +28,13 @@ defmodule Pont.FakeAgent do
   def write(_ref, _data), do: :closed
 
   @impl true
-  def handle_call({:write, _data}, _from, %__MODULE__{refuse: true} = state), do: {:reply, :closed, state}
+  def handle_call({:write, _data}, _from, %__MODULE__{refuse: true} = state),
+    do: {:reply, :closed, state}
 
   def handle_call({:write, data}, _from, %__MODULE__{} = state) do
-    if listener = Application.get_env(:pont, :agent_listener), do: send(listener, {:agent_write, data})
+    if listener = Application.get_env(:pont, :agent_listener),
+      do: send(listener, {:agent_write, data})
+
     {:reply, :ok, state}
   end
 

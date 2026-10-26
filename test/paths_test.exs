@@ -23,10 +23,7 @@ defmodule Pont.PathsTest do
 
     previous = Application.get_env(:pont, :opencode_bin)
     Application.put_env(:pont, :opencode_bin, "/tmp/opencode-from-config")
-    on_exit(fn -> restore_bin(previous) end)
+    on_exit(fn -> Pont.TestHelpers.restore(:opencode_bin, previous) end)
     assert Pont.Paths.opencode_bin() == "/tmp/opencode-from-config"
   end
-
-  defp restore_bin(nil), do: Application.delete_env(:pont, :opencode_bin)
-  defp restore_bin(value), do: Application.put_env(:pont, :opencode_bin, value)
 end

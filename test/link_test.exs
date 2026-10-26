@@ -2,7 +2,7 @@ defmodule Pont.LinkTest do
   use ExUnit.Case, async: false
 
   test "a missing file tells the operator to create it" do
-    path = "/tmp/does-not-exist-acp-link.json"
+    path = "/tmp/does-not-exist-pont-link.json"
     assert {:error, message} = Pont.Link.read(path)
     assert message =~ path
     assert message =~ "plane_url"
@@ -61,7 +61,7 @@ defmodule Pont.LinkTest do
   end
 
   defp write!(body) do
-    path = Path.join(System.tmp_dir!(), "acp-link-#{System.unique_integer([:positive])}.json")
+    path = Path.join(System.tmp_dir!(), "pont-link-#{System.unique_integer([:positive])}.json")
     File.write!(path, body)
     path
   end
