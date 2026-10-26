@@ -715,14 +715,38 @@ defmodule Pont.PlaneTest do
     call(survivor, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 2)
     disconnect_client!(pid, id)
 
-    assert {:agent, %{"id" => "perm", "error" => %{"code" => -32000, "message" => "no app is attached to this session"}}} = from_agent!()
-    assert [%{client_id: ^survivor}] = :queue.to_list(:sys.get_state(Pont.Plane).slots["lab"].prompt_queue)
+    assert {:agent,
+            %{
+              "id" => "perm",
+              "error" => %{"code" => -32000, "message" => "no app is attached to this session"}
+            }} = from_agent!()
+
+    assert [%{client_id: ^survivor}] =
+             :queue.to_list(:sys.get_state(Pont.Plane).slots["lab"].prompt_queue)
+
     refute_receive {:agent, %{"method" => "session/prompt"}}, 50
 
-    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => prompt_id, "result" => %{"stopReason" => "end_turn"}}))
+    Pont.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => prompt_id,
+        "result" => %{"stopReason" => "end_turn"}
+      })
+    )
+
     assert %{"params" => %{"update" => %{"_meta" => %{"stopReason" => "end_turn"}}}} = reply!()
     assert {:agent, %{"method" => "session/prompt", "id" => next_id}} = from_agent!()
-    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => next_id, "result" => %{"stopReason" => "end_turn"}}))
+
+    Pont.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => next_id,
+        "result" => %{"stopReason" => "end_turn"}
+      })
+    )
+
     assert %{"id" => 2, "result" => %{"stopReason" => "end_turn"}} = reply!()
     assert %{"method" => "session/update"} = reply!()
     slot = :sys.get_state(Pont.Plane).slots["lab"]
@@ -739,7 +763,9 @@ defmodule Pont.PlaneTest do
       assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
       agent_ask("ses_1", "perm", "session/request_permission")
       assert %{"id" => fan_id} = client_reply!(pid)
-      response = Jason.encode!(%{"jsonrpc" => "2.0", "id" => fan_id, "result" => %{"outcome" => "allow"}})
+
+      response =
+        Jason.encode!(%{"jsonrpc" => "2.0", "id" => fan_id, "result" => %{"outcome" => "allow"}})
 
       case unquote(order) do
         :reply_first ->
@@ -766,7 +792,14 @@ defmodule Pont.PlaneTest do
     initialize!(survivor, 1, %{})
     open_session!(survivor, "ses_1")
     {pid, id} = spawn_client()
-    call(id, "initialize", %{"clientCapabilities" => %{"fs" => %{"readTextFile" => true}, "terminal" => true}}, 1)
+
+    call(
+      id,
+      "initialize",
+      %{"clientCapabilities" => %{"fs" => %{"readTextFile" => true}, "terminal" => true}},
+      1
+    )
+
     assert %{"id" => 1, "result" => _} = client_reply!(pid)
     load_client_session!(pid, id, "ses_1")
 
@@ -784,18 +817,43 @@ defmodule Pont.PlaneTest do
     disconnect_client!(pid, id)
 
     for req_id <- ["read", "term"] do
-      assert_receive {:agent, %{"id" => ^req_id, "error" => %{"code" => -32000, "message" => "no app is attached to this session"}}}, 500
+      assert_receive {:agent,
+                      %{
+                        "id" => ^req_id,
+                        "error" => %{
+                          "code" => -32000,
+                          "message" => "no app is attached to this session"
+                        }
+                      }},
+                     500
     end
 
     slot = :sys.get_state(Pont.Plane).slots["lab"]
     assert %{^fan_id => %{client_id: ^survivor}} = slot.fan_pending
     assert map_size(slot.fan_pending) == 1
     assert slot.prompt_inflight
-    Pont.Plane.client_frame(survivor, Jason.encode!(%{"jsonrpc" => "2.0", "id" => fan_id, "result" => %{}}))
+
+    Pont.Plane.client_frame(
+      survivor,
+      Jason.encode!(%{"jsonrpc" => "2.0", "id" => fan_id, "result" => %{}})
+    )
+
     assert {:agent, %{"id" => "perm", "result" => %{}}} = from_agent!()
 
-    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}}))
-    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => prompt_id, "result" => %{"stopReason" => "end_turn"}}))
+    Pont.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
+    )
+
+    Pont.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => prompt_id,
+        "result" => %{"stopReason" => "end_turn"}
+      })
+    )
+
     assert %{"id" => 3, "result" => _} = reply!()
     assert %{"method" => "session/update"} = reply!()
     state = :sys.get_state(Pont.Plane)
@@ -822,7 +880,12 @@ defmodule Pont.PlaneTest do
       slot = :sys.get_state(Pont.Plane).slots["lab"]
       assert [%{client_id: ^survivor, id: survivor_req_id}] = slot.init_waiters
       assert slot.init_sent
-      Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => init_id, "result" => %{"ok" => true}}))
+
+      Pont.Plane.agent_frame(
+        "lab",
+        Jason.encode!(%{"jsonrpc" => "2.0", "id" => init_id, "result" => %{"ok" => true}})
+      )
+
       assert %{"id" => ^survivor_req_id, "result" => %{"ok" => true}} = reply!()
       call(survivor, "initialize", %{}, 4)
       assert %{"id" => 4, "result" => %{"ok" => true}} = reply!()
@@ -841,10 +904,20 @@ defmodule Pont.PlaneTest do
       agent_ask("ses_1", "perm", "session/request_permission")
       assert %{"method" => "session/request_permission"} = client_reply!(pid)
       call(survivor, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 2)
-      Pont.Plane.client_frame(survivor, ~s({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"ses_1"}}))
+
+      Pont.Plane.client_frame(
+        survivor,
+        ~s({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"ses_1"}})
+      )
+
       assert {:agent, %{"method" => "session/cancel"}} = from_agent!()
 
-      cancelled = Jason.encode!(%{"jsonrpc" => "2.0", "id" => prompt_id, "result" => %{"stopReason" => "cancelled"}})
+      cancelled =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => prompt_id,
+          "result" => %{"stopReason" => "cancelled"}
+        })
 
       case unquote(order) do
         :cancel_reply_first ->
@@ -867,7 +940,15 @@ defmodule Pont.PlaneTest do
       assert %{client_id: ^survivor} = slot.agent_pending[next_id]
       assert slot.fan_pending == %{}
 
-      Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => next_id, "result" => %{"stopReason" => "end_turn"}}))
+      Pont.Plane.agent_frame(
+        "lab",
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => next_id,
+          "result" => %{"stopReason" => "end_turn"}
+        })
+      )
+
       assert %{"id" => 2, "result" => _} = reply!()
       refute :sys.get_state(Pont.Plane).slots["lab"].prompt_inflight
       refute_receive {:agent, _}, 50
@@ -886,11 +967,22 @@ defmodule Pont.PlaneTest do
       assert {:agent, %{"method" => "initialize"}} = from_agent!()
       call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 3)
       assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
-      Pont.Plane.agent_frame(name, Jason.encode!(%{"jsonrpc" => "2.0", "id" => name, "method" => "session/request_permission", "params" => %{"sessionId" => "ses_1"}}))
+
+      Pont.Plane.agent_frame(
+        name,
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => name,
+          "method" => "session/request_permission",
+          "params" => %{"sessionId" => "ses_1"}
+        })
+      )
+
       assert %{"method" => "session/request_permission"} = client_reply!(pid)
     end
 
     disconnect_client!(pid, id)
+
     for name <- ["lab", "other"] do
       assert_receive {:agent, %{"id" => ^name, "error" => %{"code" => -32000}}}, 500
     end
@@ -901,7 +993,11 @@ defmodule Pont.PlaneTest do
 
       for {req_id, pending} <- slot.agent_pending do
         result = if pending.kind == :prompt, do: %{"stopReason" => "end_turn"}, else: %{}
-        Pont.Plane.agent_frame(name, Jason.encode!(%{"jsonrpc" => "2.0", "id" => req_id, "result" => result}))
+
+        Pont.Plane.agent_frame(
+          name,
+          Jason.encode!(%{"jsonrpc" => "2.0", "id" => req_id, "result" => result})
+        )
       end
     end
 
@@ -979,7 +1075,12 @@ defmodule Pont.PlaneTest do
   defp load_client_session!(pid, id, session_id) do
     call(id, "session/load", %{"sessionId" => session_id, "cwd" => "/tmp", "mcpServers" => []}, 1)
     assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
-    Pont.Plane.agent_frame("lab", Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}}))
+
+    Pont.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
+    )
+
     assert %{"id" => 1, "result" => %{}} = client_reply!(pid)
   end
 

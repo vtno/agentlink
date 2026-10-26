@@ -138,13 +138,21 @@ defmodule Pont.Plane do
 
       {client_id, monitors} ->
         slots = Map.new(state.slots, fn {name, slot} -> {name, drop_client(slot, client_id)} end)
-        {:noreply, %{state | clients: Map.delete(state.clients, client_id), monitors: monitors, slots: slots}}
+
+        {:noreply,
+         %{
+           state
+           | clients: Map.delete(state.clients, client_id),
+             monitors: monitors,
+             slots: slots
+         }}
     end
   end
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp on_client(%{clients: clients} = state, client_id, message) when is_map_key(clients, client_id) do
+  defp on_client(%{clients: clients} = state, client_id, message)
+       when is_map_key(clients, client_id) do
     cond do
       response?(message) ->
         with_runtime(state, client_id, message, &on_client_response/4)
@@ -588,7 +596,8 @@ defmodule Pont.Plane do
   end
 
   defp drop_client(slot, client_id) do
-    {orphaned, remaining} = Enum.split_with(slot.fan_pending, fn {_id, fan} -> fan.client_id == client_id end)
+    {orphaned, remaining} =
+      Enum.split_with(slot.fan_pending, fn {_id, fan} -> fan.client_id == client_id end)
 
     Enum.each(orphaned, fn {_id, fan} ->
       agent_error(slot, fan.agent_id, -32000, "no app is attached to this session")
