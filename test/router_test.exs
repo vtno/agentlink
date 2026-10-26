@@ -88,7 +88,7 @@ defmodule Pont.RouterTest do
       end)
 
     assert_receive {:rejected, frames, conn2}
-    assert {:close, 4001, Pont.SocketProtocol.reason(:name_taken, "opencode")} in frames
+    assert {:close, 4001, Pont.AgentSocketProtocol.reason(:name_taken, "opencode")} in frames
 
     assert log =~
              "uplink rejected name=opencode another uplink is already connected with this name"
@@ -145,8 +145,10 @@ defmodule Pont.RouterTest do
     for {name, attrs, policy, code, reason} <- [
           {nil, %{}, Pont.Access.Single, 4003, "link name must be a short slug"},
           {"lab",
-           %{"instance" => String.duplicate("a", Pont.SocketProtocol.max_instance_bytes() + 1)},
-           Pont.Access.Single, 4002, "instance id is too long; max is 128 bytes"},
+           %{
+             "instance" =>
+               String.duplicate("a", Pont.AgentSocketProtocol.max_instance_bytes() + 1)
+           }, Pont.Access.Single, 4002, "instance id is too long; max is 128 bytes"},
           {"lab", %{}, DenyClaim, 4004, "uplink is not allowed"}
         ] do
       Application.put_env(:pont, :access, policy)

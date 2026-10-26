@@ -69,7 +69,7 @@ defmodule Pont.AgentSocketTest do
         send(parent, {:checked, result})
       end)
 
-    reason = Pont.SocketProtocol.reason(:name_taken, "lab")
+    reason = Pont.AgentSocketProtocol.reason(:name_taken, "lab")
     assert_receive {:checked, {:stop, :normal, {4001, ^reason}, _other}}
     assert log =~ "uplink rejected name=lab another uplink is already connected with this name"
     assert Pont.Registry.pid("lab") == holder
@@ -165,7 +165,7 @@ defmodule Pont.AgentSocketTest do
   test "an oversized instance id closes the new socket and leaves the holder up" do
     subject = %Pont.Access.Subject{id: "admin", role: :admin}
     {:ok, state} = Pont.AgentSocket.init(subject)
-    reason = Pont.SocketProtocol.reason(:instance_too_long)
+    reason = Pont.AgentSocketProtocol.reason(:instance_too_long)
     assert byte_size(reason) <= 123
 
     hello =
@@ -178,7 +178,7 @@ defmodule Pont.AgentSocketTest do
     assert {:ok, named} = Pont.AgentSocket.handle_in({hello, [opcode: :text]}, state)
     holder = self()
     parent = self()
-    too_long = String.duplicate("c", Pont.SocketProtocol.max_instance_bytes() + 1)
+    too_long = String.duplicate("c", Pont.AgentSocketProtocol.max_instance_bytes() + 1)
 
     rejected =
       Jason.encode!(%{
@@ -202,7 +202,7 @@ defmodule Pont.AgentSocketTest do
         send(parent, {:checked, result})
       end)
 
-    code = Pont.SocketProtocol.close_code(:instance_too_long)
+    code = Pont.AgentSocketProtocol.close_code(:instance_too_long)
     assert_receive {:checked, {:stop, :normal, {^code, ^reason}, _other}}
     assert log =~ "uplink rejected name=lab instance id is too long"
     assert Pont.Registry.pid("lab") == holder

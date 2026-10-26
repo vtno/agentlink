@@ -10,7 +10,7 @@ defmodule Pont.Uplink do
   waits until the link name or plane URL changes. A close that means the
   instance id is too long logs the error and does not redial until restart.
   Bad-name and not-allowed closes also park until the name or plane URL changes
-  or the relay restarts. The codes and reasons are shared in `Pont.SocketProtocol`.
+  or the relay restarts. The codes and reasons are shared in `Pont.AgentSocketProtocol`.
   """
 
   use GenServer
@@ -134,7 +134,7 @@ defmodule Pont.Uplink do
     close_conn(state)
     state = %{state | conn: nil, websocket: nil, ref: nil}
 
-    case Pont.SocketProtocol.rejection(code) do
+    case Pont.AgentSocketProtocol.rejection(code) do
       nil ->
         state
 
@@ -316,7 +316,7 @@ defmodule Pont.Uplink do
       if is_binary(reason) and reason != "" do
         reason
       else
-        Pont.SocketProtocol.reason(rejection, state.link.name)
+        Pont.AgentSocketProtocol.reason(rejection, state.link.name)
       end
 
     action =

@@ -16,4 +16,4 @@ Client. One app already connected to the plane. Not `Pont.Relay.Client`, and not
 
 Slot. The plane's session state for one connected agent. Prompt queue, the in-flight turn, and the cached `initialize`. The cache is the agent's reply, not the client's capabilities.
 
-Socket protocol. `Pont.SocketProtocol` defines the shared handshake's permanent-rejection close codes: 4001 name taken, 4002 instance too long (maximum 128 bytes), 4003 bad name, 4004 not allowed. Each parks the uplink with a logged reason. Restart retries any rejection; changing the link name or plane URL retries all except 4002. Other closes and transient failures retry after 500ms.
+Agent socket protocol. `Pont.AgentSocketProtocol` defines the handshake's permanent-rejection close codes shared by the plane's agent socket and the relay's uplink: 4001 name taken, 4002 instance too long (maximum 128 bytes), 4003 bad name, 4004 not allowed. It does not cover the client socket. Each rejection parks the uplink with a logged reason. Restart retries any rejection; changing the link name or plane URL retries all except 4002. Other closes and transient failures retry after 500ms.

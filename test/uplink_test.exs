@@ -187,7 +187,7 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, hello}
     assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
 
-    reason = Pont.SocketProtocol.reason(:name_taken, "opencode")
+    reason = Pont.AgentSocketProtocol.reason(:name_taken, "opencode")
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -236,8 +236,8 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, hello}
     assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
 
-    reason = Pont.SocketProtocol.reason(:instance_too_long)
-    code = Pont.SocketProtocol.close_code(:instance_too_long)
+    reason = Pont.AgentSocketProtocol.reason(:instance_too_long)
+    code = Pont.AgentSocketProtocol.close_code(:instance_too_long)
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -330,7 +330,7 @@ defmodule Pont.UplinkTest do
         end)
 
       detail =
-        if reason == "", do: Pont.SocketProtocol.reason(rejection, "opencode"), else: reason
+        if reason == "", do: Pont.AgentSocketProtocol.reason(rejection, "opencode"), else: reason
 
       assert log =~ "uplink rejected name=opencode #{detail}"
       assert log =~ hint

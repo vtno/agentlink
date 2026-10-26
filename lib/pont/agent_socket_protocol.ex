@@ -1,6 +1,7 @@
-defmodule Pont.SocketProtocol do
+defmodule Pont.AgentSocketProtocol do
   @moduledoc """
-  The shared WebSocket handshake protocol for the plane and relay's `pont.uplink` hello.
+  The agent WebSocket handshake protocol shared by `Pont.AgentSocket` and `Pont.Uplink`.
+  The relay registers with a `pont.uplink` hello. This does not cover the client socket.
 
   Private-use WebSocket codes (RFC 6455) identify permanent rejections:
   4001 name taken, 4002 instance too long, 4003 bad name, 4004 not allowed.
