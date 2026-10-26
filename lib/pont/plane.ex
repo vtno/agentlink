@@ -31,7 +31,9 @@ defmodule Pont.Plane do
   `terminal/*` is forwarded only when `terminal` is true. Any other `fs/*`
   or `terminal/*` request is not forwarded. The plane answers the agent with
   JSON-RPC `-32601` and the message `client does not support this method`.
-  One agent process runs one prompt at a time.
+  A disconnect declines that client's outstanding questions and drops its
+  queued prompts and initialize waiters. The active prompt releases the slot
+  only when the agent replies. One agent process runs one prompt at a time.
   """
 
   use GenServer
@@ -135,13 +137,14 @@ defmodule Pont.Plane do
         {:noreply, state}
 
       {client_id, monitors} ->
-        {:noreply, %{state | clients: Map.delete(state.clients, client_id), monitors: monitors}}
+        slots = Map.new(state.slots, fn {name, slot} -> {name, drop_client(slot, client_id)} end)
+        {:noreply, %{state | clients: Map.delete(state.clients, client_id), monitors: monitors, slots: slots}}
     end
   end
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp on_client(state, client_id, message) do
+  defp on_client(%{clients: clients} = state, client_id, message) when is_map_key(clients, client_id) do
     cond do
       response?(message) ->
         with_runtime(state, client_id, message, &on_client_response/4)
@@ -185,6 +188,8 @@ defmodule Pont.Plane do
         end)
     end
   end
+
+  defp on_client(state, _client_id, _message), do: state
 
   defp on_runtime(state, client_id, %{"method" => "runtime/list", "id" => id}) do
     subject = subject_of(state, client_id)
@@ -469,13 +474,16 @@ defmodule Pont.Plane do
   end
 
   defp decline(state, slot, message, code, reason) do
+    agent_error(slot, message["id"], code, reason)
+    {state, slot}
+  end
+
+  defp agent_error(slot, id, code, reason) do
     write_agent(slot, %{
       "jsonrpc" => "2.0",
-      "id" => message["id"],
+      "id" => id,
       "error" => %{"code" => code, "message" => reason}
     })
-
-    {state, slot}
   end
 
   defp supports?(
@@ -577,6 +585,23 @@ defmodule Pont.Plane do
     else
       pump(state, slot)
     end
+  end
+
+  defp drop_client(slot, client_id) do
+    {orphaned, remaining} = Enum.split_with(slot.fan_pending, fn {_id, fan} -> fan.client_id == client_id end)
+
+    Enum.each(orphaned, fn {_id, fan} ->
+      agent_error(slot, fan.agent_id, -32000, "no app is attached to this session")
+    end)
+
+    # Keep agent_pending and prompt_inflight until the agent's terminal reply.
+    # Declining the questions unblocks it; pumping now could overlap two prompts.
+    %{
+      slot
+      | fan_pending: Map.new(remaining),
+        init_waiters: Enum.reject(slot.init_waiters, &(&1.client_id == client_id)),
+        prompt_queue: :queue.filter(&(&1.client_id != client_id), slot.prompt_queue)
+    }
   end
 
   defp drop_slot(state, name, reason) do

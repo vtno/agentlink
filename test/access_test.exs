@@ -36,7 +36,7 @@ defmodule Pont.AccessTest do
     assert :reject = Pont.Access.authenticate(conn("/acp"))
     refute Pont.Access.allowed?(%Pont.Access.Subject{}, "opencode")
 
-    assert {:error, "uplink is not allowed"} =
+    assert {:error, :not_allowed} =
              Pont.Access.claim(%Pont.Access.Subject{}, "opencode")
   end
 
@@ -62,7 +62,7 @@ defmodule Pont.AccessTest do
     assert :reject = Pont.Access.authenticate(conn("/acp"))
     refute Pont.Access.allowed?(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
 
-    assert {:error, "uplink is not allowed"} =
+    assert {:error, :not_allowed} =
              Pont.Access.claim(%Pont.Access.Subject{id: "ada", role: :user}, "opencode")
   end
 

@@ -55,6 +55,8 @@ defmodule Pont.LinkTest do
   test "slug trims, lowercases, and caps the length" do
     assert Pont.Link.slug("  Hello, World! ") == "hello-world"
     assert Pont.Link.slug(String.duplicate("ab", 30)) == String.duplicate("ab", 20)
+    max = Pont.Registry.max_name_chars()
+    assert Pont.Link.slug(String.duplicate("a", max + 1)) == String.duplicate("a", max)
     assert Pont.Link.slug(nil) == ""
   end
 

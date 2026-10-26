@@ -8,7 +8,9 @@ defmodule Pont.Uplink do
   the plane can release this relay's previous socket when this process dials
   again. A close that means this name is already in use logs the clash and
   waits until the link name or plane URL changes. A close that means the
-  instance id is too long logs the error and does not redial.
+  instance id is too long logs the error and does not redial until restart.
+  Bad-name and not-allowed closes also park until the name or plane URL changes
+  or the relay restarts. The codes and reasons are shared in `Pont.AgentSocketProtocol`.
   """
 
   use GenServer
@@ -21,8 +23,7 @@ defmodule Pont.Uplink do
     :ref,
     :link,
     outbox: [],
-    name_taken: false,
-    instance_too_long: false
+    rejection: nil
   ]
 
   @doc "Dial the plane's agent socket. A remote relay never calls the plane process directly."
@@ -61,9 +62,8 @@ defmodule Pont.Uplink do
   end
 
   @impl true
-  def handle_info(:connect, %__MODULE__{name_taken: true} = state), do: {:noreply, state}
-
-  def handle_info(:connect, %__MODULE__{instance_too_long: true} = state), do: {:noreply, state}
+  def handle_info(:connect, %__MODULE__{rejection: rejection} = state) when not is_nil(rejection),
+    do: {:noreply, state}
 
   def handle_info(:connect, %__MODULE__{} = state) do
     close_conn(state)
@@ -134,17 +134,13 @@ defmodule Pont.Uplink do
     close_conn(state)
     state = %{state | conn: nil, websocket: nil, ref: nil}
 
-    cond do
-      code == Pont.AgentSocket.name_taken_close_code() ->
-        log_name_taken(state, reason)
-        %{state | name_taken: true}
-
-      code == Pont.AgentSocket.instance_too_long_close_code() ->
-        log_instance_too_long(state, reason)
-        %{state | instance_too_long: true}
-
-      true ->
+    case Pont.AgentSocketProtocol.rejection(code) do
+      nil ->
         state
+
+      rejection ->
+        log_rejection(state, rejection, reason)
+        %{state | rejection: rejection}
     end
   end
 
@@ -291,16 +287,15 @@ defmodule Pont.Uplink do
     end
   end
 
-  defp parked?(%__MODULE__{name_taken: true}), do: true
-  defp parked?(%__MODULE__{instance_too_long: true}), do: true
-  defp parked?(%__MODULE__{}), do: false
+  defp parked?(%__MODULE__{rejection: rejection}), do: not is_nil(rejection)
 
   defp maybe_redial(%__MODULE__{} = state, link) do
     cond do
-      state.name_taken and link_target_changed?(state.link, link) ->
+      parked?(state) and state.rejection != :instance_too_long and
+          link_target_changed?(state.link, link) ->
         Logger.info("agent link changed, redialing as #{link.name}")
         send(self(), :connect)
-        %{state | name_taken: false}
+        %{state | rejection: nil}
 
       state.conn && link != state.link ->
         Logger.info("agent link changed, redialing as #{link.name}")
@@ -316,36 +311,38 @@ defmodule Pont.Uplink do
     link.name != current.name or link.plane_url != current.plane_url
   end
 
-  defp log_name_taken(%__MODULE__{} = state, reason) do
+  defp log_rejection(%__MODULE__{} = state, rejection, reason) do
     detail =
       if is_binary(reason) and reason != "" do
         reason
       else
-        Pont.AgentSocket.name_taken_reason(state.link.name)
+        Pont.AgentSocketProtocol.reason(rejection, state.link.name)
       end
 
-    Logger.error(
-      "uplink rejected name=#{state.link.name} #{detail}. " <>
-        "Another relay is already connected with this name. " <>
-        "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}. " <>
-        "This relay will not reconnect until name or plane_url changes"
-    )
-  end
+    action =
+      case rejection do
+        :name_taken ->
+          "Another relay is already connected with this name. " <>
+            "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}. "
 
-  # The instance id is not in the link file, so a new name or plane URL would
-  # send the same id and be rejected again.
-  defp log_instance_too_long(%__MODULE__{} = state, reason) do
-    detail =
-      if is_binary(reason) and reason != "" do
-        reason
-      else
-        Pont.AgentSocket.instance_too_long_reason()
+        :bad_name ->
+          "Fix name in #{Pont.Paths.link()} and restart this relay, or change name or plane_url. "
+
+        :not_allowed ->
+          "Ask the plane operator to allow this uplink, then restart this relay, " <>
+            "or change name or plane_url in #{Pont.Paths.link()}. "
+
+        :instance_too_long ->
+          "Fix the relay instance id and restart this relay. "
       end
 
-    Logger.error(
-      "uplink rejected name=#{state.link.name} #{detail}. " <>
-        "This relay will not reconnect"
-    )
+    # The instance id is not in the link file. Changing the target cannot fix it.
+    wait =
+      if rejection == :instance_too_long,
+        do: "This relay will not reconnect until restart",
+        else: "This relay will not reconnect until name or plane_url changes, or restart"
+
+    Logger.error("uplink rejected name=#{state.link.name} #{detail}. " <> action <> wait)
   end
 
   defp transmit(message, %__MODULE__{websocket: nil} = state) do

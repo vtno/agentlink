@@ -57,11 +57,11 @@ The plane serves these paths on port 8090.
 | Path | Response |
 |---|---|
 | `GET /health` | The body is `ok`. |
-| `GET /status` | JSON with the listen address and the connected agents. |
+| `GET /status` | JSON with the `plane` (listen address) and `runtimes` keys. `runtimes` is filtered by the access policy. |
 | `GET /acp` | WebSocket for an ACP client. |
 | `GET /agent` | WebSocket the uplink dials. |
 
-A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `session/new`, `session/load`, and `session/prompt`. Pont returns a permission question only to the client that started that turn. File and terminal requests go to that client only when its own `initialize` advertised them. Otherwise the agent is answered with JSON-RPC `-32601`.
+A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `session/new`, `session/load`, and `session/prompt`. The agent keeps the first client's `clientCapabilities`: only the first `initialize` reaches it, and later clients answer from the cached `initialize`. Each client keeps the advertisement from its own `initialize`, and each agent-to-client request is gated against the client that issued the session. Pont returns a permission question only to the client that started that turn, or to the client that is loading that session when the question arrives during a `session/load`. File and terminal requests go to that client only when its own `initialize` advertised them. Otherwise the agent is answered with JSON-RPC `-32601` and the message `client does not support this method`.
 
 ## Link file
 
@@ -76,7 +76,16 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 }
 ```
 
-`name` is the agent id. One plane keeps a single uplink for each name. The first uplink to register a name keeps the socket. That same relay can dial again, including after a label or program change and after a dropped socket: the plane releases the previous socket and keeps the new one. A hello from a different relay is rejected with WebSocket code 4001 and the reason `name "<name>" is in use; stop the other relay or change name`. That relay logs the clash and does not redial until `name` or `plane_url` in this file changes. When the holder disconnects, the name is free for a new dial. The hello also carries an instance id so the plane can tell that relay's next socket from a different relay. The plane accepts at most 128 bytes. A longer id is rejected with WebSocket code 4002 and the reason `instance id is too long; max is 128 bytes`. That relay logs the error and does not redial. `label` is the display name. `program` is the product name, such as `opencode`.
+`name` is the agent id, and it is slugged: `Lab Box` becomes `lab-box`. One plane keeps a single uplink for each name.
+
+- The first uplink to register a name keeps the socket.
+- That same relay can dial again, including after a label or program change and after a dropped socket: the plane releases the previous socket and keeps the new one. A same-relay reconnect drops the plane's session state for the name, and in-flight work for that runtime fails with `runtime reconnected`.
+- A hello from a different relay is rejected with WebSocket code 4001 and the reason `name "<name>" is in use; stop the other relay or change name`. That relay logs the clash and does not redial until `name` or `plane_url` in this file changes. When the holder disconnects, the name is free for a new dial.
+- The hello also carries an instance id so the plane can tell that relay's next socket from a different relay. Same relay means same instance id.
+- The plane accepts an instance id of at most 128 bytes. A longer id is rejected with WebSocket code 4002 and the reason `instance id is too long; max is 128 bytes`. That relay logs the error and does not redial, because the id is not in this file and a changed `name` or `plane_url` would dial with the same id.
+- `label` is the display name. `program` is the product name, such as `opencode`.
+
+Hello rejections also use WebSocket code 4003 (`link name must be a short slug`) and 4004 (`uplink is not allowed`). Like 4001, both park the relay until restart or a `name`/`plane_url` change; label or program edits do not retry. For 4004, ask the plane operator to allow the uplink, then restart the relay. Code 4002 stays parked until restart even if the link target changes. Other closes and transient failures retry after 500ms. `Pont.AgentSocketProtocol` defines these shared codes, reasons, and the instance-id limit.
 
 The plane listens only on `127.0.0.1`. On another machine, set `plane_url` to an address that machine can reach.
 

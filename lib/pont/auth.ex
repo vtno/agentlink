@@ -1,7 +1,10 @@
 defmodule Pont.Auth do
   @moduledoc """
   One shared bearer token for the plane. Callers send `Authorization: Bearer`,
-  or `?token=` when the client cannot set a header. Unset means the sockets stay open.
+  or `?token=` when the client cannot set a header. The helpers here treat an
+  unset token as open: `allowed?/1` is true when no token is configured. The
+  access policy is stricter: it rejects a connection when no token is set,
+  so `/acp`, `/agent`, and `/status` all require the token.
   """
 
   @doc "The configured master token, or nil when it is unset."

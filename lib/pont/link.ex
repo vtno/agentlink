@@ -23,12 +23,18 @@ defmodule Pont.Link do
     end
   end
 
+  @doc """
+  The slug a link name becomes. Lowercase, with runs of non-alphanumerics
+  collapsed to single dashes, the outer dashes trimmed, and the result cut
+  to `Pont.Registry.max_name_chars()` characters. The plane rejects a
+  longer name, so a slug always passes.
+  """
   def slug(text) when is_binary(text) do
     text
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9]+/, "-")
     |> String.trim("-")
-    |> String.slice(0, 40)
+    |> String.slice(0, Pont.Registry.max_name_chars())
   end
 
   def slug(_), do: ""

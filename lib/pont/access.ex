@@ -66,14 +66,17 @@ defmodule Pont.Access do
     implementation().allowed?(subject, name)
   end
 
-  @doc "Ask the configured policy to accept this uplink. A policy without claim/2 accepts it."
+  @doc """
+  Ask the configured policy to accept this uplink. A policy without claim/2 accepts it.
+  A rejection returns `{:error, :not_allowed}` for the hello protocol.
+  """
   def claim(%Pont.Access.Subject{} = subject, name) when is_binary(name) do
     module = implementation()
 
     if function_exported?(module, :claim, 2) do
       case module.claim(subject, name) do
         :ok -> :ok
-        :reject -> {:error, "uplink is not allowed"}
+        :reject -> {:error, :not_allowed}
       end
     else
       :ok
