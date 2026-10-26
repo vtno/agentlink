@@ -187,7 +187,7 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, hello}
     assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
 
-    reason = Pont.Hello.reason(:name_taken, "opencode")
+    reason = Pont.SocketProtocol.reason(:name_taken, "opencode")
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -236,8 +236,8 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, hello}
     assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
 
-    reason = Pont.Hello.reason(:instance_too_long)
-    code = Pont.Hello.close_code(:instance_too_long)
+    reason = Pont.SocketProtocol.reason(:instance_too_long)
+    code = Pont.SocketProtocol.close_code(:instance_too_long)
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -329,7 +329,9 @@ defmodule Pont.UplinkTest do
           assert await_rejection(rejection)
         end)
 
-      detail = if reason == "", do: Pont.Hello.reason(rejection, "opencode"), else: reason
+      detail =
+        if reason == "", do: Pont.SocketProtocol.reason(rejection, "opencode"), else: reason
+
       assert log =~ "uplink rejected name=opencode #{detail}"
       assert log =~ hint
       assert log =~ "will not reconnect until name or plane_url changes, or restart"

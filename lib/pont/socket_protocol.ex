@@ -1,6 +1,6 @@
-defmodule Pont.Hello do
+defmodule Pont.SocketProtocol do
   @moduledoc """
-  The shared `pont.uplink` hello rejection protocol for the plane and relay.
+  The shared WebSocket handshake protocol for the plane and relay's `pont.uplink` hello.
 
   Private-use WebSocket codes (RFC 6455) identify permanent rejections:
   4001 name taken, 4002 instance too long, 4003 bad name, 4004 not allowed.

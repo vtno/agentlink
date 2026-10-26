@@ -157,7 +157,7 @@ defmodule Pont.RegistryTest do
   end
 
   test "an instance id at the size limit is kept whole" do
-    max = Pont.Hello.max_instance_bytes()
+    max = Pont.SocketProtocol.max_instance_bytes()
     id = String.duplicate("a", max)
     other_id = String.duplicate("a", max - 1) <> "b"
     first = spawn(fn -> Process.sleep(:infinity) end)
@@ -174,7 +174,7 @@ defmodule Pont.RegistryTest do
   end
 
   test "an oversized instance id is rejected and the holder stays" do
-    max = Pont.Hello.max_instance_bytes()
+    max = Pont.SocketProtocol.max_instance_bytes()
     too_long = String.duplicate("b", max + 1)
     holder = spawn(fn -> Process.sleep(:infinity) end)
     other = spawn(fn -> Process.sleep(:infinity) end)

@@ -22,7 +22,7 @@ defmodule Pont.Registry do
   is gone, and the new hello takes the name. When the holder process exits,
   the name is free.
 
-  An instance id above the byte limit in `Pont.Hello.max_instance_bytes/0` is
+  An instance id above the byte limit in `Pont.SocketProtocol.max_instance_bytes/0` is
   rejected. That hello does not change the existing row.
   """
 
@@ -100,7 +100,7 @@ defmodule Pont.Registry do
     else
       {:error, :instance_too_long} ->
         Logger.warning(
-          "uplink rejected name=#{String.trim(uplink.name)} #{Pont.Hello.reason(:instance_too_long)}"
+          "uplink rejected name=#{String.trim(uplink.name)} #{Pont.SocketProtocol.reason(:instance_too_long)}"
         )
 
         {:reply, {:error, :instance_too_long}, state}
@@ -214,7 +214,7 @@ defmodule Pont.Registry do
   # Empty and missing ids never match, including nil with nil. A present id
   # is kept whole. An id over the maximum is an error, not a missing id.
   defp instance_id(value) when is_binary(value) do
-    max = Pont.Hello.max_instance_bytes()
+    max = Pont.SocketProtocol.max_instance_bytes()
 
     case String.trim(value) do
       "" ->

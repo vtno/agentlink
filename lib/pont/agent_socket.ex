@@ -5,7 +5,7 @@ defmodule Pont.AgentSocket do
   socket so the new one can take the name. A hello from another relay, while this
   name is live, closes that new socket and leaves this one up. A hello whose
   instance id is too long closes that new socket and leaves any holder up.
-  Permanent rejections use `Pont.Hello` close codes. Once registered, the socket
+  Permanent rejections use `Pont.SocketProtocol` close codes. Once registered, the socket
   routes ACP under the normalized name returned by the registry.
   """
 
@@ -39,7 +39,11 @@ defmodule Pont.AgentSocket do
 
           {:error, rejection} ->
             name = if is_binary(uplink.name), do: String.trim(uplink.name)
-            close = {Pont.Hello.close_code(rejection), Pont.Hello.reason(rejection, name)}
+
+            close =
+              {Pont.SocketProtocol.close_code(rejection),
+               Pont.SocketProtocol.reason(rejection, name)}
+
             {:stop, :normal, close, state}
         end
 
