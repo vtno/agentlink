@@ -10,6 +10,11 @@ defmodule Pont.Registry.Uplink do
 end
 
 defmodule Pont.Registry do
+  # Link names are slugs, and Link.slug/1 cuts one to this length. The plane
+  # rejects a longer name instead of storing an unbounded id.
+  @max_name_chars 40
+  @name_regex ~r/^[a-z0-9][a-z0-9_-]{0,#{@max_name_chars - 1}}$/
+
   @moduledoc """
   Live uplinks. One row is one uplink that has said hello.
   The socket is the source of truth.
@@ -43,6 +48,9 @@ defmodule Pont.Registry do
     :ets.new(@table, [:named_table, :set, :public, read_concurrency: true])
     {:ok, %__MODULE__{}}
   end
+
+  @doc "The longest link name this plane will accept, in characters."
+  def max_name_chars, do: @max_name_chars
 
   @doc """
   Register an uplink hello under its normalized name. A live holder keeps the name.
@@ -193,7 +201,7 @@ defmodule Pont.Registry do
   defp normalize_name(name) when is_binary(name) do
     name = String.trim(name)
 
-    if String.match?(name, ~r/^[a-z0-9][a-z0-9_-]{0,40}$/) do
+    if String.match?(name, @name_regex) do
       {:ok, name}
     else
       {:error, :bad_name}

@@ -5,6 +5,10 @@ defmodule Pont.Relay.Agent do
   Stdout is ACP JSONL. The agent is linked to this process: when it
   exits, this process stops and its supervisor starts another one. Production
   uses `Pont.OpenCode`. The module comes from `:pont, :agent_module`.
+
+  For `session/new` and `session/load`, a missing, null, or empty `cwd`
+  in params is filled with `Pont.Paths.workdir()` before the message is
+  written to the agent. An explicit `cwd` passes through unchanged.
   """
 
   use GenServer
@@ -36,7 +40,7 @@ defmodule Pont.Relay.Agent do
     end
   end
 
-  @doc "Write one ACP message to the agent's stdin. :down if this process is gone."
+  @doc "Write one ACP message to the agent's stdin. For `session/new` and `session/load`, a missing, null, or empty `cwd` is filled with `Pont.Paths.workdir()` first. :down if this process is gone."
   @spec send_message(map()) :: :ok | :down
   def send_message(message) when is_map(message) do
     case Process.whereis(__MODULE__) do

@@ -81,7 +81,7 @@ defmodule Pont.AgentSocketTest do
   test "all invalid hello names close with the bad-name code" do
     {:ok, state} = Pont.AgentSocket.init(%Pont.Access.Subject{role: :admin})
 
-    for name <- [nil, 1, "", "  ", "Bad Name", String.duplicate("a", 42)] do
+    for name <- [nil, 1, "", "  ", "Bad Name", String.duplicate("a", 41)] do
       hello = Jason.encode!(%{"method" => "pont.uplink", "params" => %{"name" => name}})
 
       assert {:stop, :normal, {4003, "link name must be a short slug"}, ^state} =

@@ -20,7 +20,7 @@ defmodule Pont.RegistryTest do
   test "rejects a bad name and a missing name" do
     pid = spawn(fn -> Process.sleep(:infinity) end)
 
-    for name <- ["Has Space", "", "  ", nil, 1, String.duplicate("a", 42)] do
+    for name <- ["Has Space", "", "  ", nil, 1, String.duplicate("a", 41)] do
       assert {:error, :bad_name} = hello(pid, name, "x")
     end
 
@@ -48,6 +48,19 @@ defmodule Pont.RegistryTest do
     assert Pont.Registry.pid("lab") == self()
     assert [%{"name" => "lab", "label" => "Bench"}] = Pont.Registry.list()
     refute_received :superseded
+  end
+
+  test "a name at the character limit is kept, and a longer one is rejected" do
+    max = Pont.Registry.max_name_chars()
+    at_max = String.duplicate("a", max)
+    too_long = String.duplicate("b", max + 1)
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    assert {:ok, ^at_max} = hello(pid, at_max, "x")
+    assert Pont.Registry.pid(at_max) == pid
+
+    other = spawn(fn -> Process.sleep(:infinity) end)
+    assert {:error, :bad_name} = hello(other, too_long, "x")
+    assert Pont.Registry.pid(too_long) == nil
   end
 
   test "an empty label uses the name, and a long label is cut" do
