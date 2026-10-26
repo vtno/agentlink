@@ -85,6 +85,8 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 - The plane accepts an instance id of at most 128 bytes. A longer id is rejected with WebSocket code 4002 and the reason `instance id is too long; max is 128 bytes`. That relay logs the error and does not redial, because the id is not in this file and a changed `name` or `plane_url` would dial with the same id.
 - `label` is the display name. `program` is the product name, such as `opencode`.
 
+Hello rejections also use WebSocket code 4003 (`link name must be a short slug`) and 4004 (`uplink is not allowed`). Like 4001, both park the relay until restart or a `name`/`plane_url` change; label or program edits do not retry. For 4004, ask the plane operator to allow the uplink, then restart the relay. Code 4002 stays parked until restart even if the link target changes. Other closes and transient failures retry after 500ms. `Pont.AgentSocketProtocol` defines these shared codes, reasons, and the instance-id limit.
+
 The plane listens only on `127.0.0.1`. On another machine, set `plane_url` to an address that machine can reach.
 
 `/acp`, `/agent`, and `/status` require the token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The uplink sends the header. `/health` stays open.

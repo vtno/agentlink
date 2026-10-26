@@ -187,12 +187,12 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, hello}
     assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
 
-    reason = Pont.AgentSocket.name_taken_reason("opencode")
+    reason = Pont.AgentSocketProtocol.reason(:name_taken, "opencode")
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        send(socket, {:close, 4001, reason})
-        assert await_name_taken()
+        send(socket, {:close, 4001, ""})
+        assert await_rejection(:name_taken)
       end)
 
     assert log =~ "uplink rejected name=opencode"
@@ -210,7 +210,7 @@ defmodule Pont.UplinkTest do
     refute_receive {:socket, _}, 1_000
 
     state = :sys.get_state(Pont.Uplink)
-    assert state.name_taken
+    assert state.rejection == :name_taken
     assert is_nil(state.websocket)
     assert Process.alive?(Process.whereis(Pont.Uplink))
 
@@ -219,7 +219,7 @@ defmodule Pont.UplinkTest do
     assert_receive {:socket, _}, 1_000
     assert_receive {:ws, hello}
     assert %{"params" => %{"name" => "other"}} = Jason.decode!(hello)
-    refute :sys.get_state(Pont.Uplink).name_taken
+    assert :sys.get_state(Pont.Uplink).rejection == nil
   end
 
   test "an instance-too-long close does not redial" do
@@ -236,13 +236,13 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, hello}
     assert %{"method" => "pont.uplink"} = Jason.decode!(hello)
 
-    reason = Pont.AgentSocket.instance_too_long_reason()
-    code = Pont.AgentSocket.instance_too_long_close_code()
+    reason = Pont.AgentSocketProtocol.reason(:instance_too_long)
+    code = Pont.AgentSocketProtocol.close_code(:instance_too_long)
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        send(socket, {:close, code, reason})
-        assert await_instance_too_long()
+        send(socket, {:close, code, ""})
+        assert await_rejection(:instance_too_long)
       end)
 
     assert log =~ "uplink rejected name=opencode"
@@ -254,13 +254,20 @@ defmodule Pont.UplinkTest do
     send(Pont.Uplink, :watch)
     write_link!(url, %{"name" => "other"})
     send(Pont.Uplink, :watch)
+    write_link!(url <> "-other", %{"name" => "other"})
+    send(Pont.Uplink, :watch)
     refute_receive {:socket, _}, 1_000
 
     state = :sys.get_state(Pont.Uplink)
-    assert state.instance_too_long
-    refute state.name_taken
+    assert state.rejection == :instance_too_long
     assert is_nil(state.websocket)
     assert Process.alive?(Process.whereis(Pont.Uplink))
+
+    stop_supervised!(Pont.Uplink)
+    start_supervised!({Pont.Uplink, owner: self()})
+    assert_receive {:socket, _}, 1_000
+    assert_receive {:ws, _hello}
+    assert :sys.get_state(Pont.Uplink).rejection == nil
   end
 
   test "a label change redials while the previous plane socket is still alive" do
@@ -285,8 +292,69 @@ defmodule Pont.UplinkTest do
     [{_, %Pont.Registry.Uplink{instance: ^instance, pid: ^new_pid}}] =
       :ets.lookup(:pont_runtimes, "opencode")
 
-    refute :sys.get_state(Pont.Uplink).name_taken
+    assert :sys.get_state(Pont.Uplink).rejection == nil
     release_holder(holder, new_pid)
+  end
+
+  for {rejection, code, hint} <- [
+        {:name_taken, 4001, "Stop the other relay and restart this one"},
+        {:bad_name, 4003, "Fix name in"},
+        {:not_allowed, 4004, "Ask the plane operator to allow this uplink"}
+      ],
+      reason_kind <- [:empty, :provided] do
+    @tag rejection: rejection, code: code, hint: hint, reason_kind: reason_kind
+    test "#{rejection} parks with a #{reason_kind} reason until the link target changes", %{
+      rejection: rejection,
+      code: code,
+      hint: hint,
+      reason_kind: reason_kind
+    } do
+      server =
+        start_supervised!(
+          {Bandit, plug: {WsPlug, self()}, scheme: :http, port: 0, ip: {127, 0, 0, 1}}
+        )
+
+      {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+      url = "ws://127.0.0.1:#{port}/agent"
+      write_link!(url)
+      start_supervised!({Pont.Uplink, owner: self()})
+      assert_receive {:socket, socket}
+      assert_receive {:ws, _hello}
+
+      reason = if reason_kind == :empty, do: "", else: "plane rejection details"
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(socket, {:close, code, reason})
+          assert await_rejection(rejection)
+        end)
+
+      detail =
+        if reason == "", do: Pont.AgentSocketProtocol.reason(rejection, "opencode"), else: reason
+
+      assert log =~ "uplink rejected name=opencode #{detail}"
+      assert log =~ hint
+      assert log =~ "will not reconnect until name or plane_url changes, or restart"
+
+      # Even an already queued retry and label/program edits must not unpark it.
+      send(Pont.Uplink, :connect)
+      write_link!(url, %{"label" => "other", "program" => "other"})
+      send(Pont.Uplink, :watch)
+      refute_receive {:socket, _}, 650
+      assert :sys.get_state(Pont.Uplink).rejection == rejection
+      assert :sys.get_state(Pont.Uplink).websocket == nil
+
+      if reason_kind == :empty do
+        write_link!(url, %{"name" => "other"})
+      else
+        write_link!(url <> "-other")
+      end
+
+      send(Pont.Uplink, :watch)
+      assert_receive {:socket, _}, 1_000
+      assert_receive {:ws, _hello}
+      assert :sys.get_state(Pont.Uplink).rejection == nil
+    end
   end
 
   test "a reconnect redials while the previous plane socket is still alive" do
@@ -302,7 +370,7 @@ defmodule Pont.UplinkTest do
     assert log =~ "uplink reconnect name=opencode the same relay dialed again"
     refute log =~ "uplink rejected name=opencode"
     new_pid = Pont.Registry.pid("opencode")
-    refute :sys.get_state(Pont.Uplink).name_taken
+    assert :sys.get_state(Pont.Uplink).rejection == nil
     release_holder(holder, new_pid)
   end
 
@@ -318,7 +386,25 @@ defmodule Pont.UplinkTest do
     assert_receive {:ws, _hello}
     send(socket, {:close, 1001, "going away"})
     assert_receive {:socket, _}, 1_000
-    refute :sys.get_state(Pont.Uplink).name_taken
+    assert :sys.get_state(Pont.Uplink).rejection == nil
+  end
+
+  test "an unknown close code still retries after 500ms" do
+    server =
+      start_supervised!(
+        {Bandit, plug: {WsPlug, self()}, scheme: :http, port: 0, ip: {127, 0, 0, 1}}
+      )
+
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+    write_link!("ws://127.0.0.1:#{port}/agent")
+    start_supervised!({Pont.Uplink, owner: self()})
+    assert_receive {:socket, socket}
+    assert_receive {:ws, _hello}
+    send(socket, {:close, 4010, "temporary failure"})
+    refute_receive {:socket, _}, 400
+    assert_receive {:socket, _}, 1_000
+    assert_receive {:ws, _hello}
+    assert :sys.get_state(Pont.Uplink).rejection == nil
   end
 
   defp capture_info(fun) do
@@ -388,25 +474,16 @@ defmodule Pont.UplinkTest do
     Process.sleep(50)
     assert Pont.Registry.pid("opencode") == new_pid
     assert Process.alive?(new_pid)
-    refute :sys.get_state(Pont.Uplink).name_taken
+    assert :sys.get_state(Pont.Uplink).rejection == nil
     true
   end
 
-  defp await_instance_too_long(attempts \\ 50) do
-    if :sys.get_state(Pont.Uplink).instance_too_long or attempts == 0 do
-      assert :sys.get_state(Pont.Uplink).instance_too_long
+  defp await_rejection(rejection, attempts \\ 50) do
+    if :sys.get_state(Pont.Uplink).rejection == rejection or attempts == 0 do
+      assert :sys.get_state(Pont.Uplink).rejection == rejection
     else
       Process.sleep(20)
-      await_instance_too_long(attempts - 1)
-    end
-  end
-
-  defp await_name_taken(attempts \\ 50) do
-    if :sys.get_state(Pont.Uplink).name_taken or attempts == 0 do
-      assert :sys.get_state(Pont.Uplink).name_taken
-    else
-      Process.sleep(20)
-      await_name_taken(attempts - 1)
+      await_rejection(rejection, attempts - 1)
     end
   end
 
