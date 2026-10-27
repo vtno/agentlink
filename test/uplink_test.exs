@@ -63,6 +63,29 @@ defmodule Pont.UplinkTest do
     :ok
   end
 
+  test "a plane URL keeps ws plain and dials wss as TLS" do
+    assert Pont.Uplink.endpoint("ws://127.0.0.1:8090/agent") ==
+             {:ws, :http, "127.0.0.1", 8090, "/agent"}
+
+    assert Pont.Uplink.endpoint("ws://127.0.0.1/agent") ==
+             {:ws, :http, "127.0.0.1", 80, "/agent"}
+
+    assert Pont.Uplink.endpoint("http://127.0.0.1:8090/agent") ==
+             {:ws, :http, "127.0.0.1", 8090, "/agent"}
+
+    assert Pont.Uplink.endpoint("wss://plane.example/agent") ==
+             {:wss, :https, "plane.example", 443, "/agent"}
+
+    assert Pont.Uplink.endpoint("wss://plane.example:8443/agent") ==
+             {:wss, :https, "plane.example", 8443, "/agent"}
+
+    assert Pont.Uplink.endpoint("wss://plane.example") ==
+             {:wss, :https, "plane.example", 443, "/agent"}
+
+    assert Pont.Uplink.endpoint("https://plane.example/agent") ==
+             {:wss, :https, "plane.example", 443, "/agent"}
+  end
+
   test "a missing link file stops the uplink" do
     Process.flag(:trap_exit, true)
     missing = "/tmp/pont-uplink-missing-#{System.unique_integer([:positive])}.json"

@@ -87,13 +87,51 @@ A client connects to `ws://127.0.0.1:8090/acp`. It sends ACP requests such as `s
 
 Hello rejections also use WebSocket code 4003 (`link name must be a short slug`) and 4004 (`uplink is not allowed`). Like 4001, both park the relay until restart or a `name`/`plane_url` change; label or program edits do not retry. For 4004, ask the plane operator to allow the uplink, then restart the relay. Code 4002 stays parked until restart even if the link target changes. Other closes and transient failures retry after 500ms. `Pont.AgentSocketProtocol` defines these shared codes, reasons, and the instance-id limit.
 
-The plane listens only on `127.0.0.1`. On another machine, set `plane_url` to an address that machine can reach.
+The plane listens only on `127.0.0.1` and speaks plain `ws://`. On another machine, see [Remote access](#remote-access).
 
-`/acp`, `/agent`, and `/status` require the token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The uplink sends the header. `/health` stays open.
+`/acp`, `/agent`, and `/status` require the token. A caller sends `Authorization: Bearer`, or `?token=` on the URL. The uplink sends the header. `/health` stays open. See [Security model](#security-model).
 
 The workspace is `$HOME/.pont/workspace`. `Pont.OpenCode` runs `opencode` from `PATH`, or `$HOME/.local/bin/opencode`.
 
 For `session/new` and `session/load`, the agent relay fills a missing, null, or empty `cwd` with its workspace before forwarding to the agent. An explicit `cwd` is passed through unchanged and refers to a path on the agent's machine.
+
+## Remote access
+
+The plane listens on `127.0.0.1` and speaks plain `ws://`. TLS stays outside Pont. To reach the plane from another machine, terminate TLS in front of it and set `plane_url` to that `wss://` URL. The uplink dials `wss` as TLS and checks the certificate against the system CA store.
+
+Leave the plane port on localhost. A proxy may log the `?token=` query string. Turn query logging off.
+
+Caddy handles the certificate and the WebSocket upgrade. On the plane's machine:
+
+```
+plane.example.com {
+  reverse_proxy 127.0.0.1:8090
+}
+```
+
+Set `plane_url` to `wss://plane.example.com/agent`.
+
+Tailscale serve does this on a tailnet. On the plane's machine:
+
+```sh
+tailscale serve --https=443 http://127.0.0.1:8090
+```
+
+An ssh tunnel runs on the relay's machine and keeps plain `ws://` to localhost:
+
+```sh
+ssh -L 8090:127.0.0.1:8090 host
+```
+
+Set `plane_url` to `ws://127.0.0.1:8090/agent`.
+
+## Security model
+
+One operator, one token. `Pont.Access.Single` is the policy that ships. `--token` sets the token. A plane with no token mints one for that process. The operator is an admin and may use every uplink.
+
+A caller sends the token as `Authorization: Bearer`, or as `?token=` on the URL. The uplink sends the header. The plane speaks plain `ws://` on `127.0.0.1`, so a remote relay needs TLS. See [Remote access](#remote-access).
+
+`GET /health` is unauthenticated. `GET /acp`, `GET /agent`, and `GET /status` require the token. `Pont.Access` is the extension point.
 
 ## Tests
 
