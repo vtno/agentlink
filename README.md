@@ -1,6 +1,8 @@
 # Pont
 
-Pont proxies [Agent Client Protocol](https://agentclientprotocol.com) messages between clients and agents. A client is a program connected to the plane.
+Agent and editor vendors each build their own walled garden to keep you on their platform. Pont is a neutral bridge. It proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. Pont runs OpenCode today, and more agents are planned in [issue #10](https://github.com/vtno/pont/issues/10).
+
+A client is a program connected to the plane.
 
 The plane accepts client connections. The relay opens one agent and starts an uplink. The uplink dials the plane. One plane keeps one live uplink for each link name.
 
