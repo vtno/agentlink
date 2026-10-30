@@ -70,15 +70,37 @@ pont relay --token 'the-token'
 
 ## Reach a plane on another machine
 
-The plane listens on `127.0.0.1` with plain `ws://`. Pont does not terminate TLS.
+The plane listens only on `127.0.0.1` over plain `ws://`, and Pont does not terminate TLS. Choose one way below to reach the plane from another machine.
 
-Do not publish the plane's listen port. A proxy can log the `?token=` query string. Turn query logging off before you proxy the plane.
+- Use an ssh tunnel when you reach one machine and you want no extra software. `plane_url` is `ws://127.0.0.1`.
+- Use Tailscale serve when the plane and the relay are already on a tailnet. `plane_url` is `wss://`.
+- Use Caddy or another TLS reverse proxy when you have a public domain and ports 80 and 443 are reachable. `plane_url` is `wss://`.
 
-To dial the plane from another machine, run a TLS proxy on the plane's machine. Set `plane_url` to that `wss://` URL. The path is `/agent`. The uplink dials `wss` with TLS. Mint verifies the server certificate against the system CA store. See [Security model](#security-model) for the reason the listen port stays on localhost.
+The examples use the default port, 8090. If you set `--port`, use that port in the example and in `plane_url`. The path in each `plane_url` is `/agent`. The uplink dials TLS for a `wss://` plane URL. Mint verifies the server certificate against the system CA store.
 
-The examples below use the default port, 8090. If you set `--port`, use that port in the proxy and in `plane_url`.
+### Option 1: ssh tunnel
 
-To use Caddy, run it on the plane's machine. Caddy obtains the certificate and proxies the WebSocket upgrade.
+Open the tunnel on the relay's machine. `host` is the machine that runs the plane.
+
+```sh
+ssh -L 8090:127.0.0.1:8090 host
+```
+
+Set `plane_url` to `ws://127.0.0.1:8090/agent`.
+
+### Option 2: Tailscale serve
+
+Run this command on the plane's machine.
+
+```sh
+tailscale serve --https=443 http://127.0.0.1:8090
+```
+
+Set `plane_url` to a `wss://` URL whose host is the Tailscale host and whose path is `/agent`.
+
+### Option 3: Caddy or another TLS reverse proxy
+
+Run Caddy on the plane's machine. Caddy obtains the certificate and proxies the WebSocket upgrade.
 
 ```
 plane.example.com {
@@ -88,21 +110,9 @@ plane.example.com {
 
 Set `plane_url` to `wss://plane.example.com/agent`.
 
-To use Tailscale, run the command below on the plane's machine.
+Another TLS reverse proxy uses the same shape. Forward to `127.0.0.1:8090`, and set `plane_url` to that proxy's `wss://` URL with path `/agent`.
 
-```sh
-tailscale serve --https=443 http://127.0.0.1:8090
-```
-
-Set `plane_url` to a `wss://` URL whose host is the Tailscale host and whose path is `/agent`.
-
-To keep plain `ws://` on the relay's machine, open a tunnel there. `host` is the machine that runs the plane.
-
-```sh
-ssh -L 8090:127.0.0.1:8090 host
-```
-
-Set `plane_url` to `ws://127.0.0.1:8090/agent`.
+Do not publish the plane's listen port. A proxy can log the `?token=` query string. Turn query logging off before you proxy the plane. See [Security model](#security-model) for why the listen port stays on localhost.
 
 ## Security model
 
@@ -110,7 +120,7 @@ Pont ships with one operator and one token. `Pont.Access.Single` is that policy.
 
 A caller presents the token in the `Authorization` header or in `?token=`. The header scheme is `Bearer` or `bearer`. When `?token=` is present and not empty, Pont uses that value and does not read the header. The uplink sends the header. The uplink does not put the token in `plane_url`.
 
-The listener is plain `ws://` on `127.0.0.1`. The token identifies the caller. The token does not encrypt the WebSocket. A relay on another machine reaches the plane through a TLS proxy. See [Reach a plane on another machine](#reach-a-plane-on-another-machine). The plane's listen port stays on localhost. A proxy can store `?token=` in its logs.
+The listener is plain `ws://` on `127.0.0.1`. The token identifies the caller. The token does not encrypt the WebSocket. A relay on another machine reaches the plane through an ssh tunnel or a TLS proxy. See [Reach a plane on another machine](#reach-a-plane-on-another-machine). The plane's listen port stays on localhost. A proxy can store `?token=` in its logs.
 
 `GET /health` does not read the token. `GET /acp`, `GET /agent`, and `GET /status` require the token. See [HTTP routes](#http-routes) for those paths.
 
