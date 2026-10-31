@@ -2,7 +2,8 @@ defmodule Pont.Uplink do
   @moduledoc """
   Dials the plane's agent socket. Outbound text frames are one JSON object.
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
-  process directly.
+  process directly. A `wss` plane URL dials TLS. Mint checks the peer certificate
+  against the system CA store.
 
   A dropped socket redials. The hello carries this VM's relay instance, so
   the plane can release this relay's previous socket when this process dials
@@ -220,6 +221,25 @@ defmodule Pont.Uplink do
     end
   end
 
+  @doc """
+  The socket scheme, HTTP scheme, host, port, and path for a plane URL.
+  `wss` and `https` use TLS. A missing port is 443 for those and 80 otherwise.
+  A missing path is `/agent`.
+  """
+  def endpoint(url) do
+    uri = URI.parse(url)
+    secure = uri.scheme in ["wss", "https"]
+    port = uri.port || if(secure, do: 443, else: 80)
+
+    {
+      if(secure, do: :wss, else: :ws),
+      if(secure, do: :https, else: :http),
+      uri.host || "127.0.0.1",
+      port,
+      uri.path || "/agent"
+    }
+  end
+
   defp connect(link, %__MODULE__{} = state) do
     {ws_scheme, http_scheme, host, port, path} = endpoint(link.plane_url)
 
@@ -399,19 +419,5 @@ defmodule Pont.Uplink do
         :persistent_term.put(key, id)
         id
     end
-  end
-
-  defp endpoint(url) do
-    uri = URI.parse(url)
-    secure = uri.scheme in ["wss", "https"]
-    port = uri.port || if(secure, do: 443, else: 80)
-
-    {
-      if(secure, do: :wss, else: :ws),
-      if(secure, do: :https, else: :http),
-      uri.host || "127.0.0.1",
-      port,
-      uri.path || "/agent"
-    }
   end
 end
