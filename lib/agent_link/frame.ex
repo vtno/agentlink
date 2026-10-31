@@ -2,12 +2,13 @@ defmodule AgentLink.Frame do
   @moduledoc """
   One JSON-RPC object on the wire.
 
-  Stdio is one object per line. A plane socket is one object per text frame,
-  with no trailing newline required. The agent relay and the uplink share this
-  codec. A JSON array, a bare value, or a broken line is not a message.
+  Stdio is one object per line. The agent relay and the uplink put one object
+  in each text frame, with no trailing newline required. A JSON array, a bare
+  value, or a broken line is not a message.
 
-  The plane parses client frames itself. One client frame may be a JSON-RPC
-  batch, and the plane answers that with its own error.
+  `AgentLink.Plane.client_frame/2` and `AgentLink.Plane.agent_frame/2` do not
+  use this codec. They split lines within one text message and keep no
+  remainder. `client_frame/2` answers a JSON-RPC batch with -32600.
   """
 
   @type item :: {:ok, map} | {:error, binary}
@@ -16,8 +17,9 @@ defmodule AgentLink.Frame do
   Take complete stdio messages out of `buffer <> chunk`.
 
   Each JSON object is `{:ok, message}`. A non-empty line that is not one JSON
-  object is `{:error, line}`. Blank lines are skipped. The rest is an
-  incomplete line, still buffered, including any leading space.
+  object is `{:error, line}`. Blank lines are skipped. Invalid UTF-8 is not
+  trimmed and is `{:error, line}`. The rest is an incomplete line, still
+  buffered, including any leading space or invalid bytes.
   """
   @spec take(buffer :: binary, chunk :: binary) :: {[item], rest :: binary}
   def take(buffer, chunk) when is_binary(buffer) and is_binary(chunk) do
@@ -46,21 +48,36 @@ defmodule AgentLink.Frame do
   def encode(message) when is_map(message), do: Jason.encode!(message)
 
   defp decode_line(line) do
-    case decode(line) do
-      {:ok, message} -> {:ok, message}
-      :error -> {:error, line}
+    if String.valid?(line) do
+      case decode(line) do
+        {:ok, message} -> {:ok, message}
+        :error -> {:error, line}
+      end
+    else
+      {:error, line}
     end
   end
 
   defp split(buffer, acc) do
     case :binary.split(buffer, "\n") do
       [line, rest] ->
-        line = String.trim(line)
-        acc = if line == "", do: acc, else: [line | acc]
-        split(rest, acc)
+        split(rest, keep(line, acc))
 
       _ ->
         {Enum.reverse(acc), buffer}
+    end
+  end
+
+  # String.trim/1 raises ArgumentError on invalid UTF-8. A broken line is an
+  # error, so those bytes stay whole for the caller to log.
+  defp keep(line, acc) do
+    if String.valid?(line) do
+      case String.trim(line) do
+        "" -> acc
+        line -> [line | acc]
+      end
+    else
+      [line | acc]
     end
   end
 end

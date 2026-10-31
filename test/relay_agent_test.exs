@@ -46,6 +46,36 @@ defmodule AgentLink.Relay.AgentTest do
     refute Enum.any?(uplink_outbox(), &(&1 == "not-json"))
   end
 
+  test "a dropped stdout line is logged as a bounded prefix" do
+    agent = start_relay!()
+    prefix = String.duplicate("x", 80)
+    tail = "TAIL-NOT-LOGGED"
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        AgentLink.FakeAgent.emit(agent, prefix <> tail <> "\n")
+        :sys.get_state(agent)
+        :sys.get_state(AgentLink.Relay.Agent)
+      end)
+
+    assert log =~ "agent relay dropped non-json stdout"
+    assert log =~ prefix
+    refute log =~ tail
+
+    invalid = <<0x20, 0xFF>>
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        AgentLink.FakeAgent.emit(agent, invalid <> "\n")
+        :sys.get_state(agent)
+        :sys.get_state(AgentLink.Relay.Agent)
+      end)
+
+    assert log =~ "agent relay dropped non-json stdout"
+    assert log =~ inspect(invalid)
+    assert Process.alive?(Process.whereis(AgentLink.Relay.Agent))
+  end
+
   test "a message from the plane is written to the agent" do
     _agent = start_relay!()
     send(AgentLink.Relay.Agent, {:from_plane, %{"method" => "ping"}})

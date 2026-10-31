@@ -6,7 +6,7 @@ Socket. One WebSocket on the plane. `AgentLink.ClientSocket` is the app connecti
 
 Relay. Copies JSON-RPC between a local stdio and a plane socket. `AgentLink.Relay.Agent` opens an agent and starts an uplink. `AgentLink.Relay.Client` is not built yet.
 
-Frame. `AgentLink.Frame` is one JSON-RPC object on the wire. Stdio is one object per line. A plane socket is one object per text frame. The agent relay and the uplink share it.
+Frame. `AgentLink.Frame` is one JSON-RPC object on the wire. Stdio is one object per line. The agent relay and the uplink put one object in each text frame. On the plane, `AgentLink.Plane.client_frame/2` and `AgentLink.Plane.agent_frame/2` split that text on newlines, decode each piece, and keep no remainder. `client_frame/2` answers a JSON-RPC batch with -32600.
 
 Link. The file. Name, label, program, and plane URL. Not the live connection. The uplink reads it when it dials. A missing file stops the relay.
 

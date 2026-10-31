@@ -55,6 +55,37 @@ defmodule AgentLink.FrameTest do
     assert {:ok, ^message} = AgentLink.Frame.decode(payload)
   end
 
+  test "two objects on one line are one error, and the next line is still taken" do
+    chunk = ~s({"a":1}{"b":2}\n{"c":3}\n)
+
+    assert {[
+              {:error, ~s({"a":1}{"b":2})},
+              {:ok, %{"c" => 3}}
+            ], ""} = AgentLink.Frame.take("", chunk)
+  end
+
+  test "a JSON-RPC batch line is an error" do
+    line = ~s([{"jsonrpc":"2.0","method":"ping"}])
+
+    assert {[{:error, ^line}], ""} = AgentLink.Frame.take("", line <> "\n")
+  end
+
+  test "a chunk boundary between cr and lf still yields one object" do
+    assert {[], "{\"a\":1}\r"} = AgentLink.Frame.take("", "{\"a\":1}\r")
+    assert {[{:ok, %{"a" => 1}}], ""} = AgentLink.Frame.take("{\"a\":1}\r", "\n")
+  end
+
+  test "a complete invalid line is an error and is not trimmed" do
+    line = <<0x20, 0xFF, 0x20>>
+
+    assert {[{:error, ^line}], ""} = AgentLink.Frame.take("", line <> "\n")
+  end
+
+  test "an invalid partial stays in the rest" do
+    assert {[], <<0xFF>>} = AgentLink.Frame.take("", <<0xFF>>)
+    assert {[], <<0xFF, 0xFE>>} = AgentLink.Frame.take(<<0xFF>>, <<0xFE>>)
+  end
+
   test "a socket payload may end with whitespace, and a second value is an error" do
     assert {:ok, %{"a" => 1}} = AgentLink.Frame.decode("{\"a\":1}\n")
     assert :error = AgentLink.Frame.decode("{\"a\":1}{\"b\":2}")
@@ -62,5 +93,6 @@ defmodule AgentLink.FrameTest do
     assert :error = AgentLink.Frame.decode("")
     assert :error = AgentLink.Frame.decode("  ")
     assert :error = AgentLink.Frame.decode("[1]")
+    assert :error = AgentLink.Frame.decode(<<0xFF>>)
   end
 end

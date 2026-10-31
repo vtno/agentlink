@@ -17,6 +17,9 @@ defmodule AgentLink.Relay.Agent do
 
   defstruct [:agent, :agent_module, buffer: ""]
 
+  # A dropped stdout line can be huge, or not valid UTF-8. Log a prefix.
+  @dropped_bytes 80
+
   @doc "Own the agent. If it dies, the supervisor starts this process again."
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -66,8 +69,8 @@ defmodule AgentLink.Relay.Agent do
       {:ok, message} ->
         AgentLink.Uplink.send_message(message)
 
-      {:error, _line} ->
-        Logger.warning("agent relay dropped non-json stdout")
+      {:error, line} ->
+        Logger.warning("agent relay dropped non-json stdout #{inspect(dropped_prefix(line))}")
     end)
 
     {:noreply, %{state | buffer: rest}}
@@ -129,4 +132,8 @@ defmodule AgentLink.Relay.Agent do
   end
 
   defp default_cwd(message), do: message
+
+  defp dropped_prefix(line) do
+    binary_part(line, 0, min(@dropped_bytes, byte_size(line)))
+  end
 end
