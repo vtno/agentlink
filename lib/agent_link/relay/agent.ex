@@ -2,8 +2,9 @@ defmodule AgentLink.Relay.Agent do
   @moduledoc """
   Supervised owner of one `AgentLink.Agent`.
 
-  Stdout is ACP JSONL. The agent is linked to this process: when it
-  exits, this process stops and its supervisor starts another one. Production
+  Stdout is ACP JSONL. `AgentLink.Frame` splits it. The agent is linked to
+  this process: when it exits, this process stops and its supervisor starts
+  another one. Production
   uses `AgentLink.OpenCode`. The module comes from `:agent_link, :agent_module`.
 
   For `session/new` and `session/load`, a missing, null, or empty `cwd`
@@ -59,18 +60,14 @@ defmodule AgentLink.Relay.Agent do
 
   @impl true
   def handle_info({agent, {:data, data}}, %__MODULE__{agent: agent} = state) do
-    {lines, rest} = take_lines(state.buffer <> data)
+    {items, rest} = AgentLink.Frame.take(state.buffer, data)
 
-    Enum.each(lines, fn line ->
-      if line != "" do
-        case Jason.decode(line) do
-          {:ok, message} when is_map(message) ->
-            AgentLink.Uplink.send_message(message)
+    Enum.each(items, fn
+      {:ok, message} ->
+        AgentLink.Uplink.send_message(message)
 
-          _ ->
-            Logger.warning("agent relay dropped non-json stdout")
-        end
-      end
+      {:error, _line} ->
+        Logger.warning("agent relay dropped non-json stdout")
     end)
 
     {:noreply, %{state | buffer: rest}}
@@ -117,7 +114,7 @@ defmodule AgentLink.Relay.Agent do
 
   defp write(%{agent_module: agent_module, agent: agent}, message) do
     message = default_cwd(message)
-    agent_module.write(agent, [Jason.encode!(message), ?\n])
+    agent_module.write(agent, AgentLink.Frame.encode_line(message))
   end
 
   defp default_cwd(%{"method" => method} = message)
@@ -132,13 +129,4 @@ defmodule AgentLink.Relay.Agent do
   end
 
   defp default_cwd(message), do: message
-
-  defp take_lines(buffer), do: take_lines(buffer, [])
-
-  defp take_lines(buffer, acc) do
-    case :binary.split(buffer, "\n") do
-      [line, rest] -> take_lines(rest, [String.trim(line) | acc])
-      _ -> {Enum.reverse(acc), buffer}
-    end
-  end
 end

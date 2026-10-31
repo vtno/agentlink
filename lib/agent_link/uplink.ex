@@ -1,9 +1,9 @@
 defmodule AgentLink.Uplink do
   @moduledoc """
-  Dials the plane's agent socket. Outbound text frames are one JSON object.
-  Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
-  process directly. A `wss` plane URL dials TLS. Mint checks the peer certificate
-  against the system CA store.
+  Dials the plane's agent socket. Outbound text frames are one JSON object
+  from `AgentLink.Frame`. Mint owns the HTTP upgrade and the WebSocket frame
+  codec. Nothing here calls the plane process directly. A `wss` plane URL
+  dials TLS. Mint checks the peer certificate against the system CA store.
 
   A dropped socket redials. The hello carries this VM's relay instance, so
   the plane can release this relay's previous socket when this process dials
@@ -153,9 +153,9 @@ defmodule AgentLink.Uplink do
   defp apply_frame(_frame, state), do: state
 
   defp forward_text(payload, state) do
-    case Jason.decode(payload) do
-      {:ok, message} when is_map(message) -> send(state.owner, {:from_plane, message})
-      _ -> :ok
+    case AgentLink.Frame.decode(payload) do
+      {:ok, message} -> send(state.owner, {:from_plane, message})
+      :error -> :ok
     end
 
     state
@@ -371,7 +371,7 @@ defmodule AgentLink.Uplink do
   end
 
   defp transmit(message, state) do
-    case send_frame(state, {:text, Jason.encode!(message)}) do
+    case send_frame(state, {:text, AgentLink.Frame.encode(message)}) do
       %{websocket: nil} = state -> %{state | outbox: [message | state.outbox]}
       state -> state
     end
