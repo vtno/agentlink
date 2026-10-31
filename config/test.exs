@@ -1,10 +1,10 @@
 import Config
 
-config :pont,
-  agent_module: Pont.FakeAgent,
+config :agent_link,
+  agent_module: AgentLink.FakeAgent,
   mode: :plane,
   port: 18_090,
-  workdir: "/tmp/pont-test-workdir",
+  workdir: "/tmp/agentlink-test-workdir",
   cli: false
 
 config :logger, level: :warning

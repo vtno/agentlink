@@ -1,4 +1,4 @@
-defmodule Pont.Plane.Supervisor do
+defmodule AgentLink.Plane.Supervisor do
   @moduledoc """
   The plane: the registry, the sockets, and the HTTP listener.
   An agent relay is not a child here, so one agent relay cannot take the plane down.
@@ -13,14 +13,14 @@ defmodule Pont.Plane.Supervisor do
 
   @impl true
   def init(_opts) do
-    port = Application.fetch_env!(:pont, :port)
+    port = Application.fetch_env!(:agent_link, :port)
 
     Supervisor.init(
       [
-        Pont.Registry,
-        Pont.Plane,
-        Pont.Setup.Watch,
-        {Bandit, plug: Pont.Router, scheme: :http, port: port, ip: {127, 0, 0, 1}}
+        AgentLink.Registry,
+        AgentLink.Plane,
+        AgentLink.Setup.Watch,
+        {Bandit, plug: AgentLink.Router, scheme: :http, port: port, ip: {127, 0, 0, 1}}
       ],
       strategy: :one_for_one,
       max_restarts: 5,

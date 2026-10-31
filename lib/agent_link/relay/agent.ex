@@ -1,13 +1,13 @@
-defmodule Pont.Relay.Agent do
+defmodule AgentLink.Relay.Agent do
   @moduledoc """
-  Supervised owner of one `Pont.Agent`.
+  Supervised owner of one `AgentLink.Agent`.
 
   Stdout is ACP JSONL. The agent is linked to this process: when it
   exits, this process stops and its supervisor starts another one. Production
-  uses `Pont.OpenCode`. The module comes from `:pont, :agent_module`.
+  uses `AgentLink.OpenCode`. The module comes from `:agent_link, :agent_module`.
 
   For `session/new` and `session/load`, a missing, null, or empty `cwd`
-  in params is filled with `Pont.Paths.workdir()` before the message is
+  in params is filled with `AgentLink.Paths.workdir()` before the message is
   written to the agent. An explicit `cwd` passes through unchanged.
   """
 
@@ -24,13 +24,13 @@ defmodule Pont.Relay.Agent do
   @impl true
   def init(_opts) do
     Process.flag(:trap_exit, true)
-    cwd = Pont.Paths.workdir()
+    cwd = AgentLink.Paths.workdir()
     File.mkdir_p!(cwd)
-    agent_module = Application.get_env(:pont, :agent_module, Pont.OpenCode)
+    agent_module = Application.get_env(:agent_link, :agent_module, AgentLink.OpenCode)
     {:ok, agent} = agent_module.open(self(), cwd)
     Logger.info("opened #{inspect(agent_module)} cwd=#{cwd} agent=#{inspect(agent)}")
 
-    case Pont.Uplink.start_link(owner: self()) do
+    case AgentLink.Uplink.start_link(owner: self()) do
       {:ok, _} ->
         {:ok, %__MODULE__{agent: agent, agent_module: agent_module}}
 
@@ -40,7 +40,7 @@ defmodule Pont.Relay.Agent do
     end
   end
 
-  @doc "Write one ACP message to the agent's stdin. For `session/new` and `session/load`, a missing, null, or empty `cwd` is filled with `Pont.Paths.workdir()` first. :down if this process is gone."
+  @doc "Write one ACP message to the agent's stdin. For `session/new` and `session/load`, a missing, null, or empty `cwd` is filled with `AgentLink.Paths.workdir()` first. :down if this process is gone."
   @spec send_message(map()) :: :ok | :down
   def send_message(message) when is_map(message) do
     case Process.whereis(__MODULE__) do
@@ -65,7 +65,7 @@ defmodule Pont.Relay.Agent do
       if line != "" do
         case Jason.decode(line) do
           {:ok, message} when is_map(message) ->
-            Pont.Uplink.send_message(message)
+            AgentLink.Uplink.send_message(message)
 
           _ ->
             Logger.warning("agent relay dropped non-json stdout")
@@ -99,7 +99,7 @@ defmodule Pont.Relay.Agent do
 
   def handle_info({:EXIT, pid, reason}, %__MODULE__{agent: agent} = state) when pid != agent do
     Logger.error("uplink exit #{inspect(reason)}")
-    {:ok, _} = Pont.Uplink.start_link(owner: self())
+    {:ok, _} = AgentLink.Uplink.start_link(owner: self())
     {:noreply, state}
   end
 
@@ -125,7 +125,7 @@ defmodule Pont.Relay.Agent do
     params = Map.get(message, "params", %{})
 
     if is_map(params) and Map.get(params, "cwd") in [nil, ""] do
-      Map.put(message, "params", Map.put(params, "cwd", Pont.Paths.workdir()))
+      Map.put(message, "params", Map.put(params, "cwd", AgentLink.Paths.workdir()))
     else
       message
     end

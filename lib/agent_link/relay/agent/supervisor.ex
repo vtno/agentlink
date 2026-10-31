@@ -1,4 +1,4 @@
-defmodule Pont.Relay.Agent.Supervisor do
+defmodule AgentLink.Relay.Agent.Supervisor do
   @moduledoc """
   Restarts the local agent relay. When this supervisor gives up, it stops.
   The plane is not a child here, so one agent relay cannot take the plane down.
@@ -13,6 +13,10 @@ defmodule Pont.Relay.Agent.Supervisor do
 
   @impl true
   def init(_opts) do
-    Supervisor.init([Pont.Relay.Agent], strategy: :one_for_one, max_restarts: 5, max_seconds: 20)
+    Supervisor.init([AgentLink.Relay.Agent],
+      strategy: :one_for_one,
+      max_restarts: 5,
+      max_seconds: 20
+    )
   end
 end

@@ -1,9 +1,9 @@
-defmodule Pont.OpenCode do
+defmodule AgentLink.OpenCode do
   @moduledoc """
   Production behaviour. Runs `opencode acp` and leaves stderr off the ACP stream.
   """
 
-  @behaviour Pont.Agent
+  @behaviour AgentLink.Agent
 
   @doc "Start the agent. Must be called from the owner, because the port's stdout arrives at the caller."
   @impl true
@@ -30,7 +30,7 @@ defmodule Pont.OpenCode do
 
   @doc "The executable this behaviour runs, with a relative symlink resolved."
   def bin do
-    configured = Pont.Paths.opencode_bin()
+    configured = AgentLink.Paths.opencode_bin()
 
     case File.read_link(configured) do
       {:ok, relative} ->
@@ -46,7 +46,7 @@ defmodule Pont.OpenCode do
     if owner == self() do
       :ok
     else
-      raise "Pont.OpenCode.open/2 must be called from the owner (#{inspect(owner)})"
+      raise "AgentLink.OpenCode.open/2 must be called from the owner (#{inspect(owner)})"
     end
   end
 

@@ -1,56 +1,56 @@
-defmodule Pont.RouterTest do
+defmodule AgentLink.RouterTest do
   use ExUnit.Case, async: false
 
   defmodule DenyClaim do
-    @behaviour Pont.Access
+    @behaviour AgentLink.Access
 
-    def authenticate(_conn), do: {:ok, %Pont.Access.Subject{id: "admin", role: :admin}}
+    def authenticate(_conn), do: {:ok, %AgentLink.Access.Subject{id: "admin", role: :admin}}
     def allowed?(_subject, _name), do: true
     def claim(_subject, _name), do: :reject
     def prepare(_mode), do: {:ok, ""}
   end
 
   setup do
-    previous = Application.get_env(:pont, :master_token)
-    start_supervised!(Pont.Registry)
-    start_supervised!(Pont.Plane)
+    previous = Application.get_env(:agent_link, :master_token)
+    start_supervised!(AgentLink.Registry)
+    start_supervised!(AgentLink.Plane)
 
     start_supervised!(
-      {Bandit, plug: Pont.Router, scheme: :http, port: 18_091, ip: {127, 0, 0, 1}}
+      {Bandit, plug: AgentLink.Router, scheme: :http, port: 18_091, ip: {127, 0, 0, 1}}
     )
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:pont, :master_token, previous),
-        else: Application.delete_env(:pont, :master_token)
+        do: Application.put_env(:agent_link, :master_token, previous),
+        else: Application.delete_env(:agent_link, :master_token)
     end)
 
     :ok
   end
 
   test "health, status, and an unknown path" do
-    Application.put_env(:pont, :master_token, "sekret")
+    Application.put_env(:agent_link, :master_token, "sekret")
 
     assert request("GET", "/health") == {200, "ok"}
     {200, body} = request("GET", "/status", [{"authorization", "Bearer sekret"}])
     decoded = Jason.decode!(body)
-    assert decoded["plane"] == "127.0.0.1:#{Application.fetch_env!(:pont, :port)}"
+    assert decoded["plane"] == "127.0.0.1:#{Application.fetch_env!(:agent_link, :port)}"
     assert decoded["runtimes"] == []
     assert {404, "not found"} = request("GET", "/nope")
   end
 
   test "the app and agent paths upgrade to a websocket" do
-    Application.put_env(:pont, :master_token, "sekret")
+    Application.put_env(:agent_link, :master_token, "sekret")
     assert {:ok, conn, _ref, _ws} = upgrade("/acp?token=sekret")
     Mint.HTTP.close(conn)
 
-    previous = Application.get_env(:pont, :master_token)
-    Application.put_env(:pont, :master_token, "sekret")
+    previous = Application.get_env(:agent_link, :master_token)
+    Application.put_env(:agent_link, :master_token, "sekret")
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:pont, :master_token, previous),
-        else: Application.delete_env(:pont, :master_token)
+        do: Application.put_env(:agent_link, :master_token, previous),
+        else: Application.delete_env(:agent_link, :master_token)
     end)
 
     assert {:ok, conn, ref, websocket} = upgrade("/agent", [{"authorization", "Bearer sekret"}])
@@ -58,7 +58,7 @@ defmodule Pont.RouterTest do
     hello =
       Jason.encode!(%{
         "jsonrpc" => "2.0",
-        "method" => "pont.uplink",
+        "method" => "agentlink.uplink",
         "params" => %{"name" => "lab", "label" => "Bench"}
       })
 
@@ -66,18 +66,18 @@ defmodule Pont.RouterTest do
     {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)
     {:ok, _conn} = Mint.HTTP.set_mode(conn, :active)
     Process.sleep(100)
-    assert Pont.Registry.pid("lab")
+    assert AgentLink.Registry.pid("lab")
     Mint.HTTP.close(conn)
   end
 
   test "a second hello for a live name is rejected and the holder stays up" do
-    Application.put_env(:pont, :master_token, "sekret")
+    Application.put_env(:agent_link, :master_token, "sekret")
     headers = [{"authorization", "Bearer sekret"}]
 
     assert {:ok, conn1, ref1, websocket1} = upgrade("/agent", headers)
     {conn1, websocket1} = say_hello(conn1, ref1, websocket1, "opencode")
     {:ok, conn1} = Mint.HTTP.set_mode(conn1, :active)
-    first = Pont.TestHelpers.await_pid("opencode")
+    first = AgentLink.TestHelpers.await_pid("opencode")
 
     assert {:ok, conn2, ref2, websocket2} = upgrade("/agent", headers)
 
@@ -88,34 +88,34 @@ defmodule Pont.RouterTest do
       end)
 
     assert_receive {:rejected, frames, conn2}
-    assert {:close, 4001, Pont.AgentSocketProtocol.reason(:name_taken, "opencode")} in frames
+    assert {:close, 4001, AgentLink.AgentSocketProtocol.reason(:name_taken, "opencode")} in frames
 
     assert log =~
              "uplink rejected name=opencode another uplink is already connected with this name"
 
     holder_frames = collect_frames(conn1, websocket1, 200)
     refute Enum.any?(holder_frames, &match?({:close, _, _}, &1))
-    assert Pont.Registry.pid("opencode") == first
+    assert AgentLink.Registry.pid("opencode") == first
     assert Process.alive?(first)
 
     frame = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "session/update", "params" => %{}})
     {:ok, _websocket1, data} = Mint.WebSocket.encode(websocket1, {:text, frame})
     assert {:ok, _conn1} = Mint.WebSocket.stream_request_body(conn1, ref1, data)
     Process.sleep(30)
-    assert Pont.Registry.pid("opencode") == first
+    assert AgentLink.Registry.pid("opencode") == first
     assert Process.alive?(first)
     Mint.HTTP.close(conn1)
     Mint.HTTP.close(conn2)
   end
 
   test "a token guards status and both sockets, and health stays open" do
-    previous = Application.get_env(:pont, :master_token)
-    Application.put_env(:pont, :master_token, "sekret")
+    previous = Application.get_env(:agent_link, :master_token)
+    Application.put_env(:agent_link, :master_token, "sekret")
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:pont, :master_token, previous),
-        else: Application.delete_env(:pont, :master_token)
+        do: Application.put_env(:agent_link, :master_token, previous),
+        else: Application.delete_env(:agent_link, :master_token)
     end)
 
     assert request("GET", "/health") == {200, "ok"}
@@ -133,29 +133,29 @@ defmodule Pont.RouterTest do
   end
 
   test "bad-name, not-allowed, and oversized-instance rejections reach the wire" do
-    Application.put_env(:pont, :master_token, "sekret")
-    previous = Application.get_env(:pont, :access)
+    Application.put_env(:agent_link, :master_token, "sekret")
+    previous = Application.get_env(:agent_link, :access)
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:pont, :access, previous),
-        else: Application.delete_env(:pont, :access)
+        do: Application.put_env(:agent_link, :access, previous),
+        else: Application.delete_env(:agent_link, :access)
     end)
 
     for {name, attrs, policy, code, reason} <- [
-          {nil, %{}, Pont.Access.Single, 4003, "link name must be a short slug"},
+          {nil, %{}, AgentLink.Access.Single, 4003, "link name must be a short slug"},
           {"lab",
            %{
              "instance" =>
-               String.duplicate("a", Pont.AgentSocketProtocol.max_instance_bytes() + 1)
-           }, Pont.Access.Single, 4002, "instance id is too long; max is 128 bytes"},
+               String.duplicate("a", AgentLink.AgentSocketProtocol.max_instance_bytes() + 1)
+           }, AgentLink.Access.Single, 4002, "instance id is too long; max is 128 bytes"},
           {"lab", %{}, DenyClaim, 4004, "uplink is not allowed"}
         ] do
-      Application.put_env(:pont, :access, policy)
+      Application.put_env(:agent_link, :access, policy)
       assert {:ok, conn, ref, websocket} = upgrade("/agent", [{"authorization", "Bearer sekret"}])
       {conn, websocket} = say_hello(conn, ref, websocket, name, attrs)
       assert {:close, code, reason} in recv_until_close(conn, websocket)
-      assert Pont.Registry.list() == []
+      assert AgentLink.Registry.list() == []
       Mint.HTTP.close(conn)
     end
   end
@@ -198,7 +198,7 @@ defmodule Pont.RouterTest do
     hello =
       Jason.encode!(%{
         "jsonrpc" => "2.0",
-        "method" => "pont.uplink",
+        "method" => "agentlink.uplink",
         "params" => Map.merge(%{"name" => name, "label" => "Bench"}, attrs)
       })
 

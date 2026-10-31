@@ -1,4 +1,4 @@
-defmodule Pont.OpenCodeLiveTest do
+defmodule AgentLink.OpenCodeLiveTest do
   use ExUnit.Case, async: false
 
   @port 18_099
@@ -14,49 +14,49 @@ defmodule Pont.OpenCodeLiveTest do
       File.rm_rf(dir)
     end)
 
-    page_dir = start_binary(System.fetch_env!("PONT_BIN"), dir, wrapper)
+    page_dir = start_binary(System.fetch_env!("AGENTLINK_BIN"), dir, wrapper)
     assert :ok = wait_runtime()
     request_page(page_dir)
   end
 
   defp request_page(page_dir) do
-    {:ok, client} = Pont.LiveClient.start(@port)
+    {:ok, client} = AgentLink.LiveClient.start(@port)
 
     assert {:ok, %{"result" => %{"runtimes" => [%{"name" => "opencode"}]}}} =
-             Pont.LiveClient.request(client, "runtime/list", %{})
+             AgentLink.LiveClient.request(client, "runtime/list", %{})
 
     assert {:ok, %{"result" => %{"name" => "opencode"}}} =
-             Pont.LiveClient.request(client, "runtime/select", %{"name" => "opencode"})
+             AgentLink.LiveClient.request(client, "runtime/select", %{"name" => "opencode"})
 
     assert {:ok, %{"result" => %{}}} =
-             Pont.LiveClient.request(client, "initialize", %{
+             AgentLink.LiveClient.request(client, "initialize", %{
                "protocolVersion" => 1,
                "clientCapabilities" => %{
                  "fs" => %{"readTextFile" => false, "writeTextFile" => false},
                  "terminal" => false
                },
                "clientInfo" => %{
-                 "name" => "pont-live-test",
-                 "title" => "Pont live test",
+                 "name" => "agentlink-live-test",
+                 "title" => "AgentLink live test",
                  "version" => "0.1.0"
                }
              })
 
     assert {:ok, %{"result" => %{"sessionId" => session_id}}} =
-             Pont.LiveClient.request(client, "session/new", %{
+             AgentLink.LiveClient.request(client, "session/new", %{
                "cwd" => page_dir,
                "mcpServers" => []
              })
 
     _ =
-      Pont.LiveClient.request(client, "session/set_config_option", %{
+      AgentLink.LiveClient.request(client, "session/set_config_option", %{
         "sessionId" => session_id,
         "configId" => "model",
         "value" => "xai/grok-4.20-0309-non-reasoning"
       })
 
     assert {:ok, %{"result" => %{"stopReason" => "end_turn"}}} =
-             Pont.LiveClient.request(
+             AgentLink.LiveClient.request(
                client,
                "session/prompt",
                %{
@@ -86,7 +86,7 @@ defmodule Pont.OpenCodeLiveTest do
   end
 
   defp tmp_dir do
-    dir = Path.join(System.tmp_dir!(), "pont-live-#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "agentlink-live-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     dir
   end
@@ -94,8 +94,8 @@ defmodule Pont.OpenCodeLiveTest do
   defp paths_under(home) do
     root = System.user_home!()
 
-    {under_home(Pont.Paths.link(), root, home),
-     under_home(Pont.Paths.default_workdir(), root, home)}
+    {under_home(AgentLink.Paths.link(), root, home),
+     under_home(AgentLink.Paths.default_workdir(), root, home)}
   end
 
   defp start_binary(bin, dir, wrapper) do
@@ -107,7 +107,7 @@ defmodule Pont.OpenCodeLiveTest do
     File.write!(Path.join(page_dir, "opencode.json"), model_config())
     File.write!(link, link_json())
 
-    opencode = System.get_env("OPENCODE_BIN") || Pont.Paths.default_opencode_bin()
+    opencode = System.get_env("OPENCODE_BIN") || AgentLink.Paths.default_opencode_bin()
     unless File.exists?(opencode), do: flunk("opencode not found: #{opencode}")
 
     port =
@@ -126,7 +126,7 @@ defmodule Pont.OpenCodeLiveTest do
 
   defp under_home(path, root, home) do
     relative = Path.relative_to(path, root)
-    if relative == path, do: flunk("Pont.Paths returned #{path}, which is not under #{root}")
+    if relative == path, do: flunk("AgentLink.Paths returned #{path}, which is not under #{root}")
     Path.join(home, relative)
   end
 
@@ -192,7 +192,7 @@ defmodule Pont.OpenCodeLiveTest do
         flush_binary()
 
       {_port, {:exit_status, status}} ->
-        IO.puts("pont binary exited #{status}")
+        IO.puts("agentlink binary exited #{status}")
     after
       0 -> :ok
     end
@@ -223,7 +223,7 @@ defmodule Pont.OpenCodeLiveTest do
   end
 end
 
-defmodule Pont.LiveClient do
+defmodule AgentLink.LiveClient do
   @moduledoc false
   use GenServer
 

@@ -1,18 +1,18 @@
-defmodule Pont.RegistryTest do
+defmodule AgentLink.RegistryTest do
   use ExUnit.Case, async: false
 
   setup do
-    start_supervised!(Pont.Registry)
+    start_supervised!(AgentLink.Registry)
     :ok
   end
 
   test "register, list, and pid" do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     assert {:ok, "lab"} = hello(pid, "lab", "Bench")
-    assert Pont.Registry.pid("lab") == pid
+    assert AgentLink.Registry.pid("lab") == pid
 
     assert [%{"name" => "lab", "label" => "Bench", "program" => "opencode", "connected_at" => at}] =
-             Pont.Registry.list()
+             AgentLink.Registry.list()
 
     assert is_integer(at)
   end
@@ -24,53 +24,57 @@ defmodule Pont.RegistryTest do
       assert {:error, :bad_name} = hello(pid, name, "x")
     end
 
-    assert Pont.Registry.list() == []
-    assert Pont.Registry.pid("nope") == nil
+    assert AgentLink.Registry.list() == []
+    assert AgentLink.Registry.pid("nope") == nil
   end
 
   test "returns the normalized name, including when the holder registers again" do
     assert {:ok, "lab"} = hello(self(), "  lab\t", "Bench")
     assert {:ok, "lab"} = hello(self(), " lab ", "Other")
-    assert Pont.Registry.pid("lab") == self()
-    assert Pont.Registry.pid("  lab\t") == nil
-    assert [%{"name" => "lab", "label" => "Bench"}] = Pont.Registry.list()
+    assert AgentLink.Registry.pid("lab") == self()
+    assert AgentLink.Registry.pid("  lab\t") == nil
+    assert [%{"name" => "lab", "label" => "Bench"}] = AgentLink.Registry.list()
   end
 
   test "a policy rejection neither registers a name nor changes its holder" do
     assert {:ok, "lab"} = hello(self(), "lab", "Bench")
-    subject = %Pont.Access.Subject{id: "user", role: :user}
+    subject = %AgentLink.Access.Subject{id: "user", role: :user}
 
     for name <- [" lab ", "bench"] do
       assert {:error, :not_allowed} =
-               Pont.Registry.register(self(), %Pont.Registry.Uplink{name: name}, subject)
+               AgentLink.Registry.register(
+                 self(),
+                 %AgentLink.Registry.Uplink{name: name},
+                 subject
+               )
     end
 
-    assert Pont.Registry.pid("lab") == self()
-    assert [%{"name" => "lab", "label" => "Bench"}] = Pont.Registry.list()
+    assert AgentLink.Registry.pid("lab") == self()
+    assert [%{"name" => "lab", "label" => "Bench"}] = AgentLink.Registry.list()
     refute_received :superseded
   end
 
   test "a name at the character limit is kept, and a longer one is rejected" do
-    max = Pont.Registry.max_name_chars()
+    max = AgentLink.Registry.max_name_chars()
     at_max = String.duplicate("a", max)
     too_long = String.duplicate("b", max + 1)
     pid = spawn(fn -> Process.sleep(:infinity) end)
     assert {:ok, ^at_max} = hello(pid, at_max, "x")
-    assert Pont.Registry.pid(at_max) == pid
+    assert AgentLink.Registry.pid(at_max) == pid
 
     other = spawn(fn -> Process.sleep(:infinity) end)
     assert {:error, :bad_name} = hello(other, too_long, "x")
-    assert Pont.Registry.pid(too_long) == nil
+    assert AgentLink.Registry.pid(too_long) == nil
   end
 
   test "an empty label uses the name, and a long label is cut" do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     {:ok, "lab"} = hello(pid, "lab", "  ")
-    assert [%{"name" => "lab", "label" => "lab"}] = Pont.Registry.list()
+    assert [%{"name" => "lab", "label" => "lab"}] = AgentLink.Registry.list()
 
     other = spawn(fn -> Process.sleep(:infinity) end)
     {:ok, "bench"} = hello(other, "bench", String.duplicate("n", 100))
-    assert %{"label" => label} = Enum.find(Pont.Registry.list(), &(&1["name"] == "bench"))
+    assert %{"label" => label} = Enum.find(AgentLink.Registry.list(), &(&1["name"] == "bench"))
     assert String.length(label) == 80
   end
 
@@ -85,8 +89,8 @@ defmodule Pont.RegistryTest do
       end)
 
     assert log =~ "uplink rejected name=lab another uplink is already connected with this name"
-    assert Pont.Registry.pid("lab") == first
-    assert [%{"label" => "a"}] = Pont.Registry.list()
+    assert AgentLink.Registry.pid("lab") == first
+    assert [%{"label" => "a"}] = AgentLink.Registry.list()
     assert Process.info(first, :messages) == {:messages, []}
     assert Process.alive?(first)
     assert Process.alive?(second)
@@ -98,19 +102,19 @@ defmodule Pont.RegistryTest do
     assert {:ok, "lab"} = hello(first, "lab", "a", "relay-a")
 
     log =
-      Pont.TestHelpers.capture_info(fn ->
+      AgentLink.TestHelpers.capture_info(fn ->
         assert {:ok, "lab"} = hello(second, "lab", "b", "relay-a")
       end)
 
     assert log =~ "uplink reconnect name=lab the same relay dialed again"
     refute log =~ "uplink rejected name=lab"
-    assert Pont.Registry.pid("lab") == second
-    assert [%{"label" => "b"}] = Pont.Registry.list()
+    assert AgentLink.Registry.pid("lab") == second
+    assert [%{"label" => "b"}] = AgentLink.Registry.list()
     assert Process.info(first, :messages) == {:messages, [:superseded]}
 
     Process.exit(first, :kill)
     Process.sleep(50)
-    assert Pont.Registry.pid("lab") == second
+    assert AgentLink.Registry.pid("lab") == second
     assert Process.alive?(second)
   end
 
@@ -120,8 +124,8 @@ defmodule Pont.RegistryTest do
     assert {:ok, "lab"} = hello(first, "lab", "a", "relay-a")
 
     assert {:error, :name_taken} = hello(second, "lab", "b", "relay-b")
-    assert Pont.Registry.pid("lab") == first
-    assert [%{"label" => "a"}] = Pont.Registry.list()
+    assert AgentLink.Registry.pid("lab") == first
+    assert [%{"label" => "a"}] = AgentLink.Registry.list()
     assert Process.info(first, :messages) == {:messages, []}
     assert Process.alive?(first)
   end
@@ -138,8 +142,8 @@ defmodule Pont.RegistryTest do
     assert {:ok, "bench"} = hello(plain, "bench", "a")
     assert {:error, :name_taken} = hello(challenger, "bench", "b", "relay-a")
     assert Process.info(plain, :messages) == {:messages, []}
-    assert Pont.Registry.pid("lab") == holder
-    assert Pont.Registry.pid("bench") == plain
+    assert AgentLink.Registry.pid("lab") == holder
+    assert AgentLink.Registry.pid("bench") == plain
   end
 
   test "a blank instance does not count as the same relay" do
@@ -148,7 +152,7 @@ defmodule Pont.RegistryTest do
     assert {:ok, "lab"} = hello(first, "lab", "a", "  ")
     assert {:error, :name_taken} = hello(second, "lab", "b", "  ")
     assert Process.info(first, :messages) == {:messages, []}
-    assert Pont.Registry.pid("lab") == first
+    assert AgentLink.Registry.pid("lab") == first
   end
 
   test "distinct instance ids that share a long prefix leave the holder up" do
@@ -160,17 +164,17 @@ defmodule Pont.RegistryTest do
     assert {:ok, "lab"} = hello(first, "lab", "a", holder_id)
 
     assert {:error, :name_taken} = hello(second, "lab", "b", other_id)
-    assert Pont.Registry.pid("lab") == first
-    assert [%{"label" => "a"}] = Pont.Registry.list()
+    assert AgentLink.Registry.pid("lab") == first
+    assert [%{"label" => "a"}] = AgentLink.Registry.list()
     assert Process.info(first, :messages) == {:messages, []}
     assert Process.alive?(first)
 
-    [{_, %Pont.Registry.Uplink{instance: stored}}] = :ets.lookup(:pont_runtimes, "lab")
+    [{_, %AgentLink.Registry.Uplink{instance: stored}}] = :ets.lookup(:agent_link_runtimes, "lab")
     assert stored == holder_id
   end
 
   test "an instance id at the size limit is kept whole" do
-    max = Pont.AgentSocketProtocol.max_instance_bytes()
+    max = AgentLink.AgentSocketProtocol.max_instance_bytes()
     id = String.duplicate("a", max)
     other_id = String.duplicate("a", max - 1) <> "b"
     first = spawn(fn -> Process.sleep(:infinity) end)
@@ -178,16 +182,16 @@ defmodule Pont.RegistryTest do
     assert byte_size(id) == max
     assert {:ok, "lab"} = hello(first, "lab", "a", "  #{id}  ")
 
-    [{_, %Pont.Registry.Uplink{instance: stored}}] = :ets.lookup(:pont_runtimes, "lab")
+    [{_, %AgentLink.Registry.Uplink{instance: stored}}] = :ets.lookup(:agent_link_runtimes, "lab")
     assert stored == id
 
     assert {:error, :name_taken} = hello(second, "lab", "b", other_id)
-    assert Pont.Registry.pid("lab") == first
+    assert AgentLink.Registry.pid("lab") == first
     assert Process.info(first, :messages) == {:messages, []}
   end
 
   test "an oversized instance id is rejected and the holder stays" do
-    max = Pont.AgentSocketProtocol.max_instance_bytes()
+    max = AgentLink.AgentSocketProtocol.max_instance_bytes()
     too_long = String.duplicate("b", max + 1)
     holder = spawn(fn -> Process.sleep(:infinity) end)
     other = spawn(fn -> Process.sleep(:infinity) end)
@@ -202,9 +206,9 @@ defmodule Pont.RegistryTest do
 
     assert log =~ "uplink rejected name=lab instance id is too long; max is #{max} bytes"
     assert log =~ "uplink rejected name=bench instance id is too long; max is #{max} bytes"
-    assert Pont.Registry.pid("lab") == holder
-    assert [%{"name" => "lab", "label" => "a"}] = Pont.Registry.list()
-    assert Pont.Registry.pid("bench") == nil
+    assert AgentLink.Registry.pid("lab") == holder
+    assert [%{"name" => "lab", "label" => "a"}] = AgentLink.Registry.list()
+    assert AgentLink.Registry.pid("bench") == nil
     assert Process.info(holder, :messages) == {:messages, []}
     assert Process.alive?(holder)
     assert Process.alive?(other)
@@ -215,10 +219,10 @@ defmodule Pont.RegistryTest do
     first = spawn(fn -> Process.sleep(:infinity) end)
     second = spawn(fn -> Process.sleep(:infinity) end)
     assert {:ok, "lab"} = hello(first, "lab", "a", id)
-    [{_, %Pont.Registry.Uplink{instance: stored}}] = :ets.lookup(:pont_runtimes, "lab")
+    [{_, %AgentLink.Registry.Uplink{instance: stored}}] = :ets.lookup(:agent_link_runtimes, "lab")
     assert stored == id
     assert {:ok, "lab"} = hello(second, "lab", "b", id)
-    assert Pont.Registry.pid("lab") == second
+    assert AgentLink.Registry.pid("lab") == second
     assert Process.info(first, :messages) == {:messages, [:superseded]}
   end
 
@@ -226,8 +230,8 @@ defmodule Pont.RegistryTest do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     assert {:ok, "lab"} = hello(pid, "lab", "a")
     assert {:ok, "lab"} = hello(pid, "lab", "b")
-    assert Pont.Registry.pid("lab") == pid
-    assert [%{"label" => "a"}] = Pont.Registry.list()
+    assert AgentLink.Registry.pid("lab") == pid
+    assert [%{"label" => "a"}] = AgentLink.Registry.list()
   end
 
   test "two hellos at once still leave one live holder" do
@@ -244,7 +248,7 @@ defmodule Pont.RegistryTest do
     assert Enum.sort([result_a, result_b]) == [{:error, :name_taken}, {:ok, "lab"}]
     winner = if result_a == {:ok, "lab"}, do: first, else: second
     loser = if winner == first, do: second, else: first
-    assert Pont.Registry.pid("lab") == winner
+    assert AgentLink.Registry.pid("lab") == winner
     assert Process.alive?(winner)
     assert Process.alive?(loser)
     assert Process.info(winner, :messages) == {:messages, []}
@@ -256,24 +260,24 @@ defmodule Pont.RegistryTest do
     {:ok, "lab"} = hello(pid, "lab", "a")
     Process.exit(pid, :kill)
     Process.sleep(30)
-    assert Pont.Registry.list() == []
+    assert AgentLink.Registry.list() == []
 
-    send(Pont.Registry, {:DOWN, make_ref(), :process, pid, :killed})
+    send(AgentLink.Registry, {:DOWN, make_ref(), :process, pid, :killed})
     other = spawn(fn -> Process.sleep(:infinity) end)
     {:ok, "lab"} = hello(other, "lab", "b")
-    send(Pont.Registry, {:DOWN, make_ref(), :process, self(), :killed})
-    assert [%{"name" => "lab"}] = Pont.Registry.list()
+    send(AgentLink.Registry, {:DOWN, make_ref(), :process, self(), :killed})
+    assert [%{"name" => "lab"}] = AgentLink.Registry.list()
   end
 
   test "a stale row whose process is already dead does not block the next hello" do
     holder = spawn(fn -> Process.sleep(:infinity) end)
     assert {:ok, "lab"} = hello(holder, "lab", "a")
-    [{_, %Pont.Registry.Uplink{} = uplink}] = :ets.lookup(:pont_runtimes, "lab")
+    [{_, %AgentLink.Registry.Uplink{} = uplink}] = :ets.lookup(:agent_link_runtimes, "lab")
 
     dead = spawn(fn -> :ok end)
     ref = Process.monitor(dead)
     assert_receive {:DOWN, ^ref, :process, ^dead, _}
-    :ets.insert(:pont_runtimes, {"lab", %{uplink | pid: dead}})
+    :ets.insert(:agent_link_runtimes, {"lab", %{uplink | pid: dead}})
 
     next = spawn(fn -> Process.sleep(:infinity) end)
 
@@ -283,19 +287,19 @@ defmodule Pont.RegistryTest do
       end)
 
     assert log =~ "uplink stale name=lab the previous holder was already dead"
-    assert Pont.Registry.pid("lab") == next
+    assert AgentLink.Registry.pid("lab") == next
 
     Process.exit(holder, :kill)
     Process.sleep(50)
-    assert Pont.Registry.pid("lab") == next
+    assert AgentLink.Registry.pid("lab") == next
     assert Process.alive?(next)
   end
 
   defp hello(pid, name, label, instance \\ nil) do
-    Pont.Registry.register(
+    AgentLink.Registry.register(
       pid,
-      %Pont.Registry.Uplink{name: name, label: label, instance: instance},
-      %Pont.Access.Subject{id: "admin", role: :admin}
+      %AgentLink.Registry.Uplink{name: name, label: label, instance: instance},
+      %AgentLink.Access.Subject{id: "admin", role: :admin}
     )
   end
 end

@@ -1,9 +1,9 @@
-defmodule Pont.Client do
+defmodule AgentLink.Client do
   @moduledoc false
   defstruct [:pid, :subject, runtime: nil, session_id: nil, capabilities: nil]
 end
 
-defmodule Pont.AgentSlot do
+defmodule AgentLink.AgentSlot do
   @moduledoc false
   defstruct [
     :name,
@@ -19,7 +19,7 @@ defmodule Pont.AgentSlot do
   ]
 end
 
-defmodule Pont.Plane do
+defmodule AgentLink.Plane do
   @moduledoc """
   WebSocket proxy for ACP stdio. `initialize` is cached per agent. The agent
   sees the first client's `clientCapabilities`. Each client keeps the
@@ -49,7 +49,7 @@ defmodule Pont.Plane do
   def init(_opts), do: {:ok, %__MODULE__{}}
 
   @doc "A client socket connected. Remember it and hand back its id. The subject is required."
-  def register(pid, %Pont.Access.Subject{} = subject) when is_pid(pid),
+  def register(pid, %AgentLink.Access.Subject{} = subject) when is_pid(pid),
     do: GenServer.call(__MODULE__, {:register, pid, subject})
 
   @impl true
@@ -59,7 +59,7 @@ defmodule Pont.Plane do
 
     state = %{
       state
-      | clients: Map.put(state.clients, id, %Pont.Client{pid: pid, subject: subject}),
+      | clients: Map.put(state.clients, id, %AgentLink.Client{pid: pid, subject: subject}),
         monitors: Map.put(state.monitors, ref, id)
     }
 
@@ -202,7 +202,7 @@ defmodule Pont.Plane do
   defp on_runtime(state, client_id, %{"method" => "runtime/list", "id" => id}) do
     subject = subject_of(state, client_id)
 
-    runtimes = Pont.Registry.allowed(subject)
+    runtimes = AgentLink.Registry.allowed(subject)
 
     reply(state, client_id, id, {:ok, %{"runtimes" => runtimes}})
   end
@@ -215,15 +215,15 @@ defmodule Pont.Plane do
       not is_binary(name) ->
         reply(state, client_id, id, {:error, "runtime name is required"})
 
-      is_nil(Pont.Registry.pid(name)) ->
+      is_nil(AgentLink.Registry.pid(name)) ->
         reply(state, client_id, id, {:error, "runtime is not connected"})
 
-      not Pont.Access.allowed?(subject, name) ->
+      not AgentLink.Access.allowed?(subject, name) ->
         reply(state, client_id, id, {:error, "runtime is not allowed"})
 
       true ->
         clients = Map.update!(state.clients, client_id, &%{&1 | runtime: name})
-        row = Enum.find(Pont.Registry.list(), &(&1["name"] == name))
+        row = Enum.find(AgentLink.Registry.list(), &(&1["name"] == name))
         reply(%{state | clients: clients}, client_id, id, {:ok, row})
     end
   end
@@ -250,20 +250,20 @@ defmodule Pont.Plane do
 
     case state.clients[client_id] do
       %{runtime: name} when is_binary(name) ->
-        if Pont.Access.allowed?(subject, name) do
+        if AgentLink.Access.allowed?(subject, name) do
           {:ok, state, name}
         else
           {:error, state, "runtime is not allowed"}
         end
 
       _ ->
-        case Pont.Registry.allowed(subject) do
+        case AgentLink.Registry.allowed(subject) do
           [%{"name" => name}] ->
             clients = Map.update!(state.clients, client_id, &%{&1 | runtime: name})
             {:ok, %{state | clients: clients}, name}
 
           [] ->
-            if Pont.Registry.list() == [] do
+            if AgentLink.Registry.list() == [] do
               {:error, state, "no runtime connected"}
             else
               {:error, state, "runtime is not allowed"}
@@ -276,7 +276,7 @@ defmodule Pont.Plane do
   end
 
   defp subject_of(state, client_id) do
-    %Pont.Client{subject: subject} = state.clients[client_id]
+    %AgentLink.Client{subject: subject} = state.clients[client_id]
     subject
   end
 
@@ -453,7 +453,7 @@ defmodule Pont.Plane do
     case issuer(slot, session_of(message)) do
       client_id when is_binary(client_id) ->
         case state.clients[client_id] do
-          %Pont.Client{pid: _pid} = client ->
+          %AgentLink.Client{pid: _pid} = client ->
             if supports?(client, message["method"]) do
               fan_id = slot.next_fan_id
               state = push(state, client_id, Map.put(message, "id", fan_id))
@@ -495,21 +495,24 @@ defmodule Pont.Plane do
   end
 
   defp supports?(
-         %Pont.Client{capabilities: %{"fs" => %{"readTextFile" => true}}},
+         %AgentLink.Client{capabilities: %{"fs" => %{"readTextFile" => true}}},
          "fs/read_text_file"
        ),
        do: true
 
   defp supports?(
-         %Pont.Client{capabilities: %{"fs" => %{"writeTextFile" => true}}},
+         %AgentLink.Client{capabilities: %{"fs" => %{"writeTextFile" => true}}},
          "fs/write_text_file"
        ),
        do: true
 
-  defp supports?(%Pont.Client{}, "fs/" <> _), do: false
-  defp supports?(%Pont.Client{capabilities: %{"terminal" => true}}, "terminal/" <> _), do: true
-  defp supports?(%Pont.Client{}, "terminal/" <> _), do: false
-  defp supports?(%Pont.Client{}, _method), do: true
+  defp supports?(%AgentLink.Client{}, "fs/" <> _), do: false
+
+  defp supports?(%AgentLink.Client{capabilities: %{"terminal" => true}}, "terminal/" <> _),
+    do: true
+
+  defp supports?(%AgentLink.Client{}, "terminal/" <> _), do: false
+  defp supports?(%AgentLink.Client{}, _method), do: true
 
   defp issuer(slot, session_id) do
     matches =
@@ -546,7 +549,7 @@ defmodule Pont.Plane do
     end
   end
 
-  defp pump(state, %Pont.AgentSlot{prompt_inflight: true} = slot), do: {state, slot}
+  defp pump(state, %AgentLink.AgentSlot{prompt_inflight: true} = slot), do: {state, slot}
 
   defp pump(state, slot) do
     case :queue.out(slot.prompt_queue) do
@@ -650,7 +653,7 @@ defmodule Pont.Plane do
   end
 
   defp write_agent(slot, message) do
-    case Pont.Registry.pid(slot.name) do
+    case AgentLink.Registry.pid(slot.name) do
       pid when is_pid(pid) ->
         send(pid, {:send, Jason.encode!(message)})
         :ok
@@ -762,5 +765,5 @@ defmodule Pont.Plane do
 
   defp prompt_text(_), do: ""
 
-  defp new_slot(name), do: %Pont.AgentSlot{name: name}
+  defp new_slot(name), do: %AgentLink.AgentSlot{name: name}
 end

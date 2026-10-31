@@ -1,37 +1,37 @@
-defmodule Pont.PlaneTest do
+defmodule AgentLink.PlaneTest do
   use ExUnit.Case, async: false
 
   defmodule Gate do
-    @behaviour Pont.Access
+    @behaviour AgentLink.Access
 
-    def authenticate(_conn), do: {:ok, %Pont.Access.Subject{id: "ada", role: :user}}
+    def authenticate(_conn), do: {:ok, %AgentLink.Access.Subject{id: "ada", role: :user}}
     def allowed?(_subject, "hidden"), do: false
-    def allowed?(%Pont.Access.Subject{}, runtime) when is_binary(runtime), do: true
+    def allowed?(%AgentLink.Access.Subject{}, runtime) when is_binary(runtime), do: true
     def claim(_subject, _name), do: :ok
     def prepare(_mode), do: {:ok, ""}
   end
 
   setup do
-    start_supervised!(Pont.Registry)
-    start_supervised!(Pont.Plane)
+    start_supervised!(AgentLink.Registry)
+    start_supervised!(AgentLink.Plane)
     :ok
   end
 
   test "a batch is rejected and garbage is a parse error" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
-    Pont.Plane.client_frame(id, "[1]\nnot-json")
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    AgentLink.Plane.client_frame(id, "[1]\nnot-json")
     assert %{"error" => %{"code" => -32600}} = reply!()
     assert %{"error" => %{"code" => -32700}} = reply!()
   end
 
   test "a message with no method is ignored" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
-    Pont.Plane.client_frame(id, ~s({"jsonrpc":"2.0","id":1}))
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    AgentLink.Plane.client_frame(id, ~s({"jsonrpc":"2.0","id":1}))
     refute_receive {:send, _}, 50
   end
 
   test "runtime list and select" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     call(id, "runtime/list", %{}, 1)
     assert %{"result" => %{"runtimes" => []}} = reply!()
 
@@ -47,13 +47,13 @@ defmodule Pont.PlaneTest do
   end
 
   test "a runtime notice is ignored" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
-    Pont.Plane.client_frame(id, ~s({"jsonrpc":"2.0","method":"runtime/list"}))
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    AgentLink.Plane.client_frame(id, ~s({"jsonrpc":"2.0","method":"runtime/list"}))
     refute_receive {:send, _}, 50
   end
 
   test "no runtime, one runtime is chosen, two runtimes must be chosen" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
     assert %{"error" => %{"message" => "no runtime connected"}} = reply!()
 
@@ -61,14 +61,14 @@ defmodule Pont.PlaneTest do
     call(id, "initialize", %{}, 2)
     assert {:agent, %{"method" => "initialize"}} = from_agent!()
 
-    other = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    other = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("other")
     call(other, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 3)
     assert %{"error" => %{"message" => "select a runtime"}} = reply!()
   end
 
   test "initialize is cached and a second caller waits for the same reply" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
@@ -78,7 +78,7 @@ defmodule Pont.PlaneTest do
     assert {:agent, %{"id" => agent_id}} = from_agent!()
     call(other_id, "initialize", %{}, 3)
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{"ok" => true}})
     )
@@ -92,7 +92,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "fs and terminal go only to the client that advertised them" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
@@ -129,7 +129,7 @@ defmodule Pont.PlaneTest do
     call(other_id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 3)
     assert {:agent, %{"id" => new_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -161,7 +161,7 @@ defmodule Pont.PlaneTest do
     refute_receive {^other, {:send, _}}, 50
     refute_receive {:send, _}, 50
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -187,7 +187,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "fs read and write are gated on their own flags" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
 
     initialize!(id, 1, %{
@@ -210,12 +210,12 @@ defmodule Pont.PlaneTest do
   end
 
   test "a failed initialize is not cached" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "initialize", %{}, 1)
     assert {:agent, %{"id" => agent_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -231,12 +231,12 @@ defmodule Pont.PlaneTest do
   end
 
   test "session new and load bind the session, and an error does not" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
     assert {:agent, %{"id" => agent_id, "method" => "session/new"}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -250,7 +250,7 @@ defmodule Pont.PlaneTest do
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 2)
     assert {:agent, %{"id" => agent_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -264,7 +264,7 @@ defmodule Pont.PlaneTest do
     call(id, "session/load", %{"sessionId" => "ses_2", "cwd" => "/tmp", "mcpServers" => []}, 3)
     assert {:agent, %{"id" => agent_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{}})
     )
@@ -273,7 +273,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "prompts run one at a time and the stop is broadcast" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
 
@@ -296,7 +296,7 @@ defmodule Pont.PlaneTest do
 
     refute_receive {:agent, _}, 50
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -310,7 +310,7 @@ defmodule Pont.PlaneTest do
     assert {:agent, %{"id" => second, "method" => "session/prompt"}} = from_agent!()
     assert %{"method" => "session/update"} = reply!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -324,20 +324,20 @@ defmodule Pont.PlaneTest do
   end
 
   test "a prompt with no text and no session still runs, and a cancel is not queued" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "session/prompt", %{"prompt" => []}, 1)
     assert {:agent, %{"method" => "session/prompt", "id" => agent_id}} = from_agent!()
     refute_receive {:send, _}, 50
 
-    Pont.Plane.client_frame(
+    AgentLink.Plane.client_frame(
       id,
       ~s({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"x"}})
     )
 
     assert {:agent, %{"method" => "session/cancel"}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{}})
     )
@@ -347,14 +347,14 @@ defmodule Pont.PlaneTest do
   end
 
   test "a live update goes only to clients on that session, unless a load is in flight" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     {other, other_id} = spawn_client()
     call(other_id, "runtime/select", %{"name" => "lab"}, 1)
     assert %{"id" => 1} = client_reply!(other)
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -381,7 +381,7 @@ defmodule Pont.PlaneTest do
 
     assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -396,7 +396,7 @@ defmodule Pont.PlaneTest do
     assert %{"method" => "session/update"} = client_reply!(other)
     refute_receive {:send, _}, 50
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
     )
@@ -405,7 +405,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a notice with no session reaches every client on the agent" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
@@ -413,7 +413,7 @@ defmodule Pont.PlaneTest do
     call(other_id, "runtime/select", %{"name" => "lab"}, 1)
     client_reply!(other)
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -427,7 +427,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a permission goes only to the phone that prompted" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     {other, other_id} = spawn_client()
@@ -441,7 +441,7 @@ defmodule Pont.PlaneTest do
 
     assert {:agent, %{"id" => load_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
     )
@@ -459,7 +459,7 @@ defmodule Pont.PlaneTest do
     assert %{"method" => "session/update"} = client_reply!(other)
     assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -472,7 +472,7 @@ defmodule Pont.PlaneTest do
     mine = reply!()
     refute_receive {^other, {:send, _}}, 50
 
-    Pont.Plane.client_frame(
+    AgentLink.Plane.client_frame(
       other_id,
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -483,7 +483,7 @@ defmodule Pont.PlaneTest do
 
     refute_receive {:agent, _}, 50
 
-    Pont.Plane.client_frame(
+    AgentLink.Plane.client_frame(
       id,
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -496,7 +496,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a permission during load goes only to the phone that is loading" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
     {other, other_id} = spawn_client()
@@ -510,7 +510,7 @@ defmodule Pont.PlaneTest do
 
     assert {:agent, %{"method" => "session/load"}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -525,7 +525,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "an error answer is forwarded, and a permission with no issuer is declined" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
 
@@ -539,7 +539,7 @@ defmodule Pont.PlaneTest do
     assert %{"method" => "session/update"} = reply!()
     assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -551,7 +551,7 @@ defmodule Pont.PlaneTest do
 
     ask = reply!()
 
-    Pont.Plane.client_frame(
+    AgentLink.Plane.client_frame(
       id,
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -562,7 +562,7 @@ defmodule Pont.PlaneTest do
 
     assert {:agent, %{"id" => "perm", "error" => %{"message" => "no"}}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -578,16 +578,16 @@ defmodule Pont.PlaneTest do
   end
 
   test "a reply that nobody asked for is dropped, and a non-json agent frame is dropped" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
-    Pont.Plane.client_frame(id, ~s({"jsonrpc":"2.0","id":4,"result":{}}))
+    AgentLink.Plane.client_frame(id, ~s({"jsonrpc":"2.0","id":4,"result":{}}))
     refute_receive {:send, _}, 50
-    Pont.Plane.agent_frame("lab", "not-json\n")
+    AgentLink.Plane.agent_frame("lab", "not-json\n")
     refute_receive _, 50
   end
 
   test "the agent disconnecting fails the prompt and the queue" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
 
@@ -608,10 +608,10 @@ defmodule Pont.PlaneTest do
       9
     )
 
-    Pont.Plane.runtime_down("lab")
+    AgentLink.Plane.runtime_down("lab")
     assert %{"id" => 8, "error" => %{"message" => "runtime disconnected"}} = reply!()
     assert %{"id" => 9, "error" => %{"message" => "runtime disconnected"}} = reply!()
-    Pont.Plane.runtime_reset("missing")
+    AgentLink.Plane.runtime_reset("missing")
     refute_receive {:send, _}, 50
   end
 
@@ -621,7 +621,7 @@ defmodule Pont.PlaneTest do
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
     {:agent, %{"id" => agent_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -632,11 +632,11 @@ defmodule Pont.PlaneTest do
 
     client_reply!(pid)
 
-    send(Pont.Plane, {:DOWN, make_ref(), :process, self(), :normal})
+    send(AgentLink.Plane, {:DOWN, make_ref(), :process, self(), :normal})
     Process.exit(pid, :kill)
     Process.sleep(30)
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -649,7 +649,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a prompt queued for a client that then leaves the runtime is skipped" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
 
@@ -674,7 +674,7 @@ defmodule Pont.PlaneTest do
     call(id, "runtime/select", %{"name" => "other"}, 6)
     reply!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -689,7 +689,7 @@ defmodule Pont.PlaneTest do
   end
 
   test "a dead runtime answers the next call with runtime is down" do
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     pid = agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
@@ -701,7 +701,10 @@ defmodule Pont.PlaneTest do
 
   test "a question delivered before its client disconnects is declined and the prompt queue resumes" do
     agent!("lab")
-    survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+
+    survivor =
+      AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+
     open_session!(survivor, "ses_1")
     {pid, id} = spawn_client()
     load_client_session!(pid, id, "ses_1")
@@ -722,11 +725,11 @@ defmodule Pont.PlaneTest do
             }} = from_agent!()
 
     assert [%{client_id: ^survivor}] =
-             :queue.to_list(:sys.get_state(Pont.Plane).slots["lab"].prompt_queue)
+             :queue.to_list(:sys.get_state(AgentLink.Plane).slots["lab"].prompt_queue)
 
     refute_receive {:agent, %{"method" => "session/prompt"}}, 50
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -738,7 +741,7 @@ defmodule Pont.PlaneTest do
     assert %{"params" => %{"update" => %{"_meta" => %{"stopReason" => "end_turn"}}}} = reply!()
     assert {:agent, %{"method" => "session/prompt", "id" => next_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -749,7 +752,7 @@ defmodule Pont.PlaneTest do
 
     assert %{"id" => 2, "result" => %{"stopReason" => "end_turn"}} = reply!()
     assert %{"method" => "session/update"} = reply!()
-    slot = :sys.get_state(Pont.Plane).slots["lab"]
+    slot = :sys.get_state(AgentLink.Plane).slots["lab"]
     assert slot.fan_pending == %{}
     assert slot.agent_pending == %{}
     refute slot.prompt_inflight
@@ -769,26 +772,29 @@ defmodule Pont.PlaneTest do
 
       case unquote(order) do
         :reply_first ->
-          Pont.Plane.client_frame(id, response)
-          assert :sys.get_state(Pont.Plane).slots["lab"].fan_pending == %{}
+          AgentLink.Plane.client_frame(id, response)
+          assert :sys.get_state(AgentLink.Plane).slots["lab"].fan_pending == %{}
           disconnect_client!(pid, id)
           assert {:agent, %{"id" => "perm", "result" => %{"outcome" => "allow"}}} = from_agent!()
 
         :down_first ->
           disconnect_client!(pid, id)
-          Pont.Plane.client_frame(id, response)
-          assert :sys.get_state(Pont.Plane).slots["lab"].fan_pending == %{}
+          AgentLink.Plane.client_frame(id, response)
+          assert :sys.get_state(AgentLink.Plane).slots["lab"].fan_pending == %{}
           assert {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}} = from_agent!()
       end
 
-      assert Process.alive?(Process.whereis(Pont.Plane))
+      assert Process.alive?(Process.whereis(AgentLink.Plane))
       refute_receive {:agent, _}, 50
     end
   end
 
   test "disconnecting a loading client declines all its questions but preserves a peer's prompt and questions" do
     agent!("lab")
-    survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+
+    survivor =
+      AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+
     initialize!(survivor, 1, %{})
     open_session!(survivor, "ses_1")
     {pid, id} = spawn_client()
@@ -828,24 +834,24 @@ defmodule Pont.PlaneTest do
                      500
     end
 
-    slot = :sys.get_state(Pont.Plane).slots["lab"]
+    slot = :sys.get_state(AgentLink.Plane).slots["lab"]
     assert %{^fan_id => %{client_id: ^survivor}} = slot.fan_pending
     assert map_size(slot.fan_pending) == 1
     assert slot.prompt_inflight
 
-    Pont.Plane.client_frame(
+    AgentLink.Plane.client_frame(
       survivor,
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => fan_id, "result" => %{}})
     )
 
     assert {:agent, %{"id" => "perm", "result" => %{}}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
     )
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -856,7 +862,7 @@ defmodule Pont.PlaneTest do
 
     assert %{"id" => 3, "result" => _} = reply!()
     assert %{"method" => "session/update"} = reply!()
-    state = :sys.get_state(Pont.Plane)
+    state = :sys.get_state(AgentLink.Plane)
     assert state.clients[survivor].session_id == "ses_1"
     assert state.slots["lab"].agent_pending == %{}
     refute state.slots["lab"].prompt_inflight
@@ -867,21 +873,24 @@ defmodule Pont.PlaneTest do
     test "disconnecting an initialize #{leaving} removes only its waiters and preserves the shared initialize" do
       agent!("lab")
       {pid, id} = spawn_client()
-      survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+
+      survivor =
+        AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+
       {first, second} = if unquote(leaving) == :issuer, do: {id, survivor}, else: {survivor, id}
       call(first, "initialize", %{}, 1)
       assert {:agent, %{"method" => "initialize", "id" => init_id}} = from_agent!()
       call(second, "initialize", %{}, 2)
-      assert length(:sys.get_state(Pont.Plane).slots["lab"].init_waiters) == 2
+      assert length(:sys.get_state(AgentLink.Plane).slots["lab"].init_waiters) == 2
       call(id, "initialize", %{}, 3)
-      assert length(:sys.get_state(Pont.Plane).slots["lab"].init_waiters) == 3
+      assert length(:sys.get_state(AgentLink.Plane).slots["lab"].init_waiters) == 3
       disconnect_client!(pid, id)
 
-      slot = :sys.get_state(Pont.Plane).slots["lab"]
+      slot = :sys.get_state(AgentLink.Plane).slots["lab"]
       assert [%{client_id: ^survivor, id: survivor_req_id}] = slot.init_waiters
       assert slot.init_sent
 
-      Pont.Plane.agent_frame(
+      AgentLink.Plane.agent_frame(
         "lab",
         Jason.encode!(%{"jsonrpc" => "2.0", "id" => init_id, "result" => %{"ok" => true}})
       )
@@ -889,7 +898,7 @@ defmodule Pont.PlaneTest do
       assert %{"id" => ^survivor_req_id, "result" => %{"ok" => true}} = reply!()
       call(survivor, "initialize", %{}, 4)
       assert %{"id" => 4, "result" => %{"ok" => true}} = reply!()
-      assert :sys.get_state(Pont.Plane).slots["lab"].init_waiters == []
+      assert :sys.get_state(AgentLink.Plane).slots["lab"].init_waiters == []
       refute_receive {:agent, _}, 50
     end
   end
@@ -898,14 +907,17 @@ defmodule Pont.PlaneTest do
     test "disconnect and a cancelled prompt response do not release the next prompt early: #{order}" do
       agent!("lab")
       {pid, id} = spawn_client()
-      survivor = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+
+      survivor =
+        AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+
       call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 1)
       assert {:agent, %{"method" => "session/prompt", "id" => prompt_id}} = from_agent!()
       agent_ask("ses_1", "perm", "session/request_permission")
       assert %{"method" => "session/request_permission"} = client_reply!(pid)
       call(survivor, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 2)
 
-      Pont.Plane.client_frame(
+      AgentLink.Plane.client_frame(
         survivor,
         ~s({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"ses_1"}})
       )
@@ -921,26 +933,26 @@ defmodule Pont.PlaneTest do
 
       case unquote(order) do
         :cancel_reply_first ->
-          Pont.Plane.agent_frame("lab", cancelled)
+          AgentLink.Plane.agent_frame("lab", cancelled)
           assert %{"id" => 1, "result" => %{"stopReason" => "cancelled"}} = client_reply!(pid)
           disconnect_client!(pid, id)
 
         :down_first ->
           disconnect_client!(pid, id)
           refute_receive {:agent, %{"method" => "session/prompt"}}, 50
-          Pont.Plane.agent_frame("lab", cancelled)
+          AgentLink.Plane.agent_frame("lab", cancelled)
       end
 
       # The two agent writes can arrive in either order relative to one another.
       assert_receive {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}}, 500
       assert_receive {:agent, %{"method" => "session/prompt", "id" => next_id}}, 500
-      slot = :sys.get_state(Pont.Plane).slots["lab"]
+      slot = :sys.get_state(AgentLink.Plane).slots["lab"]
       assert slot.prompt_inflight
       refute Map.has_key?(slot.agent_pending, prompt_id)
       assert %{client_id: ^survivor} = slot.agent_pending[next_id]
       assert slot.fan_pending == %{}
 
-      Pont.Plane.agent_frame(
+      AgentLink.Plane.agent_frame(
         "lab",
         Jason.encode!(%{
           "jsonrpc" => "2.0",
@@ -950,7 +962,7 @@ defmodule Pont.PlaneTest do
       )
 
       assert %{"id" => 2, "result" => _} = reply!()
-      refute :sys.get_state(Pont.Plane).slots["lab"].prompt_inflight
+      refute :sys.get_state(AgentLink.Plane).slots["lab"].prompt_inflight
       refute_receive {:agent, _}, 50
     end
   end
@@ -968,7 +980,7 @@ defmodule Pont.PlaneTest do
       call(id, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 3)
       assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
 
-      Pont.Plane.agent_frame(
+      AgentLink.Plane.agent_frame(
         name,
         Jason.encode!(%{
           "jsonrpc" => "2.0",
@@ -987,21 +999,21 @@ defmodule Pont.PlaneTest do
       assert_receive {:agent, %{"id" => ^name, "error" => %{"code" => -32000}}}, 500
     end
 
-    for {name, slot} <- :sys.get_state(Pont.Plane).slots do
+    for {name, slot} <- :sys.get_state(AgentLink.Plane).slots do
       assert slot.fan_pending == %{}
       assert slot.init_waiters == []
 
       for {req_id, pending} <- slot.agent_pending do
         result = if pending.kind == :prompt, do: %{"stopReason" => "end_turn"}, else: %{}
 
-        Pont.Plane.agent_frame(
+        AgentLink.Plane.agent_frame(
           name,
           Jason.encode!(%{"jsonrpc" => "2.0", "id" => req_id, "result" => result})
         )
       end
     end
 
-    for slot <- Map.values(:sys.get_state(Pont.Plane).slots) do
+    for slot <- Map.values(:sys.get_state(AgentLink.Plane).slots) do
       assert slot.agent_pending == %{}
       refute slot.prompt_inflight
     end
@@ -1013,7 +1025,7 @@ defmodule Pont.PlaneTest do
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
     {:agent, %{"id" => agent_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -1037,7 +1049,7 @@ defmodule Pont.PlaneTest do
     Process.exit(pid, :kill)
     Process.sleep(30)
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -1053,18 +1065,18 @@ defmodule Pont.PlaneTest do
   end
 
   test "a subject only sees the runtimes it is allowed to use" do
-    previous = Application.get_env(:pont, :access)
-    Application.put_env(:pont, :access, Pont.PlaneTest.Gate)
+    previous = Application.get_env(:agent_link, :access)
+    Application.put_env(:agent_link, :access, AgentLink.PlaneTest.Gate)
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:pont, :access, previous),
-        else: Application.delete_env(:pont, :access)
+        do: Application.put_env(:agent_link, :access, previous),
+        else: Application.delete_env(:agent_link, :access)
     end)
 
     agent!("hidden")
     agent!("lab")
-    id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "ada", role: :user})
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "ada", role: :user})
     call(id, "runtime/list", %{}, 1)
     assert %{"result" => %{"runtimes" => [%{"name" => "lab"}]}} = reply!()
 
@@ -1076,7 +1088,7 @@ defmodule Pont.PlaneTest do
     call(id, "session/load", %{"sessionId" => session_id, "cwd" => "/tmp", "mcpServers" => []}, 1)
     assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
     )
@@ -1092,7 +1104,7 @@ defmodule Pont.PlaneTest do
   end
 
   defp await_client_down!(id, deadline) do
-    if Map.has_key?(:sys.get_state(Pont.Plane).clients, id) do
+    if Map.has_key?(:sys.get_state(AgentLink.Plane).clients, id) do
       assert System.monotonic_time(:millisecond) < deadline, "plane did not process client DOWN"
       Process.sleep(1)
       await_client_down!(id, deadline)
@@ -1104,10 +1116,10 @@ defmodule Pont.PlaneTest do
     pid = spawn(fn -> agent_loop(parent) end)
 
     {:ok, ^name} =
-      Pont.Registry.register(
+      AgentLink.Registry.register(
         pid,
-        %Pont.Registry.Uplink{name: name, label: name},
-        %Pont.Access.Subject{id: "admin", role: :admin}
+        %AgentLink.Registry.Uplink{name: name, label: name},
+        %AgentLink.Access.Subject{id: "admin", role: :admin}
       )
 
     pid
@@ -1126,7 +1138,9 @@ defmodule Pont.PlaneTest do
 
     pid =
       spawn(fn ->
-        id = Pont.Plane.register(self(), %Pont.Access.Subject{id: "admin", role: :admin})
+        id =
+          AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+
         send(parent, {:ready, id})
         client_loop(parent)
       end)
@@ -1144,7 +1158,7 @@ defmodule Pont.PlaneTest do
   end
 
   defp call(id, method, params, req_id) do
-    Pont.Plane.client_frame(
+    AgentLink.Plane.client_frame(
       id,
       Jason.encode!(%{"jsonrpc" => "2.0", "id" => req_id, "method" => method, "params" => params})
     )
@@ -1180,7 +1194,7 @@ defmodule Pont.PlaneTest do
               "params" => %{"clientCapabilities" => caps}
             }} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -1206,7 +1220,7 @@ defmodule Pont.PlaneTest do
   end
 
   defp agent_ask(session_id, req_id, method) do
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",
@@ -1229,7 +1243,7 @@ defmodule Pont.PlaneTest do
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, session_id)
     {:agent, %{"id" => agent_id}} = from_agent!()
 
-    Pont.Plane.agent_frame(
+    AgentLink.Plane.agent_frame(
       "lab",
       Jason.encode!(%{
         "jsonrpc" => "2.0",

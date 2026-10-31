@@ -1,4 +1,4 @@
-defmodule Pont.TestHelpers do
+defmodule AgentLink.TestHelpers do
   @moduledoc "Shared test helpers."
 
   import ExUnit.Assertions
@@ -15,7 +15,7 @@ defmodule Pont.TestHelpers do
   end
 
   def await_pid(name, attempts \\ 100) do
-    case Pont.Registry.pid(name) do
+    case AgentLink.Registry.pid(name) do
       pid when is_pid(pid) ->
         pid
 
@@ -28,6 +28,6 @@ defmodule Pont.TestHelpers do
     end
   end
 
-  def restore(key, nil), do: Application.delete_env(:pont, key)
-  def restore(key, value), do: Application.put_env(:pont, key, value)
+  def restore(key, nil), do: Application.delete_env(:agent_link, key)
+  def restore(key, value), do: Application.put_env(:agent_link, key, value)
 end

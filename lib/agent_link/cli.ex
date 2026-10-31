@@ -1,7 +1,7 @@
-defmodule Pont.CLI do
+defmodule AgentLink.CLI do
   @moduledoc """
   The start command. No arguments runs the plane and the relay.
-  `plane` is the plane alone. `relay` starts `Pont.Relay.Agent`.
+  `plane` is the plane alone. `relay` starts `AgentLink.Relay.Agent`.
   """
 
   defstruct mode: :all, port: nil, token: nil, opencode_bin: nil
@@ -58,9 +58,9 @@ defmodule Pont.CLI do
   @doc "The commands this binary accepts."
   def usage do
     """
-    pont [--port PORT] [--token TOKEN] [--opencode-bin PATH]
-    pont plane [--port PORT] [--token TOKEN]
-    pont relay --token TOKEN [--opencode-bin PATH]
+    agentlink [--port PORT] [--token TOKEN] [--opencode-bin PATH]
+    agentlink plane [--port PORT] [--token TOKEN]
+    agentlink relay --token TOKEN [--opencode-bin PATH]
     """
   end
 
@@ -92,7 +92,7 @@ defmodule Pont.CLI do
 
   defp plane_bin(:plane, opts) do
     if Keyword.has_key?(opts, :opencode_bin),
-      do: {:error, "pont plane does not run opencode.\n" <> usage()},
+      do: {:error, "agentlink plane does not run opencode.\n" <> usage()},
       else: :ok
   end
 
@@ -100,12 +100,12 @@ defmodule Pont.CLI do
 
   defp no_port(opts) do
     if Keyword.has_key?(opts, :port),
-      do: {:error, "pont relay does not listen.\n" <> usage()},
+      do: {:error, "agentlink relay does not listen.\n" <> usage()},
       else: :ok
   end
 
   defp required_token(token) when is_binary(token) and token != "", do: {:ok, token}
-  defp required_token(_), do: {:error, "pont relay needs --token.\n" <> usage()}
+  defp required_token(_), do: {:error, "agentlink relay needs --token.\n" <> usage()}
 
   defp optional_token(nil), do: {:ok, nil}
   defp optional_token(""), do: {:error, usage()}
@@ -129,15 +129,15 @@ defmodule Pont.CLI do
   end
 
   defp store(%__MODULE__{mode: mode, port: port, token: token, opencode_bin: opencode_bin}) do
-    Application.put_env(:pont, :mode, mode)
+    Application.put_env(:agent_link, :mode, mode)
 
     if port do
-      Application.put_env(:pont, :port, port)
-      Application.put_env(:pont, :plane_url, Pont.Paths.plane_url(port))
+      Application.put_env(:agent_link, :port, port)
+      Application.put_env(:agent_link, :plane_url, AgentLink.Paths.plane_url(port))
     end
 
-    if token, do: Application.put_env(:pont, :master_token, token)
-    if opencode_bin, do: Application.put_env(:pont, :opencode_bin, opencode_bin)
+    if token, do: Application.put_env(:agent_link, :master_token, token)
+    if opencode_bin, do: Application.put_env(:agent_link, :opencode_bin, opencode_bin)
     :ok
   end
 end

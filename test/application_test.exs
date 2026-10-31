@@ -1,21 +1,21 @@
-defmodule Pont.ApplicationTest do
+defmodule AgentLink.ApplicationTest do
   use ExUnit.Case, async: false
 
   setup do
-    Application.put_env(:pont, :agent_listener, self())
+    Application.put_env(:agent_link, :agent_listener, self())
 
     previous =
-      {Application.get_env(:pont, :mode), Application.get_env(:pont, :port),
-       Application.get_env(:pont, :link_path)}
+      {Application.get_env(:agent_link, :mode), Application.get_env(:agent_link, :port),
+       Application.get_env(:agent_link, :link_path)}
 
     on_exit(fn ->
-      Application.delete_env(:pont, :agent_listener)
+      Application.delete_env(:agent_link, :agent_listener)
       {mode, port, link_path} = previous
-      if mode, do: Application.put_env(:pont, :mode, mode)
-      if port, do: Application.put_env(:pont, :port, port)
+      if mode, do: Application.put_env(:agent_link, :mode, mode)
+      if port, do: Application.put_env(:agent_link, :port, port)
       restore_link(link_path)
 
-      if pid = Process.whereis(Pont.Supervisor) do
+      if pid = Process.whereis(AgentLink.Supervisor) do
         Process.exit(pid, :kill)
         Process.sleep(50)
       end
@@ -25,84 +25,84 @@ defmodule Pont.ApplicationTest do
   end
 
   test "plane mode does not start an agent relay" do
-    Application.put_env(:pont, :mode, :plane)
-    Application.put_env(:pont, :port, 18_096)
-    assert {:ok, _pid} = Pont.Application.start(:normal, [])
-    assert Process.whereis(Pont.Plane)
-    assert Process.whereis(Pont.Registry)
-    assert Process.whereis(Pont.Plane.Supervisor)
-    refute Process.whereis(Pont.Relay.Agent)
+    Application.put_env(:agent_link, :mode, :plane)
+    Application.put_env(:agent_link, :port, 18_096)
+    assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
+    assert Process.whereis(AgentLink.Plane)
+    assert Process.whereis(AgentLink.Registry)
+    assert Process.whereis(AgentLink.Plane.Supervisor)
+    refute Process.whereis(AgentLink.Relay.Agent)
   end
 
   test "relay mode stops when the link file is missing" do
-    Application.put_env(:pont, :mode, :relay)
+    Application.put_env(:agent_link, :mode, :relay)
 
     Application.put_env(
-      :pont,
+      :agent_link,
       :link_path,
-      "/tmp/pont-missing-#{System.unique_integer([:positive])}.json"
+      "/tmp/agentlink-missing-#{System.unique_integer([:positive])}.json"
     )
 
-    assert {:error, message} = Pont.Application.start(:normal, [])
+    assert {:error, message} = AgentLink.Application.start(:normal, [])
     assert message =~ "No link file"
-    refute Process.whereis(Pont.Relay.Agent)
+    refute Process.whereis(AgentLink.Relay.Agent)
   end
 
   test "relay mode starts only the relay" do
-    if pid = Process.whereis(Pont.Supervisor) do
+    if pid = Process.whereis(AgentLink.Supervisor) do
       Process.exit(pid, :kill)
       Process.sleep(50)
     end
 
     write_link()
-    Application.put_env(:pont, :mode, :relay)
-    assert {:ok, _pid} = Pont.Application.start(:normal, [])
+    Application.put_env(:agent_link, :mode, :relay)
+    assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _cwd}
-    assert Process.whereis(Pont.Relay.Agent)
-    refute Process.whereis(Pont.Plane)
-    refute Process.whereis(Pont.Plane.Supervisor)
+    assert Process.whereis(AgentLink.Relay.Agent)
+    refute Process.whereis(AgentLink.Plane)
+    refute Process.whereis(AgentLink.Plane.Supervisor)
   end
 
   test "all mode starts both" do
     start_all(18_097)
-    assert Process.whereis(Pont.Plane)
-    assert Process.whereis(Pont.Relay.Agent)
-    assert Process.whereis(Pont.Relay.Agent.Supervisor)
-    assert plane_only?(Pont.Plane.Supervisor)
+    assert Process.whereis(AgentLink.Plane)
+    assert Process.whereis(AgentLink.Relay.Agent)
+    assert Process.whereis(AgentLink.Relay.Agent.Supervisor)
+    assert plane_only?(AgentLink.Plane.Supervisor)
   end
 
   test "an agent relay crash loop leaves the plane up" do
     start_all(18_098)
-    supervisor = Process.whereis(Pont.Relay.Agent.Supervisor)
+    supervisor = Process.whereis(AgentLink.Relay.Agent.Supervisor)
     supervisor_ref = Process.monitor(supervisor)
 
     crash_until_down(supervisor, supervisor_ref, 20)
     Process.sleep(50)
-    assert Process.alive?(Process.whereis(Pont.Plane))
-    assert Process.alive?(Process.whereis(Pont.Registry))
-    assert Process.alive?(Process.whereis(Pont.Plane.Supervisor))
-    assert Process.alive?(Process.whereis(Pont.Supervisor))
-    assert plane_only?(Pont.Plane.Supervisor)
-    refute Process.whereis(Pont.Relay.Agent)
-    refute Process.whereis(Pont.Relay.Agent.Supervisor)
+    assert Process.alive?(Process.whereis(AgentLink.Plane))
+    assert Process.alive?(Process.whereis(AgentLink.Registry))
+    assert Process.alive?(Process.whereis(AgentLink.Plane.Supervisor))
+    assert Process.alive?(Process.whereis(AgentLink.Supervisor))
+    assert plane_only?(AgentLink.Plane.Supervisor)
+    refute Process.whereis(AgentLink.Relay.Agent)
+    refute Process.whereis(AgentLink.Relay.Agent.Supervisor)
   end
 
   defp start_all(port) do
-    if pid = Process.whereis(Pont.Supervisor) do
+    if pid = Process.whereis(AgentLink.Supervisor) do
       Process.exit(pid, :kill)
       Process.sleep(50)
     end
 
-    Application.put_env(:pont, :mode, :all)
-    Application.put_env(:pont, :port, port)
+    Application.put_env(:agent_link, :mode, :all)
+    Application.put_env(:agent_link, :port, port)
     write_link()
-    assert {:ok, _pid} = Pont.Application.start(:normal, [])
+    assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _cwd}
   end
 
   defp plane_only?(supervisor) do
     ids = supervisor |> Supervisor.which_children() |> Enum.map(&elem(&1, 0))
-    Pont.Relay.Agent not in ids and Pont.Relay.Agent.Supervisor not in ids
+    AgentLink.Relay.Agent not in ids and AgentLink.Relay.Agent.Supervisor not in ids
   end
 
   defp crash_until_down(supervisor, ref, attempts) when attempts > 0 do
@@ -127,7 +127,7 @@ defmodule Pont.ApplicationTest do
   end
 
   defp wait_relay(attempts \\ 50) do
-    case Process.whereis(Pont.Relay.Agent) do
+    case Process.whereis(AgentLink.Relay.Agent) do
       pid when is_pid(pid) ->
         pid
 
@@ -142,17 +142,20 @@ defmodule Pont.ApplicationTest do
 
   defp write_link do
     path =
-      Path.join(System.tmp_dir!(), "pont-app-link-#{System.unique_integer([:positive])}.json")
+      Path.join(
+        System.tmp_dir!(),
+        "agentlink-app-link-#{System.unique_integer([:positive])}.json"
+      )
 
     File.write!(
       path,
       ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"})
     )
 
-    Application.put_env(:pont, :link_path, path)
+    Application.put_env(:agent_link, :link_path, path)
     path
   end
 
-  defp restore_link(nil), do: Application.delete_env(:pont, :link_path)
-  defp restore_link(path), do: Application.put_env(:pont, :link_path, path)
+  defp restore_link(nil), do: Application.delete_env(:agent_link, :link_path)
+  defp restore_link(path), do: Application.put_env(:agent_link, :link_path, path)
 end

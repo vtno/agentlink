@@ -1,7 +1,7 @@
-defmodule Pont.Agent do
+defmodule AgentLink.Agent do
   @moduledoc """
   ACP stdio for one agent. The agent relay opens the agent through this behaviour.
-  `Pont.OpenCode` is the production behaviour. It runs the binary. Tests supply a fake so the suite
+  `AgentLink.OpenCode` is the production behaviour. It runs the binary. Tests supply a fake so the suite
   never starts the binary.
   """
 

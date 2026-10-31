@@ -1,15 +1,15 @@
-defmodule Pont.Paths do
+defmodule AgentLink.Paths do
   @moduledoc """
-  Where Pont keeps its own files. Defaults live under `~/.pont`.
+  Where AgentLink keeps its own files. Defaults live under `~/.agentlink`.
   An environment value already loaded into the application config wins.
   """
 
   @doc "Directory that holds the link file and the agent workspace."
-  def root, do: Path.join(System.user_home!(), ".pont")
+  def root, do: Path.join(System.user_home!(), ".agentlink")
 
   @doc "Link file the uplink reads when it dials."
   def link do
-    Application.get_env(:pont, :link_path) || Path.join(root(), "agent.link.json")
+    Application.get_env(:agent_link, :link_path) || Path.join(root(), "agent.link.json")
   end
 
   @doc "Plane WebSocket the uplink dials on this machine."
@@ -26,8 +26,8 @@ defmodule Pont.Paths do
   end
 
   @doc "Workspace the agent relay opens the agent in."
-  def workdir, do: Application.get_env(:pont, :workdir) || default_workdir()
+  def workdir, do: Application.get_env(:agent_link, :workdir) || default_workdir()
 
-  @doc "OpenCode executable. `Pont.OpenCode` runs it."
-  def opencode_bin, do: Application.get_env(:pont, :opencode_bin) || default_opencode_bin()
+  @doc "OpenCode executable. `AgentLink.OpenCode` runs it."
+  def opencode_bin, do: Application.get_env(:agent_link, :opencode_bin) || default_opencode_bin()
 end

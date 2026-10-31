@@ -1,28 +1,28 @@
-defmodule Pont.Access.Single do
+defmodule AgentLink.Access.Single do
   @moduledoc """
   One operator. `--token` is the token. When it is unset, a plane mints one
   for this process and prints it. That admin owns every uplink and may use
   every uplink.
   """
 
-  @behaviour Pont.Access
+  @behaviour AgentLink.Access
 
   @impl true
   def authenticate(conn) do
-    if Pont.Auth.enabled?() and Pont.Auth.allowed?(conn) do
-      {:ok, %Pont.Access.Subject{id: "admin", role: :admin}}
+    if AgentLink.Auth.enabled?() and AgentLink.Auth.allowed?(conn) do
+      {:ok, %AgentLink.Access.Subject{id: "admin", role: :admin}}
     else
       :reject
     end
   end
 
   @impl true
-  def allowed?(%Pont.Access.Subject{role: :admin}, name) when is_binary(name), do: true
-  def allowed?(%Pont.Access.Subject{}, name) when is_binary(name), do: false
+  def allowed?(%AgentLink.Access.Subject{role: :admin}, name) when is_binary(name), do: true
+  def allowed?(%AgentLink.Access.Subject{}, name) when is_binary(name), do: false
 
   @impl true
-  def claim(%Pont.Access.Subject{role: :admin}, name) when is_binary(name), do: :ok
-  def claim(%Pont.Access.Subject{}, name) when is_binary(name), do: :reject
+  def claim(%AgentLink.Access.Subject{role: :admin}, name) when is_binary(name), do: :ok
+  def claim(%AgentLink.Access.Subject{}, name) when is_binary(name), do: :reject
 
   @impl true
   def prepare(mode) do
@@ -35,7 +35,7 @@ defmodule Pont.Access.Single do
 
   @doc "The shell line that starts this binary as the relay."
   def command(token) when is_binary(token) do
-    "pont relay --token '#{String.replace(token, "'", "'\\''")}'"
+    "agentlink relay --token '#{String.replace(token, "'", "'\\''")}'"
   end
 
   defp ensure_token(mode) do
@@ -45,7 +45,7 @@ defmodule Pont.Access.Single do
 
       _ when mode in [:plane, :all] ->
         token = mint()
-        Application.put_env(:pont, :master_token, token)
+        Application.put_env(:agent_link, :master_token, token)
         {:minted, token}
 
       _ ->
@@ -54,15 +54,15 @@ defmodule Pont.Access.Single do
   end
 
   defp message(mode, token, source) do
-    url = Application.get_env(:pont, :plane_url) || Pont.Paths.plane_url()
+    url = Application.get_env(:agent_link, :plane_url) || AgentLink.Paths.plane_url()
 
     origin =
       case source do
         :minted ->
-          "Pont created a token for this process. Pass the same --token to start again."
+          "AgentLink created a token for this process. Pass the same --token to start again."
 
         :given ->
-          "Pont is using the token from --token."
+          "AgentLink is using the token from --token."
       end
 
     case mode do
@@ -93,7 +93,7 @@ defmodule Pont.Access.Single do
     end
   end
 
-  defp configured_token, do: Pont.Auth.token()
+  defp configured_token, do: AgentLink.Auth.token()
 
   defp mint do
     Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
