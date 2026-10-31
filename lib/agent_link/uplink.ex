@@ -1,4 +1,4 @@
-defmodule Pont.Uplink do
+defmodule AgentLink.Uplink do
   @moduledoc """
   Dials the plane's agent socket. Outbound text frames are one JSON object.
   Mint owns the HTTP upgrade and the frame codec. Nothing here calls the plane
@@ -11,7 +11,7 @@ defmodule Pont.Uplink do
   waits until the link name or plane URL changes. A close that means the
   instance id is too long logs the error and does not redial until restart.
   Bad-name and not-allowed closes also park until the name or plane URL changes
-  or the relay restarts. The codes and reasons are shared in `Pont.AgentSocketProtocol`.
+  or the relay restarts. The codes and reasons are shared in `AgentLink.AgentSocketProtocol`.
   """
 
   use GenServer
@@ -135,7 +135,7 @@ defmodule Pont.Uplink do
     close_conn(state)
     state = %{state | conn: nil, websocket: nil, ref: nil}
 
-    case Pont.AgentSocketProtocol.rejection(code) do
+    case AgentLink.AgentSocketProtocol.rejection(code) do
       nil ->
         state
 
@@ -183,7 +183,8 @@ defmodule Pont.Uplink do
   end
 
   defp upgrade(conn, ws_scheme, path) do
-    with {:ok, conn, ref} <- Mint.WebSocket.upgrade(ws_scheme, conn, path, Pont.Auth.headers()),
+    with {:ok, conn, ref} <-
+           Mint.WebSocket.upgrade(ws_scheme, conn, path, AgentLink.Auth.headers()),
          {:ok, conn, status, headers} <- await_upgrade(conn, ref, []),
          {:ok, conn, websocket} <- Mint.WebSocket.new(conn, ref, status, headers) do
       {:ok, conn, ref, websocket}
@@ -211,7 +212,7 @@ defmodule Pont.Uplink do
   end
 
   defp read_link do
-    case Pont.Link.read() do
+    case AgentLink.Link.read() do
       {:ok, link} ->
         {:ok, link}
 
@@ -336,21 +337,21 @@ defmodule Pont.Uplink do
       if is_binary(reason) and reason != "" do
         reason
       else
-        Pont.AgentSocketProtocol.reason(rejection, state.link.name)
+        AgentLink.AgentSocketProtocol.reason(rejection, state.link.name)
       end
 
     action =
       case rejection do
         :name_taken ->
           "Another relay is already connected with this name. " <>
-            "Stop the other relay and restart this one, or change name in #{Pont.Paths.link()}. "
+            "Stop the other relay and restart this one, or change name in #{AgentLink.Paths.link()}. "
 
         :bad_name ->
-          "Fix name in #{Pont.Paths.link()} and restart this relay, or change name or plane_url. "
+          "Fix name in #{AgentLink.Paths.link()} and restart this relay, or change name or plane_url. "
 
         :not_allowed ->
           "Ask the plane operator to allow this uplink, then restart this relay, " <>
-            "or change name or plane_url in #{Pont.Paths.link()}. "
+            "or change name or plane_url in #{AgentLink.Paths.link()}. "
 
         :instance_too_long ->
           "Fix the relay instance id and restart this relay. "
@@ -395,7 +396,7 @@ defmodule Pont.Uplink do
   defp uplink_hello(link) do
     %{
       "jsonrpc" => "2.0",
-      "method" => "pont.uplink",
+      "method" => "agentlink.uplink",
       "params" => %{
         "name" => link.name,
         "label" => link.label,
@@ -405,7 +406,7 @@ defmodule Pont.Uplink do
     }
   end
 
-  # One id per VM. A new `Pont.Uplink` process in this BEAM is still this relay.
+  # One id per VM. A new `AgentLink.Uplink` process in this BEAM is still this relay.
   # A second OS process has a different id and cannot take the name.
   defp relay_instance do
     key = {__MODULE__, :instance}

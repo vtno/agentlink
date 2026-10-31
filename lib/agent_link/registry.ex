@@ -1,7 +1,7 @@
-defmodule Pont.Registry.Uplink do
+defmodule AgentLink.Registry.Uplink do
   @moduledoc """
   The row recorded after an uplink says hello. `name` comes from the link. `label` is the machine.
-  `program` is the agent product name, not the `Pont.Agent` module. `instance` identifies the
+  `program` is the agent product name, not the `AgentLink.Agent` module. `instance` identifies the
   relay VM. A later hello with the same instance is that relay dialing again. An id longer
   than the plane's maximum is rejected.
   """
@@ -9,7 +9,7 @@ defmodule Pont.Registry.Uplink do
   defstruct [:name, :label, :program, :pid, :instance, :connected_at]
 end
 
-defmodule Pont.Registry do
+defmodule AgentLink.Registry do
   # Link names are slugs, and Link.slug/1 cuts one to this length. The plane
   # rejects a longer name instead of storing an unbounded id.
   @max_name_chars 40
@@ -27,14 +27,14 @@ defmodule Pont.Registry do
   is gone, and the new hello takes the name. When the holder process exits,
   the name is free.
 
-  An instance id above the byte limit in `Pont.AgentSocketProtocol.max_instance_bytes/0` is
+  An instance id above the byte limit in `AgentLink.AgentSocketProtocol.max_instance_bytes/0` is
   rejected. That hello does not change the existing row.
   """
 
   use GenServer
   require Logger
 
-  @table :pont_runtimes
+  @table :agent_link_runtimes
 
   defstruct pids: %{}
 
@@ -56,21 +56,21 @@ defmodule Pont.Registry do
   Register an uplink hello under its normalized name. A live holder keeps the name.
   Returns `{:ok, name}` or `{:error, rejection}` from the shared hello protocol.
   """
-  def register(pid, %Pont.Registry.Uplink{} = uplink, %Pont.Access.Subject{} = subject)
+  def register(pid, %AgentLink.Registry.Uplink{} = uplink, %AgentLink.Access.Subject{} = subject)
       when is_pid(pid) do
     GenServer.call(__MODULE__, {:register, pid, uplink, subject})
   end
 
   @impl true
   def handle_call(
-        {:register, pid, %Pont.Registry.Uplink{} = uplink, subject},
+        {:register, pid, %AgentLink.Registry.Uplink{} = uplink, subject},
         _from,
         %__MODULE__{} = state
       ) do
     with {:ok, name} <- normalize_name(uplink.name),
-         :ok <- Pont.Access.claim(subject, name),
+         :ok <- AgentLink.Access.claim(subject, name),
          {:ok, instance} <- instance_id(uplink.instance) do
-      uplink = %Pont.Registry.Uplink{
+      uplink = %AgentLink.Registry.Uplink{
         name: name,
         label: clip(uplink.label, name),
         program: clip(uplink.program, "opencode"),
@@ -80,10 +80,10 @@ defmodule Pont.Registry do
       }
 
       case :ets.lookup(@table, name) do
-        [{^name, %Pont.Registry.Uplink{pid: ^pid}}] ->
+        [{^name, %AgentLink.Registry.Uplink{pid: ^pid}}] ->
           {:reply, {:ok, name}, state}
 
-        [{^name, %Pont.Registry.Uplink{pid: holder} = current}] ->
+        [{^name, %AgentLink.Registry.Uplink{pid: holder} = current}] ->
           cond do
             Process.alive?(holder) and same_relay?(current, uplink) ->
               Logger.info("uplink reconnect name=#{name} the same relay dialed again")
@@ -108,7 +108,7 @@ defmodule Pont.Registry do
     else
       {:error, :instance_too_long} ->
         Logger.warning(
-          "uplink rejected name=#{String.trim(uplink.name)} #{Pont.AgentSocketProtocol.reason(:instance_too_long)}"
+          "uplink rejected name=#{String.trim(uplink.name)} #{AgentLink.AgentSocketProtocol.reason(:instance_too_long)}"
         )
 
         {:reply, {:error, :instance_too_long}, state}
@@ -126,10 +126,10 @@ defmodule Pont.Registry do
 
       {{_ref, name}, pids} ->
         case :ets.lookup(@table, name) do
-          [{^name, %Pont.Registry.Uplink{pid: ^pid}}] ->
+          [{^name, %AgentLink.Registry.Uplink{pid: ^pid}}] ->
             :ets.delete(@table, name)
             Logger.warning("runtime down name=#{name} #{inspect(reason)}")
-            Pont.Plane.runtime_down(name)
+            AgentLink.Plane.runtime_down(name)
 
           _ ->
             :ok
@@ -140,15 +140,15 @@ defmodule Pont.Registry do
   end
 
   @doc "The uplinks this subject may use."
-  def allowed(%Pont.Access.Subject{} = subject) do
-    Enum.filter(list(), &Pont.Access.allowed?(subject, &1["name"]))
+  def allowed(%AgentLink.Access.Subject{} = subject) do
+    Enum.filter(list(), &AgentLink.Access.allowed?(subject, &1["name"]))
   end
 
   @doc "The uplinks currently dialed in. `name` is what a client selects."
   def list do
     @table
     |> :ets.tab2list()
-    |> Enum.map(fn {_name, %Pont.Registry.Uplink{} = uplink} ->
+    |> Enum.map(fn {_name, %AgentLink.Registry.Uplink{} = uplink} ->
       %{
         "name" => uplink.name,
         "label" => uplink.label,
@@ -162,12 +162,12 @@ defmodule Pont.Registry do
   @doc "The agent socket pid registered under this link name, or nil."
   def pid(name) when is_binary(name) do
     case :ets.lookup(@table, name) do
-      [{^name, %Pont.Registry.Uplink{pid: pid}}] -> pid
+      [{^name, %AgentLink.Registry.Uplink{pid: pid}}] -> pid
       [] -> nil
     end
   end
 
-  defp remember(%__MODULE__{} = state, pid, %Pont.Registry.Uplink{} = uplink) do
+  defp remember(%__MODULE__{} = state, pid, %AgentLink.Registry.Uplink{} = uplink) do
     state = drop_pid(state, pid)
     ref = Process.monitor(pid)
     :ets.insert(@table, {uplink.name, uplink})
@@ -176,8 +176,8 @@ defmodule Pont.Registry do
       "uplink registered name=#{uplink.name} label=#{uplink.label} program=#{uplink.program}"
     )
 
-    Pont.Setup.Watch.connected(uplink.name, uplink.label)
-    Pont.Plane.runtime_reset(uplink.name)
+    AgentLink.Setup.Watch.connected(uplink.name, uplink.label)
+    AgentLink.Plane.runtime_reset(uplink.name)
     %{state | pids: Map.put(state.pids, pid, {ref, uplink.name})}
   end
 
@@ -190,7 +190,7 @@ defmodule Pont.Registry do
         Process.demonitor(ref, [:flush])
 
         case :ets.lookup(@table, name) do
-          [{^name, %Pont.Registry.Uplink{pid: ^pid}}] -> :ets.delete(@table, name)
+          [{^name, %AgentLink.Registry.Uplink{pid: ^pid}}] -> :ets.delete(@table, name)
           _ -> :ok
         end
 
@@ -222,7 +222,7 @@ defmodule Pont.Registry do
   # Empty and missing ids never match, including nil with nil. A present id
   # is kept whole. An id over the maximum is an error, not a missing id.
   defp instance_id(value) when is_binary(value) do
-    max = Pont.AgentSocketProtocol.max_instance_bytes()
+    max = AgentLink.AgentSocketProtocol.max_instance_bytes()
 
     case String.trim(value) do
       "" ->
@@ -238,7 +238,9 @@ defmodule Pont.Registry do
 
   defp instance_id(_value), do: {:ok, nil}
 
-  defp same_relay?(%Pont.Registry.Uplink{instance: id}, %Pont.Registry.Uplink{instance: id})
+  defp same_relay?(%AgentLink.Registry.Uplink{instance: id}, %AgentLink.Registry.Uplink{
+         instance: id
+       })
        when is_binary(id),
        do: true
 

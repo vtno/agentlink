@@ -1,9 +1,9 @@
-defmodule Pont.MixProject do
+defmodule AgentLink.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :pont,
+      app: :agent_link,
       version: "0.1.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
@@ -19,7 +19,7 @@ defmodule Pont.MixProject do
     if Mix.env() == :test do
       extras
     else
-      Keyword.put(extras, :mod, {Pont.Application, []})
+      Keyword.put(extras, :mod, {AgentLink.Application, []})
     end
   end
 
@@ -46,7 +46,7 @@ defmodule Pont.MixProject do
 
   defp releases do
     [
-      pont: [
+      agentlink: [
         steps: [:assemble, &Burrito.wrap/1],
         burrito: [
           targets: [

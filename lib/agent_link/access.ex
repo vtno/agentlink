@@ -1,4 +1,4 @@
-defmodule Pont.Access do
+defmodule AgentLink.Access do
   @moduledoc """
   Who a connection is, and which uplink that subject may use.
   The plane calls this module. The configured implementation does the work.
@@ -23,9 +23,9 @@ defmodule Pont.Access do
 
   @optional_callbacks [claim: 2]
 
-  @doc "The implementation named by `:access`. `Pont.Access.Single` when unset."
+  @doc "The implementation named by `:access`. `AgentLink.Access.Single` when unset."
   def implementation do
-    module = Application.get_env(:pont, :access, Pont.Access.Single)
+    module = Application.get_env(:agent_link, :access, AgentLink.Access.Single)
 
     cond do
       not Code.ensure_loaded?(module) ->
@@ -34,7 +34,8 @@ defmodule Pont.Access do
       not function_exported?(module, :authenticate, 1) or
         not function_exported?(module, :allowed?, 2) or
           not function_exported?(module, :prepare, 1) ->
-        raise ArgumentError, "access module #{inspect(module)} does not implement Pont.Access"
+        raise ArgumentError,
+              "access module #{inspect(module)} does not implement AgentLink.Access"
 
       true ->
         module
@@ -47,10 +48,10 @@ defmodule Pont.Access do
   @doc "Name the caller of the agent socket. The request must present the master token."
   def agent_caller(conn) do
     cond do
-      not Pont.Auth.enabled?() ->
+      not AgentLink.Auth.enabled?() ->
         {:reject, "No token is set."}
 
-      not Pont.Auth.allowed?(conn) ->
+      not AgentLink.Auth.allowed?(conn) ->
         {:reject, "The master token did not match."}
 
       true ->
@@ -70,7 +71,7 @@ defmodule Pont.Access do
   Ask the configured policy to accept this uplink. A policy without claim/2 accepts it.
   A rejection returns `{:error, :not_allowed}` for the hello protocol.
   """
-  def claim(%Pont.Access.Subject{} = subject, name) when is_binary(name) do
+  def claim(%AgentLink.Access.Subject{} = subject, name) when is_binary(name) do
     module = implementation()
 
     if function_exported?(module, :claim, 2) do
@@ -85,6 +86,6 @@ defmodule Pont.Access do
 
   @doc "Let the configured policy install credentials and describe how to connect."
   def prepare do
-    implementation().prepare(Application.fetch_env!(:pont, :mode))
+    implementation().prepare(Application.fetch_env!(:agent_link, :mode))
   end
 end

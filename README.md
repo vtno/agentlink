@@ -1,6 +1,6 @@
-# Pont
+# AgentLink
 
-Agent and editor vendors each build their own walled garden to keep you on their platform. Pont is a neutral bridge. It proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. Pont runs OpenCode today, and more agents are planned in [issue #10](https://github.com/vtno/pont/issues/10).
+Agent and editor vendors each build their own walled garden to keep you on their platform. AgentLink is a neutral bridge. It proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. AgentLink runs OpenCode today, and more agents are planned in [issue #10](https://github.com/vtno/pont/issues/10).
 
 A client is a program connected to the plane.
 
@@ -8,13 +8,13 @@ The plane accepts client connections. The relay opens one agent and starts an up
 
 ACP messages are JSON-RPC. The agent writes one JSON object per line on its standard output. The uplink sends one JSON object in each WebSocket text frame.
 
-## Run Pont from source
+## Run AgentLink from source
 
-You need Elixir 1.17 or a later 1.x release. To run an agent, you also need the `opencode` binary. Pont looks for `opencode` on `PATH`, then at `$HOME/.local/bin/opencode`.
+You need Elixir 1.17 or a later 1.x release. To run an agent, you also need the `opencode` binary. AgentLink looks for `opencode` on `PATH`, then at `$HOME/.local/bin/opencode`.
 
-`pont plane` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. Pont prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, Pont then prints the error and exits.
+`agentlink plane` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
 
-Create `$HOME/.pont/agent.link.json` with the object below when you start a relay.
+Create `$HOME/.agentlink/agent.link.json` with the object below when you start a relay.
 
 ```json
 {
@@ -27,12 +27,12 @@ Create `$HOME/.pont/agent.link.json` with the object below when you start a rela
 
 See [Link file](#link-file) for the field rules.
 
-1. Save that object as `$HOME/.pont/agent.link.json`.
+1. Save that object as `$HOME/.agentlink/agent.link.json`.
 2. Run `mix deps.get`.
 3. Run `mix run --no-halt`.
-4. Confirm that the log contains `opened Pont.OpenCode`.
+4. Confirm that the log contains `opened AgentLink.OpenCode`.
 
-`mix run --no-halt` starts the plane and the relay. Pass Pont flags after `--`.
+`mix run --no-halt` starts the plane and the relay. Pass AgentLink flags after `--`.
 
 ```sh
 mix run --no-halt -- --port 8090 --token 'the-token'
@@ -42,7 +42,7 @@ mix run --no-halt -- relay --token 'the-token' --opencode-bin /usr/local/bin/ope
 
 `plane` starts the plane alone. `relay` starts the relay alone. See [Command line](#command-line) for the flags.
 
-A plane with no token creates one for that process and prints it. Look for `Pont created a token for this process. Pass the same --token to start again.` Pont also prints `pont relay --token '…'`. Pont does not write the token to disk. Pass the same `--token` the next time you start the plane.
+A plane with no token creates one for that process and prints it. Look for `AgentLink created a token for this process. Pass the same --token to start again.` AgentLink also prints `agentlink relay --token '…'`. AgentLink does not write the token to disk. Pass the same `--token` the next time you start the plane.
 
 ## Build a binary
 
@@ -50,27 +50,27 @@ The build machine needs Elixir 1.17 or a later 1.x release, Zig 0.16.0, and `xz`
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
-3. Put the binary for your machine on `PATH` as `pont`.
+3. Put the binary for your machine on `PATH` as `agentlink`.
 
 With no `BURRITO_TARGET`, step 2 writes three binaries.
 
-- `burrito_out/pont_linux` is the Linux x86_64 binary.
-- `burrito_out/pont_macos` is the macOS binary for Apple Silicon (aarch64).
-- `burrito_out/pont_windows.exe` is the Windows x86_64 binary.
+- `burrito_out/agentlink_linux` is the Linux x86_64 binary.
+- `burrito_out/agentlink_macos` is the macOS binary for Apple Silicon (aarch64).
+- `burrito_out/agentlink_windows.exe` is the Windows x86_64 binary.
 
 Burrito prints `Output Path:` and the file it wrote.
 
 To build one binary, set `BURRITO_TARGET` to `linux`, `macos`, or `windows`.
 
 ```sh
-pont
-pont plane --port 8090
-pont relay --token 'the-token'
+agentlink
+agentlink plane --port 8090
+agentlink relay --token 'the-token'
 ```
 
 ## Reach a plane on another machine
 
-The plane listens only on `127.0.0.1` over plain `ws://`, and Pont does not terminate TLS. Choose one way below to reach the plane from another machine.
+The plane listens only on `127.0.0.1` over plain `ws://`, and AgentLink does not terminate TLS. Choose one way below to reach the plane from another machine.
 
 - Use an ssh tunnel when you reach one machine and you want no extra software. `plane_url` is `ws://127.0.0.1`.
 - Use Tailscale serve when the plane and the relay are already on a tailnet. `plane_url` is `wss://`.
@@ -116,33 +116,33 @@ Do not publish the plane's listen port. A proxy can log the `?token=` query stri
 
 ## Security model
 
-Pont ships with one operator and one token. `Pont.Access.Single` is that policy. `--token` sets the token. When a plane starts with no token, Pont creates one for that process and prints it. Pont does not write the token to disk. The next start needs the same `--token`. The subject for that token is an admin. The admin may use every uplink.
+AgentLink ships with one operator and one token. `AgentLink.Access.Single` is that policy. `--token` sets the token. When a plane starts with no token, AgentLink creates one for that process and prints it. AgentLink does not write the token to disk. The next start needs the same `--token`. The subject for that token is an admin. The admin may use every uplink.
 
-A caller presents the token in the `Authorization` header or in `?token=`. The header scheme is `Bearer` or `bearer`. When `?token=` is present and not empty, Pont uses that value and does not read the header. The uplink sends the header. The uplink does not put the token in `plane_url`.
+A caller presents the token in the `Authorization` header or in `?token=`. The header scheme is `Bearer` or `bearer`. When `?token=` is present and not empty, AgentLink uses that value and does not read the header. The uplink sends the header. The uplink does not put the token in `plane_url`.
 
 The listener is plain `ws://` on `127.0.0.1`. The token identifies the caller. The token does not encrypt the WebSocket. A relay on another machine reaches the plane through an ssh tunnel or a TLS proxy. See [Reach a plane on another machine](#reach-a-plane-on-another-machine). The plane's listen port stays on localhost. A proxy can store `?token=` in its logs.
 
 `GET /health` does not read the token. `GET /acp`, `GET /agent`, and `GET /status` require the token. See [HTTP routes](#http-routes) for those paths.
 
-`Pont.Access` is the extension point. Set the `:access` application env to another module to replace `Pont.Access.Single`. That module implements `authenticate/1`, `allowed?/2`, and `prepare/1`. `claim/2` is optional. `:reject` from `claim/2` closes the uplink with code 4004. See [Uplink close codes](#uplink-close-codes).
+`AgentLink.Access` is the extension point. Set the `:access` application env to another module to replace `AgentLink.Access.Single`. That module implements `authenticate/1`, `allowed?/2`, and `prepare/1`. `claim/2` is optional. `:reject` from `claim/2` closes the uplink with code 4004. See [Uplink close codes](#uplink-close-codes).
 
 ## Reference
 
 ### Command line
 
 ```
-pont [--port PORT] [--token TOKEN] [--opencode-bin PATH]
-pont plane [--port PORT] [--token TOKEN]
-pont relay --token TOKEN [--opencode-bin PATH]
+agentlink [--port PORT] [--token TOKEN] [--opencode-bin PATH]
+agentlink plane [--port PORT] [--token TOKEN]
+agentlink relay --token TOKEN [--opencode-bin PATH]
 ```
 
-`pont` with no arguments starts the plane and the relay.
+`agentlink` with no arguments starts the plane and the relay.
 
-`--port` is an integer from 1 to 65535. The default is 8090. `pont relay` rejects `--port` and prints `pont relay does not listen.`
+`--port` is an integer from 1 to 65535. The default is 8090. `agentlink relay` rejects `--port` and prints `agentlink relay does not listen.`
 
-`--token` is the token. `pont relay` requires `--token`. Without it, Pont prints `pont relay needs --token.` A plane with no token creates one. See [Security model](#security-model).
+`--token` is the token. `agentlink relay` requires `--token`. Without it, AgentLink prints `agentlink relay needs --token.` A plane with no token creates one. See [Security model](#security-model).
 
-`--opencode-bin` is the OpenCode executable. Pont rejects the flag when that file does not exist. `pont plane` rejects the flag and prints `pont plane does not run opencode.`
+`--opencode-bin` is the OpenCode executable. AgentLink rejects the flag when that file does not exist. `agentlink plane` rejects the flag and prints `agentlink plane does not run opencode.`
 
 `--help` and `-h` print the usage and exit with status 0. A bad command exits with status 1.
 
@@ -154,33 +154,33 @@ The plane serves these GET routes on the listen port. The default port is 8090.
 
 | Request | Result |
 |---|---|
-| `GET /health` | Status 200. The body is `ok`. Pont does not read the token. |
-| `GET /status` | Status 200. The body is JSON. Pont requires the token. |
-| `GET /acp` | WebSocket for a client. Pont requires the token. |
-| `GET /agent` | WebSocket the uplink dials. Pont requires the token. |
+| `GET /health` | Status 200. The body is `ok`. AgentLink does not read the token. |
+| `GET /status` | Status 200. The body is JSON. AgentLink requires the token. |
+| `GET /acp` | WebSocket for a client. AgentLink requires the token. |
+| `GET /agent` | WebSocket the uplink dials. AgentLink requires the token. |
 
 The plane returns status 401 and the body `unauthorized` when it rejects the token. The plane returns status 404 and the body `not found` for any other path.
 
 `GET /status` uses content type `application/json`. The object has two keys.
 
 - `plane` is the text `127.0.0.1:` followed by the listen port.
-- `runtimes` is the list `Pont.Access` allows for this caller. Each entry has `name`, `label`, `program`, and `connected_at`. `connected_at` is seconds since 1970-01-01 00:00:00 UTC.
+- `runtimes` is the list `AgentLink.Access` allows for this caller. Each entry has `name`, `label`, `program`, and `connected_at`. `connected_at` is seconds since 1970-01-01 00:00:00 UTC.
 
 ### Link file
 
-`Pont.Link` reads `$HOME/.pont/agent.link.json`. The relay does not start until that file exists and is a JSON object. `pont plane` does not read the file.
+`AgentLink.Link` reads `$HOME/.agentlink/agent.link.json`. The relay does not start until that file exists and is a JSON object. `agentlink plane` does not read the file.
 
 If the file is deleted after startup, the uplink stops. The relay supervisor restarts the relay. The relay supervisor stops after 5 restarts in 20 seconds. A plane started beside the relay keeps running.
 
 The object holds `name`, `label`, `program`, and `plane_url`.
 
-`Pont.Link` turns `name` into a slug before the uplink dials. Letters become lowercase. Each run of characters other than letters and digits becomes one `-`. The slug then removes dashes at the ends and keeps at most 40 characters. `Lab Box` becomes `lab-box`.
+`AgentLink.Link` turns `name` into a slug before the uplink dials. Letters become lowercase. Each run of characters other than letters and digits becomes one `-`. The slug then removes dashes at the ends and keeps at most 40 characters. `Lab Box` becomes `lab-box`.
 
-`Pont.Link` chooses `label` first. When `label` is missing and `name` is present, `Pont.Link` uses `name`. When `name` and `label` are both missing, `label` is `this machine`. The slug comes from `name` when that field is present. Otherwise the slug comes from `label`. `Pont.Link` uses `opencode` when the slug is empty. With both fields missing, `name` is `this-machine`.
+`AgentLink.Link` chooses `label` first. When `label` is missing and `name` is present, `AgentLink.Link` uses `name`. When `name` and `label` are both missing, `label` is `this machine`. The slug comes from `name` when that field is present. Otherwise the slug comes from `label`. `AgentLink.Link` uses `opencode` when the slug is empty. With both fields missing, `name` is `this-machine`.
 
-When `program` is missing, `Pont.Link` uses `opencode`. When `plane_url` is missing, `Pont.Link` uses `ws://127.0.0.1:8090/agent`.
+When `program` is missing, `AgentLink.Link` uses `opencode`. When `plane_url` is missing, `AgentLink.Link` uses `ws://127.0.0.1:8090/agent`.
 
-On hello, Pont stores at most 80 characters of `label` and at most 80 characters of `program`.
+On hello, AgentLink stores at most 80 characters of `label` and at most 80 characters of `program`.
 
 The plane accepts a hello name of 1 to 40 characters that matches `^[a-z0-9][a-z0-9_-]{0,39}$`. The plane closes any other name with code 4003.
 
@@ -190,7 +190,7 @@ The plane accepts a hello name of 1 to 40 characters that matches `^[a-z0-9][a-z
 
 ### Uplink close codes
 
-The uplink hello is a JSON-RPC request with method `pont.uplink`. The params are `name`, `label`, `program`, and `instance`.
+The uplink hello is a JSON-RPC request with method `agentlink.uplink`. The params are `name`, `label`, `program`, and `instance`.
 
 `instance` identifies this OS process. A new uplink process in the same VM keeps the same id. A second OS process has a new id. The same id means the same relay. The plane accepts an id of at most 128 bytes.
 
@@ -198,7 +198,7 @@ The first hello for a name keeps the socket. The same relay can dial again after
 
 The plane closes a hello from a different relay with code 4001 while the current relay is connected. When the current relay disconnects, the plane frees the name. The plane fails those in-flight requests with JSON-RPC error -32000 and the message `runtime disconnected`.
 
-`Pont.AgentSocketProtocol` defines the close codes. A parked uplink does not dial again on its own. The last column says when a new dial happens.
+`AgentLink.AgentSocketProtocol` defines the close codes. A parked uplink does not dial again on its own. The last column says when a new dial happens.
 
 | Code | Reason | When the uplink dials again |
 |---|---|---|
@@ -211,7 +211,7 @@ When `name` is not a string, code 4001 uses the reason `name is in use; stop the
 
 A change to `label` or `program` does not let a parked uplink dial again when the code is 4001, 4003, or 4004. For code 4002, the uplink still does not dial again when `name` or `plane_url` changes. The id is not in the link file.
 
-Code 4004 means `Pont.Access` rejected the hello. The uplink dials again on restart after the policy allows that uplink. A change to `name` or to `plane_url` makes the uplink dial again.
+Code 4004 means `AgentLink.Access` rejected the hello. The uplink dials again on restart after the policy allows that uplink. A change to `name` or to `plane_url` makes the uplink dial again.
 
 Any other close retries after 500 milliseconds. A failed dial does the same.
 
@@ -249,9 +249,9 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 ### Agent process
 
-The default workspace is `$HOME/.pont/workspace`. The relay creates that directory.
+The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`Pont.OpenCode` runs `opencode acp` in that workspace. `Pont.OpenCode` leaves stderr off the ACP stream. The process environment includes `OPENCODE_DISABLE_AUTOUPDATE=1`.
+`AgentLink.OpenCode` runs `opencode acp` in that workspace. `AgentLink.OpenCode` leaves stderr off the ACP stream. The process environment includes `OPENCODE_DISABLE_AUTOUPDATE=1`.
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 
@@ -259,10 +259,10 @@ The relay reads one JSON object per line from the agent's standard output. The r
 
 `mix test` does not start OpenCode. `mix test` excludes tests tagged `:wrapped`.
 
-Set `PONT_BIN` to the wrapped binary. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
+Set `AGENTLINK_BIN` to the wrapped binary. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 
 ```sh
-PONT_BIN=./burrito_out/pont_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped
+AGENTLINK_BIN=./burrito_out/agentlink_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped
 ```
 
 The wrapped test starts the binary. The test asks OpenCode to write an HTML page, then checks the page.

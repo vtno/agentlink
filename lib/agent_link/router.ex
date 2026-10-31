@@ -1,4 +1,4 @@
-defmodule Pont.Router do
+defmodule AgentLink.Router do
   use Plug.Router
 
   plug :match
@@ -12,8 +12,8 @@ defmodule Pont.Router do
     open(conn, fn conn, subject ->
       body =
         Jason.encode!(%{
-          "plane" => "127.0.0.1:#{Application.fetch_env!(:pont, :port)}",
-          "runtimes" => Pont.Registry.allowed(subject)
+          "plane" => "127.0.0.1:#{Application.fetch_env!(:agent_link, :port)}",
+          "runtimes" => AgentLink.Registry.allowed(subject)
         })
 
       conn
@@ -25,20 +25,20 @@ defmodule Pont.Router do
   get "/acp" do
     open(conn, fn conn, subject ->
       conn
-      |> WebSockAdapter.upgrade(Pont.ClientSocket, subject, timeout: :infinity)
+      |> WebSockAdapter.upgrade(AgentLink.ClientSocket, subject, timeout: :infinity)
       |> halt()
     end)
   end
 
   get "/agent" do
-    case Pont.Access.agent_caller(conn) do
+    case AgentLink.Access.agent_caller(conn) do
       {:ok, subject} ->
         conn
-        |> WebSockAdapter.upgrade(Pont.AgentSocket, subject, timeout: :infinity)
+        |> WebSockAdapter.upgrade(AgentLink.AgentSocket, subject, timeout: :infinity)
         |> halt()
 
       {:reject, reason} ->
-        Pont.Setup.Watch.rejected(reason)
+        AgentLink.Setup.Watch.rejected(reason)
         send_resp(conn, 401, "unauthorized")
     end
   end
@@ -48,7 +48,7 @@ defmodule Pont.Router do
   end
 
   defp open(conn, fun) do
-    case Pont.Access.authenticate(conn) do
+    case AgentLink.Access.authenticate(conn) do
       {:ok, subject} -> fun.(conn, subject)
       :reject -> send_resp(conn, 401, "unauthorized")
     end

@@ -1,4 +1,4 @@
-defmodule Pont.Setup do
+defmodule AgentLink.Setup do
   @moduledoc """
   Prints the instructions from the access policy. The policy decides how a token is created.
   """
@@ -11,7 +11,7 @@ defmodule Pont.Setup do
     if @skip_prepare do
       :ok
     else
-      case Pont.Access.prepare() do
+      case AgentLink.Access.prepare() do
         {:ok, text} ->
           IO.puts(text)
           :ok
@@ -24,7 +24,7 @@ defmodule Pont.Setup do
   end
 end
 
-defmodule Pont.Setup.Watch do
+defmodule AgentLink.Setup.Watch do
   @moduledoc """
   Prints an uplink hello and a refused dial. Started with the plane.
   """

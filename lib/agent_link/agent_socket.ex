@@ -1,11 +1,11 @@
-defmodule Pont.AgentSocket do
+defmodule AgentLink.AgentSocket do
   @moduledoc """
-  The plane's agent socket. The first frame is `pont.uplink` and lands in the registry.
+  The plane's agent socket. The first frame is `agentlink.uplink` and lands in the registry.
   Later frames are ACP from that runtime. A hello from the same relay stops this
   socket so the new one can take the name. A hello from another relay, while this
   name is live, closes that new socket and leaves this one up. A hello whose
   instance id is too long closes that new socket and leaves any holder up.
-  Permanent rejections use `Pont.AgentSocketProtocol` close codes. Once registered, the socket
+  Permanent rejections use `AgentLink.AgentSocketProtocol` close codes. Once registered, the socket
   routes ACP under the normalized name returned by the registry.
   """
 
@@ -16,24 +16,24 @@ defmodule Pont.AgentSocket do
 
   @doc "Wait for the uplink hello. The subject is whoever the router authenticated."
   @impl true
-  def init(%Pont.Access.Subject{} = subject), do: {:ok, %__MODULE__{subject: subject}}
+  def init(%AgentLink.Access.Subject{} = subject), do: {:ok, %__MODULE__{subject: subject}}
 
   @doc """
-  The first text frame must be pont.uplink. That claims the runtime name.
+  The first text frame must be agentlink.uplink. That claims the runtime name.
   Later frames are ACP from that runtime.
   """
   @impl true
   def handle_in({text, [opcode: :text]}, %__MODULE__{name: nil} = state) when is_binary(text) do
     case Jason.decode(text) do
-      {:ok, %{"method" => "pont.uplink", "params" => params}} when is_map(params) ->
-        uplink = %Pont.Registry.Uplink{
+      {:ok, %{"method" => "agentlink.uplink", "params" => params}} when is_map(params) ->
+        uplink = %AgentLink.Registry.Uplink{
           name: params["name"],
           label: params["label"],
           program: params["program"] || "opencode",
           instance: params["instance"]
         }
 
-        case Pont.Registry.register(self(), uplink, state.subject) do
+        case AgentLink.Registry.register(self(), uplink, state.subject) do
           {:ok, name} ->
             {:ok, %{state | name: name}}
 
@@ -41,8 +41,8 @@ defmodule Pont.AgentSocket do
             name = if is_binary(uplink.name), do: String.trim(uplink.name)
 
             close =
-              {Pont.AgentSocketProtocol.close_code(rejection),
-               Pont.AgentSocketProtocol.reason(rejection, name)}
+              {AgentLink.AgentSocketProtocol.close_code(rejection),
+               AgentLink.AgentSocketProtocol.reason(rejection, name)}
 
             {:stop, :normal, close, state}
         end
@@ -53,7 +53,7 @@ defmodule Pont.AgentSocket do
   end
 
   def handle_in({text, [opcode: :text]}, %__MODULE__{name: name} = state) when is_binary(text) do
-    Pont.Plane.agent_frame(name, text)
+    AgentLink.Plane.agent_frame(name, text)
     {:ok, state}
   end
 

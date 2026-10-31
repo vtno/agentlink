@@ -1,6 +1,6 @@
-defmodule Pont.FakeAgent do
+defmodule AgentLink.FakeAgent do
   @moduledoc false
-  @behaviour Pont.Agent
+  @behaviour AgentLink.Agent
   use GenServer
 
   defstruct [:owner, refuse: false]
@@ -9,7 +9,7 @@ defmodule Pont.FakeAgent do
   def open(owner, cwd) do
     {:ok, pid} = GenServer.start_link(__MODULE__, owner)
 
-    if listener = Application.get_env(:pont, :agent_listener),
+    if listener = Application.get_env(:agent_link, :agent_listener),
       do: send(listener, {:agent_opened, pid, cwd})
 
     {:ok, pid}
@@ -32,7 +32,7 @@ defmodule Pont.FakeAgent do
     do: {:reply, :closed, state}
 
   def handle_call({:write, data}, _from, %__MODULE__{} = state) do
-    if listener = Application.get_env(:pont, :agent_listener),
+    if listener = Application.get_env(:agent_link, :agent_listener),
       do: send(listener, {:agent_write, data})
 
     {:reply, :ok, state}

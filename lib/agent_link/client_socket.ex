@@ -1,4 +1,4 @@
-defmodule Pont.ClientSocket do
+defmodule AgentLink.ClientSocket do
   @moduledoc """
   The app connection. Registers with the plane, then forwards each text frame.
   """
@@ -9,15 +9,15 @@ defmodule Pont.ClientSocket do
 
   @doc "Join the plane and keep the id this socket was given."
   @impl true
-  def init(%Pont.Access.Subject{} = subject) do
-    id = Pont.Plane.register(self(), subject)
+  def init(%AgentLink.Access.Subject{} = subject) do
+    id = AgentLink.Plane.register(self(), subject)
     {:ok, %__MODULE__{id: id}}
   end
 
   @doc "One text frame from the client. Hand it to the plane as a client frame."
   @impl true
   def handle_in({text, [opcode: :text]}, %__MODULE__{} = state) when is_binary(text) do
-    Pont.Plane.client_frame(state.id, text)
+    AgentLink.Plane.client_frame(state.id, text)
     {:ok, state}
   end
 

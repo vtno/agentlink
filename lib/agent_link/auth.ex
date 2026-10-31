@@ -1,4 +1,4 @@
-defmodule Pont.Auth do
+defmodule AgentLink.Auth do
   @moduledoc """
   One shared bearer token for the plane. Callers send `Authorization: Bearer`,
   or `?token=` when the client cannot set a header. The helpers here treat an
@@ -9,7 +9,7 @@ defmodule Pont.Auth do
 
   @doc "The configured master token, or nil when it is unset."
   def token do
-    case Application.get_env(:pont, :master_token) do
+    case Application.get_env(:agent_link, :master_token) do
       token when is_binary(token) and token != "" -> token
       _ -> nil
     end

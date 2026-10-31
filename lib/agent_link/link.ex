@@ -1,4 +1,4 @@
-defmodule Pont.Link do
+defmodule AgentLink.Link do
   @moduledoc """
   The relay's link file. The uplink sends this name when it dials.
   A missing file stops the relay. The file holds the name, the label, the program, and the plane URL.
@@ -10,7 +10,7 @@ defmodule Pont.Link do
             plane_url: "ws://127.0.0.1:8090/agent"
 
   @doc "Where the link file lives."
-  def path, do: Pont.Paths.link()
+  def path, do: AgentLink.Paths.link()
 
   @doc "Read the link file. An error tells the operator to create it."
   def read(path \\ nil) do
@@ -26,7 +26,7 @@ defmodule Pont.Link do
   @doc """
   The slug a link name becomes. Lowercase, with runs of non-alphanumerics
   collapsed to single dashes, the outer dashes trimmed, and the result cut
-  to `Pont.Registry.max_name_chars()` characters. The plane rejects a
+  to `AgentLink.Registry.max_name_chars()` characters. The plane rejects a
   longer name, so a slug always passes.
   """
   def slug(text) when is_binary(text) do
@@ -34,7 +34,7 @@ defmodule Pont.Link do
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9]+/, "-")
     |> String.trim("-")
-    |> String.slice(0, Pont.Registry.max_name_chars())
+    |> String.slice(0, AgentLink.Registry.max_name_chars())
   end
 
   def slug(_), do: ""
@@ -55,7 +55,7 @@ defmodule Pont.Link do
       name: name,
       label: label,
       program: present(raw["program"]) || "opencode",
-      plane_url: present(raw["plane_url"]) || Pont.Paths.plane_url()
+      plane_url: present(raw["plane_url"]) || AgentLink.Paths.plane_url()
     }
   end
 
@@ -68,7 +68,7 @@ defmodule Pont.Link do
       "name": "opencode",
       "label": "this machine",
       "program": "opencode",
-      "plane_url": "#{Pont.Paths.plane_url()}"
+      "plane_url": "#{AgentLink.Paths.plane_url()}"
     }
     """
   end

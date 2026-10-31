@@ -1,52 +1,54 @@
-defmodule Pont.Relay.AgentTest do
+defmodule AgentLink.Relay.AgentTest do
   use ExUnit.Case, async: false
 
   setup do
-    Application.put_env(:pont, :agent_listener, self())
-    previous = Application.get_env(:pont, :link_path)
-    path = Path.join(System.tmp_dir!(), "pont-relay-#{System.unique_integer([:positive])}.json")
+    Application.put_env(:agent_link, :agent_listener, self())
+    previous = Application.get_env(:agent_link, :link_path)
+
+    path =
+      Path.join(System.tmp_dir!(), "agentlink-relay-#{System.unique_integer([:positive])}.json")
 
     File.write!(
       path,
       ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"})
     )
 
-    Application.put_env(:pont, :link_path, path)
+    Application.put_env(:agent_link, :link_path, path)
 
     on_exit(fn ->
-      Application.delete_env(:pont, :agent_listener)
+      Application.delete_env(:agent_link, :agent_listener)
 
       if previous,
-        do: Application.put_env(:pont, :link_path, previous),
-        else: Application.delete_env(:pont, :link_path)
+        do: Application.put_env(:agent_link, :link_path, previous),
+        else: Application.delete_env(:agent_link, :link_path)
 
       File.rm(path)
-      stop(Pont.Relay.Agent)
-      stop(Pont.Uplink)
+      stop(AgentLink.Relay.Agent)
+      stop(AgentLink.Uplink)
     end)
 
     :ok
   end
 
   test "send_message is down when the agent relay is not running" do
-    assert Pont.Relay.Agent.send_message(%{"method" => "ping"}) == :down
+    assert AgentLink.Relay.Agent.send_message(%{"method" => "ping"}) == :down
   end
 
   test "stdout lines reach the uplink, and a partial line waits" do
     agent = start_relay!()
-    Pont.FakeAgent.emit(agent, ~s({"method":"hi"}))
+    AgentLink.FakeAgent.emit(agent, ~s({"method":"hi"}))
     refute_receive {:agent_write, _}, 30
-    Pont.FakeAgent.emit(agent, "\n")
+    AgentLink.FakeAgent.emit(agent, "\n")
     assert wait_for(fn -> %{"method" => "hi"} in uplink_outbox() end)
 
-    Pont.FakeAgent.emit(agent, "not-json\n")
+    AgentLink.FakeAgent.emit(agent, "not-json\n")
     Process.sleep(30)
     refute Enum.any?(uplink_outbox(), &(&1 == "not-json"))
   end
 
   test "a message from the plane is written to the agent" do
     _agent = start_relay!()
-    send(Pont.Relay.Agent, {:from_plane, %{"method" => "ping"}})
+    send(AgentLink.Relay.Agent, {:from_plane, %{"method" => "ping"}})
     assert_receive {:agent_write, line}
     assert String.ends_with?(line, "\n")
     assert %{"method" => "ping"} = Jason.decode!(String.trim(line))
@@ -74,9 +76,9 @@ defmodule Pont.Relay.AgentTest do
           "params" => params
         }
 
-        expected = put_in(message, ["params", "cwd"], Pont.Paths.workdir())
+        expected = put_in(message, ["params", "cwd"], AgentLink.Paths.workdir())
 
-        send(Pont.Relay.Agent, {:from_plane, message})
+        send(AgentLink.Relay.Agent, {:from_plane, message})
 
         assert_receive {:agent_write, line}
         assert Jason.decode!(line) == expected
@@ -93,7 +95,7 @@ defmodule Pont.Relay.AgentTest do
         "params" => %{"cwd" => "/some/explicit/workspace", "mcpServers" => []}
       }
 
-      send(Pont.Relay.Agent, {:from_plane, message})
+      send(AgentLink.Relay.Agent, {:from_plane, message})
 
       assert_receive {:agent_write, line}
       assert Jason.decode!(line) == message
@@ -104,17 +106,19 @@ defmodule Pont.Relay.AgentTest do
     _agent = start_relay!()
     message = %{"jsonrpc" => "2.0", "id" => 7, "method" => "session/new"}
 
-    assert :ok = Pont.Relay.Agent.send_message(message)
+    assert :ok = AgentLink.Relay.Agent.send_message(message)
 
     assert_receive {:agent_write, line}
-    assert Jason.decode!(line) == Map.put(message, "params", %{"cwd" => Pont.Paths.workdir()})
+
+    assert Jason.decode!(line) ==
+             Map.put(message, "params", %{"cwd" => AgentLink.Paths.workdir()})
   end
 
   test "other methods keep an empty cwd unchanged" do
     _agent = start_relay!()
     message = %{"method" => "session/prompt", "params" => %{"cwd" => ""}}
 
-    send(Pont.Relay.Agent, {:from_plane, message})
+    send(AgentLink.Relay.Agent, {:from_plane, message})
 
     assert_receive {:agent_write, line}
     assert Jason.decode!(line) == message
@@ -122,24 +126,24 @@ defmodule Pont.Relay.AgentTest do
 
   test "a closed agent stops the agent relay" do
     agent = start_relay!()
-    relay = Process.whereis(Pont.Relay.Agent)
+    relay = Process.whereis(AgentLink.Relay.Agent)
     ref = Process.monitor(relay)
-    Pont.FakeAgent.refuse(agent)
-    Pont.Relay.Agent.send_message(%{"method" => "x"})
+    AgentLink.FakeAgent.refuse(agent)
+    AgentLink.Relay.Agent.send_message(%{"method" => "x"})
     assert_receive {:DOWN, ^ref, :process, ^relay, :port_closed}
   end
 
   test "an exit status stops the agent relay" do
     agent = start_relay!()
-    relay = Process.whereis(Pont.Relay.Agent)
+    relay = Process.whereis(AgentLink.Relay.Agent)
     ref = Process.monitor(relay)
-    Pont.FakeAgent.exit_status(agent, 3)
+    AgentLink.FakeAgent.exit_status(agent, 3)
     assert_receive {:DOWN, ^ref, :process, ^relay, {:agent_exit, 3}}
   end
 
   test "the agent process dying stops the agent relay" do
     agent = start_relay!()
-    relay = Process.whereis(Pont.Relay.Agent)
+    relay = Process.whereis(AgentLink.Relay.Agent)
     ref = Process.monitor(relay)
     Process.exit(agent, :kill)
     assert_receive {:DOWN, ^ref, :process, ^relay, {:agent_exit, :killed}}
@@ -149,62 +153,62 @@ defmodule Pont.Relay.AgentTest do
     Process.flag(:trap_exit, true)
 
     Application.put_env(
-      :pont,
+      :agent_link,
       :link_path,
-      "/tmp/pont-relay-missing-#{System.unique_integer([:positive])}.json"
+      "/tmp/agentlink-relay-missing-#{System.unique_integer([:positive])}.json"
     )
 
-    assert {:error, {:shutdown, message}} = Pont.Relay.Agent.start_link([])
+    assert {:error, {:shutdown, message}} = AgentLink.Relay.Agent.start_link([])
     assert message =~ "No link file"
     assert_receive {:agent_opened, agent, _cwd}
     refute Process.alive?(agent)
-    refute Process.whereis(Pont.Relay.Agent)
+    refute Process.whereis(AgentLink.Relay.Agent)
   end
 
   test "a link failure stops the agent relay instead of starting another uplink" do
     _agent = start_relay!()
-    relay = Process.whereis(Pont.Relay.Agent)
-    uplink = Process.whereis(Pont.Uplink)
+    relay = Process.whereis(AgentLink.Relay.Agent)
+    uplink = Process.whereis(AgentLink.Uplink)
     ref = Process.monitor(relay)
     send(relay, {:EXIT, uplink, {:shutdown, "No link file at /tmp/gone.json"}})
     assert_receive {:DOWN, ^ref, :process, ^relay, {:shutdown, "No link file" <> _}}
-    refute Process.whereis(Pont.Relay.Agent)
+    refute Process.whereis(AgentLink.Relay.Agent)
   end
 
   test "an uplink crash starts another uplink" do
     _agent = start_relay!()
-    first = Process.whereis(Pont.Uplink)
+    first = Process.whereis(AgentLink.Uplink)
     Process.exit(first, :kill)
     Process.sleep(50)
-    second = Process.whereis(Pont.Uplink)
+    second = Process.whereis(AgentLink.Uplink)
     assert is_pid(second)
     assert second != first
-    assert Process.alive?(Process.whereis(Pont.Relay.Agent))
+    assert Process.alive?(Process.whereis(AgentLink.Relay.Agent))
   end
 
   test "stopping the agent relay closes the agent" do
     agent = start_relay!()
     ref = Process.monitor(agent)
-    GenServer.stop(Pont.Relay.Agent)
+    GenServer.stop(AgentLink.Relay.Agent)
     assert_receive {:DOWN, ^ref, :process, ^agent, _}
   end
 
   test "an unknown message is ignored" do
     _agent = start_relay!()
-    send(Pont.Relay.Agent, :nope)
+    send(AgentLink.Relay.Agent, :nope)
     Process.sleep(20)
-    assert Process.alive?(Process.whereis(Pont.Relay.Agent))
+    assert Process.alive?(Process.whereis(AgentLink.Relay.Agent))
   end
 
   defp start_relay! do
     start_supervised!(%{
-      id: Pont.Relay.Agent,
-      start: {Pont.Relay.Agent, :start_link, [[]]},
+      id: AgentLink.Relay.Agent,
+      start: {AgentLink.Relay.Agent, :start_link, [[]]},
       restart: :temporary
     })
 
     assert_receive {:agent_opened, agent, cwd}
-    assert cwd == "/tmp/pont-test-workdir"
+    assert cwd == "/tmp/agentlink-test-workdir"
     agent
   end
 
@@ -215,7 +219,7 @@ defmodule Pont.Relay.AgentTest do
   end
 
   defp uplink_outbox do
-    :sys.get_state(Pont.Uplink).outbox
+    :sys.get_state(AgentLink.Uplink).outbox
   end
 
   defp stop(name) do
