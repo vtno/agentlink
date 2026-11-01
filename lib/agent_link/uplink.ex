@@ -225,21 +225,9 @@ defmodule AgentLink.Uplink do
   @doc """
   The socket scheme, HTTP scheme, host, port, and path for a plane URL.
   `wss` and `https` use TLS. A missing port is 443 for those and 80 otherwise.
-  A missing path is `/agent`.
+  A missing path is `/agent`. `AgentLink.Transport.endpoint/2` is the parser.
   """
-  def endpoint(url) do
-    uri = URI.parse(url)
-    secure = uri.scheme in ["wss", "https"]
-    port = uri.port || if(secure, do: 443, else: 80)
-
-    {
-      if(secure, do: :wss, else: :ws),
-      if(secure, do: :https, else: :http),
-      uri.host || "127.0.0.1",
-      port,
-      uri.path || "/agent"
-    }
-  end
+  def endpoint(url), do: AgentLink.Transport.endpoint(url, "/agent")
 
   defp connect(link, %__MODULE__{} = state) do
     {ws_scheme, http_scheme, host, port, path} = endpoint(link.plane_url)

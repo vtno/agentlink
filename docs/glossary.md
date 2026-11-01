@@ -8,6 +8,8 @@ Relay. Copies JSON-RPC between a local stdio and a plane socket. `AgentLink.Rela
 
 Frame. `AgentLink.Frame` is one JSON-RPC object on the wire. Stdio is one object per line. The agent relay and the uplink put one object in each text frame. On the plane, `AgentLink.Plane.client_frame/2` and `AgentLink.Plane.agent_frame/2` split that text on newlines, decode each piece, and keep no remainder. `client_frame/2` answers a JSON-RPC batch with -32600.
 
+Transport. `AgentLink.Transport` is the WebSocket a relay dials. `AgentLink.Transport.WebSocket` is the Mint client. The owner receives `{:from_plane, message}` for one decoded object and `{:transport_closed, code, reason}` when that socket closes. `hold/1` stops the next dial. `AgentLink.Uplink` still dials on its own.
+
 Link. The file. Name, label, program, and plane URL. Not the live connection. The uplink reads it when it dials. A missing file stops the relay.
 
 Uplink. `AgentLink.Uplink` is the process that dials. `AgentLink.Registry.Uplink` is the row recorded after that dial says hello. The first live hello for a name keeps the socket. The hello carries that relay's instance id, and "same relay" means the same id: a later hello with it releases the previous socket. A hello from another relay is rejected with close code 4001, and that relay parks until the `name` or `plane_url` in the link file changes, then it dials again. When the holder disconnects, the name is free. The plane accepts an instance id of at most 128 bytes. A longer id is rejected with close code 4002, and that relay does not redial: the id is not in the link file, so a changed `name` or `plane_url` would dial with the same id.
