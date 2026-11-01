@@ -191,20 +191,18 @@ defmodule AgentLink.Transport.WebSocket do
          {:ok, conn, websocket} <-
            Mint.WebSocket.new(conn, ref, status_of(responses, ref), headers_of(responses, ref)) do
       state = %{state | conn: conn, websocket: websocket, ref: ref}
-      state = decode_early(state, early_data(responses, ref))
 
-      if up?(state) do
-        case Mint.HTTP.set_mode(state.conn, :active) do
-          {:ok, conn} ->
-            Logger.info("transport connected #{state.url}")
-            {:ok, %{state | conn: conn}}
+      # Active before the early frames. A failed set_mode then never delivers
+      # a frame the owner would see without a following transport_closed.
+      case Mint.HTTP.set_mode(conn, :active) do
+        {:ok, conn} ->
+          state = decode_early(%{state | conn: conn}, early_data(responses, ref))
+          if up?(state), do: Logger.info("transport connected #{state.url}")
+          {:ok, state}
 
-          {:error, conn, reason} ->
-            Mint.HTTP.close(conn)
-            {:error, reason, %{state | conn: nil, websocket: nil, ref: nil}}
-        end
-      else
-        {:ok, state}
+        {:error, conn, reason} ->
+          Mint.HTTP.close(conn)
+          {:error, reason, %{state | conn: nil, websocket: nil, ref: nil}}
       end
     else
       {:error, conn, reason} ->
@@ -234,8 +232,8 @@ defmodule AgentLink.Transport.WebSocket do
     end
   end
 
-  # Mint treats bytes after the 101 as the response body. They are websocket
-  # frames and have to be decoded before the socket goes active.
+  # Mint treats bytes after the 101 as the response body. They are already
+  # off the socket, so they are decoded after set_mode from this list.
   defp early_data(responses, ref) do
     for {:data, ^ref, data} <- responses, do: data
   end
@@ -367,11 +365,10 @@ defmodule AgentLink.Transport.WebSocket do
   defp normalize_code(code) when is_integer(code) and code >= 0, do: code
   defp normalize_code(_code), do: 1005
 
-  defp close_reason(%Mint.TransportError{} = error), do: Exception.message(error)
+  defp close_reason(reason) when is_exception(reason), do: Exception.message(reason)
   defp close_reason(reason) when is_binary(reason), do: reason
   defp close_reason(nil), do: ""
-  defp close_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp close_reason(_reason), do: "closed"
+  defp close_reason(reason), do: inspect(reason)
 
   defp schedule(%{held: true} = state) do
     {:noreply, %{cancel_timer(state) | connect_token: nil}}

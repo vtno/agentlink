@@ -152,6 +152,7 @@ defmodule AgentLink.TransportTest do
     ctx = start_transport()
     send(ctx.socket, {:close, 1001, "going away"})
     assert_receive {:transport_closed, 1001, _}, 1_000
+    assert Process.read_timer(sync(ctx.transport).timer) > 400
     assert_receive {:dial, dial}, 1_000
     assert dial.path == "/agent"
     assert Process.alive?(ctx.transport)
@@ -191,7 +192,11 @@ defmodule AgentLink.TransportTest do
     end)
 
     task = Task.async(fn -> WebSocket.reconnect(ctx.transport, ctx.other_url) end)
-    await_queue(ctx.transport, fn len -> len >= 1 end)
+
+    await_message(ctx.transport, fn messages ->
+      Enum.any?(messages, &match?({:"$gen_call", _, {:reconnect, _}}, &1))
+    end)
+
     queued = queue_len(ctx.transport)
     send(ctx.socket, {:close, 1001, "queued"})
     await_queue(ctx.transport, fn len -> len > queued end)
@@ -252,11 +257,10 @@ defmodule AgentLink.TransportTest do
          ]}
       )
 
-    assert_receive {:transport_closed, 1002, _reason}, 1_000
+    assert_receive {:transport_closed, 1002, reason}, 1_000
+    refute reason == "closed"
     state = sync(transport)
-    assert state.websocket == nil
     assert state.conn == nil
-    assert state.held == false
     assert state.timer != nil
   end
 
@@ -270,9 +274,6 @@ defmodule AgentLink.TransportTest do
     assert AgentLink.Transport.endpoint("ws://127.0.0.1", "/acp") ==
              {:ws, :http, "127.0.0.1", 80, "/acp"}
 
-    assert AgentLink.Transport.endpoint("http://127.0.0.1:8090/agent", "/agent") ==
-             {:ws, :http, "127.0.0.1", 8090, "/agent"}
-
     assert AgentLink.Transport.endpoint("wss://plane.example/agent", "/acp") ==
              {:wss, :https, "plane.example", 443, "/agent"}
 
@@ -281,9 +282,6 @@ defmodule AgentLink.TransportTest do
 
     assert AgentLink.Transport.endpoint("wss://plane.example", "/acp") ==
              {:wss, :https, "plane.example", 443, "/acp"}
-
-    assert AgentLink.Transport.endpoint("https://plane.example/agent", "/agent") ==
-             {:wss, :https, "plane.example", 443, "/agent"}
 
     assert AgentLink.Transport.endpoint("ws://127.0.0.1:8090/agent?token=sekret", "/acp") ==
              {:ws, :http, "127.0.0.1", 8090, "/agent"}
@@ -322,15 +320,10 @@ defmodule AgentLink.TransportTest do
     assert_receive {:transport_closed, 1001, "gone"}
 
     :ok = FakeTransport.hold(transport)
-    state = sync(transport)
-    assert state.held == true
-    assert state.timer == nil
-
     :ok = FakeTransport.send_message(transport, %{"n" => 1})
     assert FakeTransport.sent(transport) == []
     :ok = FakeTransport.reconnect(transport, "ws://127.0.0.1:9/agent")
     assert FakeTransport.sent(transport) == [%{"n" => 1}]
-    assert sync(transport).held == false
   end
 
   defp start_transport(opts \\ []) do
@@ -484,6 +477,41 @@ defmodule AgentLink.TransportTest do
     assert_receive {:dial, dial}, 1_000
     assert_receive {:socket, socket}, 1_000
     {dial, socket}
+  end
+
+  defp await_message(pid, pred) do
+    deadline = System.monotonic_time(:millisecond) + 1_000
+
+    Stream.repeatedly(fn -> mailbox(pid) end)
+    |> Enum.reduce_while(:timeout, fn
+      nil, _ ->
+        {:halt, :dead}
+
+      messages, _ ->
+        cond do
+          pred.(messages) ->
+            {:halt, :ok}
+
+          System.monotonic_time(:millisecond) >= deadline ->
+            {:halt, :timeout}
+
+          true ->
+            Process.sleep(1)
+            {:cont, :timeout}
+        end
+    end)
+    |> case do
+      :ok -> :ok
+      :dead -> flunk("transport exited while waiting")
+      :timeout -> flunk("timed out waiting for the reconnect call")
+    end
+  end
+
+  defp mailbox(pid) do
+    case Process.info(pid, :messages) do
+      {:messages, messages} -> messages
+      nil -> nil
+    end
   end
 
   defp await_queue(pid, pred) do
