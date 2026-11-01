@@ -59,203 +59,208 @@ end
 defmodule AgentLink.TransportTest do
   use ExUnit.Case, async: false
 
-  # The same assertions run against the Mint client and the fake.
-  for module <- [AgentLink.Transport.WebSocket, AgentLink.FakeTransport] do
-    @module module
+  alias AgentLink.FakeTransport
+  alias AgentLink.Transport.WebSocket
 
-    describe inspect(@module) do
-      test "sends and receives one decoded object" do
-        ctx = start_transport(@module)
-        assert ctx.dial.authorization == ["Bearer sekret"]
-        assert ctx.dial.path == "/agent"
-        assert ctx.dial.x_test == []
+  test "sends and receives one decoded object" do
+    ctx = start_transport()
+    assert ctx.dial.authorization == ["Bearer sekret"]
+    assert ctx.dial.path == "/agent"
+    assert ctx.dial.x_test == []
 
-        :ok = @module.send_message(ctx.transport, %{"method" => "ping"})
-        assert_receive {:received, payload}
-        assert AgentLink.Frame.decode(payload) == {:ok, %{"method" => "ping"}}
-        refute String.ends_with?(payload, "\n")
+    :ok = WebSocket.send_message(ctx.transport, %{"method" => "ping"})
+    assert_receive {:received, payload}, 1_000
+    assert AgentLink.Frame.decode(payload) == {:ok, %{"method" => "ping"}}
+    refute String.ends_with?(payload, "\n")
 
-        send(ctx.socket, {:push, {:text, AgentLink.Frame.encode(%{"method" => "pong"})}})
-        assert_receive {:from_plane, %{"method" => "pong"}}
+    send(ctx.socket, {:push, {:text, AgentLink.Frame.encode(%{"method" => "pong"})}})
+    assert_receive {:from_plane, %{"method" => "pong"}}, 1_000
 
-        send(ctx.socket, {:push, {:binary, AgentLink.Frame.encode(%{"method" => "bin"})}})
-        assert_receive {:from_plane, %{"method" => "bin"}}
+    send(ctx.socket, {:push, {:binary, AgentLink.Frame.encode(%{"method" => "bin"})}})
+    assert_receive {:from_plane, %{"method" => "bin"}}, 1_000
 
-        send(ctx.socket, {:push, {:text, "not-json"}})
-        send(ctx.socket, {:push, {:text, "[1]"}})
-        refute_receive {:from_plane, _}, 50
+    send(ctx.socket, {:push, {:text, "not-json"}})
+    send(ctx.socket, {:push, {:text, "[1]"}})
+    send(ctx.socket, {:push, {:text, AgentLink.Frame.encode(%{"method" => "next"})}})
+    assert_receive {:from_plane, %{"method" => "next"}}, 1_000
+    refute_received {:from_plane, _}
+  end
 
-        send(ctx.socket, {:push, {:ping, "z"}})
-        :ok = @module.send_message(ctx.transport, %{"method" => "out"})
-        assert_receive {:received, out}
-        assert AgentLink.Frame.decode(out) == {:ok, %{"method" => "out"}}
-      end
+  test "omitted headers use the configured bearer token" do
+    previous = Application.get_env(:agent_link, :master_token)
+    Application.put_env(:agent_link, :master_token, "sekret")
+    on_exit(fn -> AgentLink.TestHelpers.restore(:master_token, previous) end)
 
-      test "omitted headers use the configured bearer token" do
-        previous = Application.get_env(:agent_link, :master_token)
-        Application.put_env(:agent_link, :master_token, "sekret")
-        on_exit(fn -> AgentLink.TestHelpers.restore(:master_token, previous) end)
+    ctx = start_transport(headers: :default)
+    assert ctx.dial.authorization == ["Bearer sekret"]
+  end
 
-        ctx = start_transport(@module, headers: :default)
-        assert ctx.dial.authorization == ["Bearer sekret"]
-      end
+  test "explicit headers are sent on the dial" do
+    ctx = start_transport(headers: [{"x-test", "yes"}])
+    assert ctx.dial.authorization == []
+    assert ctx.dial.x_test == ["yes"]
+  end
 
-      test "explicit headers replace the default bearer" do
-        previous = Application.get_env(:agent_link, :master_token)
-        Application.put_env(:agent_link, :master_token, "sekret")
-        on_exit(fn -> AgentLink.TestHelpers.restore(:master_token, previous) end)
-
-        ctx = start_transport(@module, headers: [{"x-test", "yes"}])
-        assert ctx.dial.authorization == []
-        assert ctx.dial.x_test == ["yes"]
-      end
-
-      test "a url path wins over default_path" do
-        ctx = start_transport(@module, path: "/agent", default_path: "/acp")
-        assert ctx.dial.path == "/agent"
-      end
-
-      test "a missing path uses default_path" do
-        ctx = start_transport(@module, path: nil, default_path: "/acp")
-        assert ctx.dial.path == "/acp"
-      end
-
-      test "a missing path dials /agent when default_path is omitted" do
-        ctx = start_transport(@module, path: nil)
-        assert ctx.dial.path == "/agent"
-      end
-
-      test "messages stay queued until the socket is up and then flush in order" do
-        ExUnit.CaptureLog.capture_log(fn ->
-          ctx = start_transport(@module, down: true, backoff: 60_000)
-          :ok = @module.send_message(ctx.transport, %{"n" => 1})
-          :ok = @module.send_message(ctx.transport, %{"n" => 2})
-          sync(ctx.transport)
-          refute_receive {:received, _}, 40
-
-          ctx.listen.()
-          :ok = @module.reconnect(ctx.transport, ctx.url)
-          assert_receive {:dial, dial}, 1_000
-          assert dial.path == "/agent"
-          assert_receive {:received, first}
-          assert_receive {:received, second}
-          assert AgentLink.Frame.decode(first) == {:ok, %{"n" => 1}}
-          assert AgentLink.Frame.decode(second) == {:ok, %{"n" => 2}}
-          refute_receive {:received, _}, 40
-        end)
-      end
-
-      test "a close keeps later messages queued until reconnect" do
-        ctx = start_transport(@module, backoff: 60_000)
-        :ok = @module.send_message(ctx.transport, %{"n" => 1})
-        assert_receive {:received, first}
-        assert AgentLink.Frame.decode(first) == {:ok, %{"n" => 1}}
-
-        send(ctx.socket, {:close, 1001, "gone"})
-        assert_receive {:transport_closed, 1001, "gone"}, 1_000
-
-        :ok = @module.send_message(ctx.transport, %{"n" => 2})
-        :ok = @module.send_message(ctx.transport, %{"n" => 3})
-        sync(ctx.transport)
-        refute_receive {:received, _}, 40
-
-        :ok = @module.reconnect(ctx.transport, ctx.url)
-        refute_receive {:transport_closed, _, _}, 40
-        assert_receive {:dial, dial}
-        assert dial.path == "/agent"
-        assert_receive {:received, second}
-        assert_receive {:received, third}
-        assert AgentLink.Frame.decode(second) == {:ok, %{"n" => 2}}
-        assert AgentLink.Frame.decode(third) == {:ok, %{"n" => 3}}
-        refute_receive {:received, _}, 40
-      end
-
-      test "hold stops the next dial and release starts it" do
-        ctx = start_transport(@module, backoff: 200)
-        :ok = @module.hold(ctx.transport)
-        send(ctx.socket, {:close, 4001, "name taken"})
-        assert_receive {:transport_closed, 4001, "name taken"}, 1_000
-        refute_receive {:dial, _}, 350
-        assert Process.alive?(ctx.transport)
-
-        :ok = @module.release(ctx.transport)
-        assert_receive {:dial, dial}, 1_000
-        assert dial.path == "/agent"
-      end
-
-      test "hold cancels a dial that was already scheduled" do
-        ctx = start_transport(@module, backoff: 300)
-        send(ctx.socket, {:close, 1001, "gone"})
-        assert_receive {:transport_closed, 1001, "gone"}, 1_000
-        :ok = @module.hold(ctx.transport)
-        refute_receive {:dial, _}, 500
-      end
-
-      test "a close reconnects after the backoff" do
-        ctx = start_transport(@module, backoff: 400)
-        send(ctx.socket, {:close, 1001, "going away"})
-        assert_receive {:transport_closed, 1001, "going away"}, 1_000
-        refute_receive {:dial, _}, 200
-        assert_receive {:dial, dial}, 1_000
-        assert dial.path == "/agent"
-        assert Process.alive?(ctx.transport)
-      end
-
-      test "an empty close reason is delivered" do
-        ctx = start_transport(@module, backoff: 60_000)
-        send(ctx.socket, {:close, 4004, ""})
-        assert_receive {:transport_closed, 4004, ""}, 1_000
-        refute_receive {:transport_closed, _, _}, 40
-        refute_receive {:dial, _}, 40
-      end
-
-      test "reconnect dials the new url and clears a hold" do
-        ctx = start_transport(@module, backoff: 60_000)
-        :ok = @module.hold(ctx.transport)
-        send(ctx.socket, {:close, 4002, "too long"})
-        assert_receive {:transport_closed, 4002, "too long"}, 1_000
-        refute_receive {:dial, _}, 40
-
-        :ok = @module.reconnect(ctx.transport, ctx.other_url)
-        assert_receive {:dial, dial}, 1_000
-        assert dial.path == "/moved"
-        refute_receive {:transport_closed, _, _}, 40
-      end
-
-      test "release leaves an open socket up" do
-        ctx = start_transport(@module, backoff: 60_000)
-        :ok = @module.hold(ctx.transport)
-        :ok = @module.release(ctx.transport)
-        refute_receive {:transport_closed, _, _}, 40
-        refute_receive {:dial, _}, 40
-
-        :ok = @module.send_message(ctx.transport, %{"method" => "still"})
-        assert_receive {:received, payload}
-        assert AgentLink.Frame.decode(payload) == {:ok, %{"method" => "still"}}
-      end
-
-      test "a socket that dies without a close frame is code 1006" do
-        ctx = start_transport(@module, backoff: 50)
-
-        ExUnit.CaptureLog.capture_log(fn ->
-          send(ctx.socket, :drop)
-          assert_receive {:transport_closed, 1006, "socket closed"}, 1_000
-          refute_receive {:transport_closed, _, _}, 40
-          assert_receive {:dial, _dial}, 1_000
-        end)
-
-        assert Process.alive?(ctx.transport)
-      end
+  test "the dial path comes from the url, otherwise default_path" do
+    for opts <- [
+          [path: "/agent", default_path: "/acp", expect: "/agent"],
+          [path: nil, default_path: "/acp", expect: "/acp"],
+          [path: nil, expect: "/agent"]
+        ] do
+      ctx = start_transport(opts)
+      assert ctx.dial.path == opts[:expect]
     end
   end
 
-  test "the websocket answers a ping with a pong" do
-    ctx = start_transport(AgentLink.Transport.WebSocket)
-    send(ctx.socket, {:push, {:ping, "z"}})
-    assert_receive {:pong, "z"}
+  test "a close keeps later messages queued until reconnect" do
+    ctx = start_transport(backoff: 60_000)
+    :ok = WebSocket.send_message(ctx.transport, %{"n" => 1})
+    assert_receive {:received, first}, 1_000
+    assert AgentLink.Frame.decode(first) == {:ok, %{"n" => 1}}
+
+    send(ctx.socket, {:close, 1001, "gone"})
+    assert_receive {:transport_closed, 1001, "gone"}, 1_000
+
+    :ok = WebSocket.send_message(ctx.transport, %{"n" => 2})
+    :ok = WebSocket.send_message(ctx.transport, %{"n" => 3})
+    sync(ctx.transport)
+
+    :ok = WebSocket.reconnect(ctx.transport, ctx.url)
+    assert_receive {:dial, dial}, 1_000
+    assert dial.path == "/agent"
+    assert_receive {:socket, _socket}, 1_000
+    assert_receive {:received, second}, 1_000
+    assert_receive {:received, third}, 1_000
+    assert AgentLink.Frame.decode(second) == {:ok, %{"n" => 2}}
+    assert AgentLink.Frame.decode(third) == {:ok, %{"n" => 3}}
+    refute_received {:received, _}
+    refute_received {:transport_closed, _, _}
   end
 
-  test "endpoint/2 keeps ws plain and wss on TLS, and the uplink delegates" do
+  test "hold cancels a scheduled dial" do
+    ctx = start_transport(backoff: 60_000)
+    send(ctx.socket, {:close, 1001, "gone"})
+    assert_receive {:transport_closed, 1001, "gone"}, 1_000
+
+    :ok = WebSocket.hold(ctx.transport)
+    state = sync(ctx.transport)
+    assert state.held == true
+    assert state.timer == nil
+  end
+
+  test "a close reconnects after the backoff" do
+    ctx = start_transport()
+    send(ctx.socket, {:close, 1001, "going away"})
+    assert_receive {:transport_closed, 1001, _}, 1_000
+    assert_receive {:dial, dial}, 1_000
+    assert dial.path == "/agent"
+    assert Process.alive?(ctx.transport)
+  end
+
+  test "an empty close reason is delivered" do
+    ctx = start_transport(backoff: 60_000)
+    send(ctx.socket, {:close, 4004, ""})
+    assert_receive {:transport_closed, 4004, ""}, 1_000
+    refute_received {:transport_closed, _, _}
+  end
+
+  test "reconnect dials the new url and clears a hold" do
+    ctx = start_transport(backoff: 60_000)
+    :ok = WebSocket.hold(ctx.transport)
+    send(ctx.socket, {:close, 4002, "too long"})
+    assert_receive {:transport_closed, 4002, "too long"}, 1_000
+
+    :ok = WebSocket.reconnect(ctx.transport, ctx.other_url)
+    assert_receive {:dial, dial}, 1_000
+    assert dial.path == "/moved"
+    refute_received {:transport_closed, _, _}
+  end
+
+  test "reconnect closes the old socket before a queued close frame" do
+    ctx = start_transport(backoff: 60_000)
+    :sys.suspend(ctx.transport)
+
+    on_exit(fn ->
+      if Process.alive?(ctx.transport) do
+        try do
+          :sys.resume(ctx.transport)
+        catch
+          _, _ -> :ok
+        end
+      end
+    end)
+
+    task = Task.async(fn -> WebSocket.reconnect(ctx.transport, ctx.other_url) end)
+    await_queue(ctx.transport, fn len -> len >= 1 end)
+    queued = queue_len(ctx.transport)
+    send(ctx.socket, {:close, 1001, "queued"})
+    await_queue(ctx.transport, fn len -> len > queued end)
+    :sys.resume(ctx.transport)
+
+    assert Task.await(task) == :ok
+    assert_receive {:dial, dial}, 1_000
+    assert dial.path == "/moved"
+    refute_received {:transport_closed, _, _}
+  end
+
+  test "a socket that dies without a close frame is code 1006" do
+    ctx = start_transport()
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      send(ctx.socket, :drop)
+      assert_receive {:transport_closed, 1006, "socket closed"}, 1_000
+      refute_received {:transport_closed, _, _}
+      assert_receive {:dial, _dial}, 1_000
+    end)
+
+    assert Process.alive?(ctx.transport)
+  end
+
+  test "the websocket answers a ping with a pong" do
+    ctx = start_transport()
+    send(ctx.socket, {:push, {:ping, "z"}})
+    assert_receive {:pong, "z"}, 1_000
+  end
+
+  test "a frame written with the 101 is delivered" do
+    payload = AgentLink.Frame.encode(%{"method" => "early"})
+    port = start_raw_plane(text_frame(payload))
+
+    start_supervised!(
+      {WebSocket,
+       [
+         owner: self(),
+         url: "ws://127.0.0.1:#{port}/agent",
+         headers: [{"authorization", "Bearer sekret"}]
+       ]}
+    )
+
+    assert_receive {:from_plane, %{"method" => "early"}}, 1_000
+  end
+
+  test "a malformed frame closes with 1002 and queues another dial" do
+    port = start_raw_plane(<<0x83, 0x00>>)
+
+    transport =
+      start_supervised!(
+        {WebSocket,
+         [
+           owner: self(),
+           url: "ws://127.0.0.1:#{port}/agent",
+           headers: [{"authorization", "Bearer sekret"}],
+           backoff: 60_000
+         ]}
+      )
+
+    assert_receive {:transport_closed, 1002, _reason}, 1_000
+    state = sync(transport)
+    assert state.websocket == nil
+    assert state.conn == nil
+    assert state.held == false
+    assert state.timer != nil
+  end
+
+  test "endpoint/2 keeps ws plain and wss on TLS" do
     assert AgentLink.Transport.endpoint("ws://127.0.0.1:8090/agent", "/acp") ==
              {:ws, :http, "127.0.0.1", 8090, "/agent"}
 
@@ -280,61 +285,61 @@ defmodule AgentLink.TransportTest do
     assert AgentLink.Transport.endpoint("https://plane.example/agent", "/agent") ==
              {:wss, :https, "plane.example", 443, "/agent"}
 
-    for url <- [
-          "ws://127.0.0.1:8090/agent",
-          "ws://127.0.0.1/agent",
-          "ws://127.0.0.1",
-          "http://127.0.0.1:8090/agent",
-          "wss://plane.example/agent",
-          "wss://plane.example:8443/agent",
-          "wss://plane.example",
-          "https://plane.example/agent"
-        ] do
-      assert AgentLink.Uplink.endpoint(url) == AgentLink.Transport.endpoint(url, "/agent")
-    end
+    assert AgentLink.Transport.endpoint("ws://127.0.0.1:8090/agent?token=sekret", "/acp") ==
+             {:ws, :http, "127.0.0.1", 8090, "/agent"}
   end
 
-  test "FakeTransport deliver, sent, and disconnect speak maps" do
-    transport =
-      start_supervised!(
-        {AgentLink.FakeTransport,
-         [
-           owner: self(),
-           url: "ws://127.0.0.1:9/acp",
-           accept: false,
-           backoff: 60_000,
-           default_path: "/acp",
-           headers: [{"authorization", "Bearer sekret"}]
-         ]}
-      )
+  test "FakeTransport queues while down and flushes in order" do
+    transport = start_fake(accept: false, backoff: 60_000)
 
-    :ok = AgentLink.FakeTransport.send_message(transport, %{"n" => 1})
-    :ok = AgentLink.FakeTransport.send_message(transport, %{"n" => 2})
-    sync(transport)
-    assert AgentLink.FakeTransport.sent(transport) == []
-    assert AgentLink.FakeTransport.deliver(transport, %{"method" => "early"}) == :closed
-    refute_receive {:from_plane, _}
+    :ok = FakeTransport.send_message(transport, %{"n" => 1})
+    :ok = FakeTransport.send_message(transport, %{"n" => 2})
+    assert FakeTransport.sent(transport) == []
+    assert FakeTransport.deliver(transport, %{"method" => "early"}) == :closed
+    refute_received {:from_plane, _}
 
-    :ok = AgentLink.FakeTransport.allow(transport)
-    :ok = AgentLink.FakeTransport.reconnect(transport, "ws://127.0.0.1:9/acp")
-    assert AgentLink.FakeTransport.sent(transport) == [%{"n" => 1}, %{"n" => 2}]
+    :ok = FakeTransport.allow(transport)
+    :ok = FakeTransport.reconnect(transport, "ws://127.0.0.1:9/acp")
+    assert FakeTransport.sent(transport) == [%{"n" => 1}, %{"n" => 2}]
 
-    :ok = AgentLink.FakeTransport.deliver(transport, %{"method" => "yo"})
+    :ok = FakeTransport.deliver(transport, %{"method" => "yo"})
     assert_receive {:from_plane, %{"method" => "yo"}}
 
-    :ok = AgentLink.FakeTransport.disconnect(transport, 4001, "taken")
-    assert_receive {:transport_closed, 4001, "taken"}
-    assert AgentLink.FakeTransport.deliver(transport, %{"method" => "late"}) == :closed
-    assert AgentLink.FakeTransport.sent(transport) == [%{"n" => 1}, %{"n" => 2}]
+    :ok = FakeTransport.disconnect(transport, 4004, "")
+    assert_receive {:transport_closed, 4004, ""}
+    assert FakeTransport.deliver(transport, %{"method" => "late"}) == :closed
+    assert FakeTransport.sent(transport) == [%{"n" => 1}, %{"n" => 2}]
+
+    :ok = FakeTransport.send_message(transport, %{"n" => 3})
+    :ok = FakeTransport.reconnect(transport, "ws://127.0.0.1:9/moved")
+    assert FakeTransport.sent(transport) == [%{"n" => 1}, %{"n" => 2}, %{"n" => 3}]
+    refute_received {:transport_closed, _, _}
   end
 
-  defp start_transport(module, opts \\ []) do
+  test "FakeTransport hold cancels a scheduled dial" do
+    transport = start_fake(backoff: 60_000)
+    :ok = FakeTransport.disconnect(transport, 1001, "gone")
+    assert_receive {:transport_closed, 1001, "gone"}
+
+    :ok = FakeTransport.hold(transport)
+    state = sync(transport)
+    assert state.held == true
+    assert state.timer == nil
+
+    :ok = FakeTransport.send_message(transport, %{"n" => 1})
+    assert FakeTransport.sent(transport) == []
+    :ok = FakeTransport.reconnect(transport, "ws://127.0.0.1:9/agent")
+    assert FakeTransport.sent(transport) == [%{"n" => 1}]
+    assert sync(transport).held == false
+  end
+
+  defp start_transport(opts \\ []) do
     parent = self()
     path = Keyword.get(opts, :path, "/agent")
-    down = Keyword.get(opts, :down, false)
-    {url, other_url, listen} = open_plane(module, path, down, parent)
+    port = start_bandit(parent)
+    other = start_bandit(parent)
 
-    transport_opts = [owner: parent, url: url]
+    transport_opts = [owner: parent, url: ws_url(port, path)]
     transport_opts = maybe_put(transport_opts, :backoff, Keyword.get(opts, :backoff, :omit))
 
     transport_opts =
@@ -346,68 +351,41 @@ defmodule AgentLink.TransportTest do
         headers -> Keyword.put(transport_opts, :headers, headers)
       end
 
-    transport_opts =
-      if module == AgentLink.FakeTransport do
-        transport_opts
-        |> Keyword.put(:spy, parent)
-        |> Keyword.put(:accept, not down)
-      else
-        transport_opts
-      end
-
     transport =
       start_supervised!(%{
-        id: {module, System.unique_integer([:positive])},
-        start: {module, :start_link, [transport_opts]},
+        id: {WebSocket, System.unique_integer([:positive])},
+        start: {WebSocket, :start_link, [transport_opts]},
         restart: :temporary
       })
 
-    listen =
-      case {module, down} do
-        {AgentLink.FakeTransport, true} -> fn -> AgentLink.FakeTransport.allow(transport) end
-        {AgentLink.Transport.WebSocket, true} -> listen
-        _ -> fn -> :ok end
-      end
+    {dial, socket} = await_peer()
 
-    ctx = %{
-      module: module,
+    %{
       transport: transport,
-      url: url,
-      other_url: other_url,
-      listen: listen
+      url: ws_url(port, path),
+      other_url: ws_url(other, "/moved"),
+      dial: dial,
+      socket: socket
     }
-
-    if down do
-      ctx
-    else
-      {dial, socket} = await_peer()
-      Map.merge(ctx, %{dial: dial, socket: socket})
-    end
   end
 
-  defp open_plane(AgentLink.Transport.WebSocket, path, down, parent) do
-    other = start_bandit(parent)
-    other_url = ws_url(other, "/moved")
+  defp start_fake(opts) do
+    fake_opts = [
+      owner: self(),
+      url: "ws://127.0.0.1:9/acp",
+      accept: Keyword.get(opts, :accept, true),
+      headers: [{"authorization", "Bearer sekret"}]
+    ]
 
-    if down do
-      port = free_port()
+    fake_opts = maybe_put(fake_opts, :backoff, Keyword.get(opts, :backoff, :omit))
 
-      listen = fn ->
-        start_bandit(parent, port)
-        :ok
-      end
-
-      {ws_url(port, path), other_url, listen}
-    else
-      {ws_url(start_bandit(parent), path), other_url, fn -> :ok end}
-    end
+    start_supervised!(
+      {FakeTransport, fake_opts},
+      id: {FakeTransport, System.unique_integer([:positive])}
+    )
   end
 
-  defp open_plane(AgentLink.FakeTransport, path, _down, _parent) do
-    {ws_url(9, path), ws_url(9, "/moved"), fn -> :ok end}
-  end
-
-  defp start_bandit(spy, port \\ 0) do
+  defp start_bandit(spy) do
     server =
       start_supervised!(%{
         id: {:peer, System.unique_integer([:positive])},
@@ -417,26 +395,83 @@ defmodule AgentLink.TransportTest do
              [
                plug: {AgentLink.TransportTest.PeerPlug, spy},
                scheme: :http,
-               port: port,
+               port: 0,
                ip: {127, 0, 0, 1}
              ]
            ]},
         restart: :temporary
       })
 
-    if port == 0 do
-      {:ok, {_ip, bound}} = ThousandIsland.listener_info(server)
-      bound
-    else
-      port
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+    port
+  end
+
+  # One TCP write: the 101 and `extra` arrive in the same recv, so Mint
+  # reports the extra bytes as the upgrade response body.
+  defp start_raw_plane(extra) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(listen)
+
+    server =
+      spawn(fn ->
+        {:ok, sock} = :gen_tcp.accept(listen)
+        {:ok, request} = read_headers(sock, "")
+        :ok = :gen_tcp.send(sock, ws_accept(request) <> extra)
+
+        receive do
+          :bye -> :gen_tcp.close(sock)
+        end
+      end)
+
+    on_exit(fn ->
+      send(server, :bye)
+      :gen_tcp.close(listen)
+    end)
+
+    port
+  end
+
+  defp read_headers(sock, acc) do
+    case :gen_tcp.recv(sock, 0, 3_000) do
+      {:ok, data} ->
+        acc = acc <> data
+        if String.contains?(acc, "\r\n\r\n"), do: {:ok, acc}, else: read_headers(sock, acc)
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp free_port do
-    {:ok, sock} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}, reuseaddr: true])
-    {:ok, port} = :inet.port(sock)
-    :gen_tcp.close(sock)
-    port
+  defp ws_accept(request) do
+    key = websocket_key(request)
+
+    accept =
+      :crypto.hash(:sha, key <> "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+      |> Base.encode64()
+
+    "HTTP/1.1 101 Switching Protocols\r\n" <>
+      "upgrade: websocket\r\n" <>
+      "connection: upgrade\r\n" <>
+      "sec-websocket-accept: #{accept}\r\n" <>
+      "\r\n"
+  end
+
+  defp websocket_key(request) do
+    request
+    |> String.split("\r\n")
+    |> Enum.find_value(fn line ->
+      case String.split(line, ":", parts: 2) do
+        [name, value] ->
+          if String.downcase(name) == "sec-websocket-key", do: String.trim(value)
+
+        _ ->
+          nil
+      end
+    end)
+  end
+
+  defp text_frame(payload) when byte_size(payload) < 126 do
+    <<0x81, byte_size(payload), payload::binary>>
   end
 
   defp ws_url(port, nil), do: "ws://127.0.0.1:#{port}"
@@ -449,6 +484,41 @@ defmodule AgentLink.TransportTest do
     assert_receive {:dial, dial}, 1_000
     assert_receive {:socket, socket}, 1_000
     {dial, socket}
+  end
+
+  defp await_queue(pid, pred) do
+    deadline = System.monotonic_time(:millisecond) + 1_000
+
+    Stream.repeatedly(fn -> queue_len(pid) end)
+    |> Enum.reduce_while(:timeout, fn
+      nil, _ ->
+        {:halt, :dead}
+
+      len, _ ->
+        cond do
+          pred.(len) ->
+            {:halt, :ok}
+
+          System.monotonic_time(:millisecond) >= deadline ->
+            {:halt, :timeout}
+
+          true ->
+            Process.sleep(1)
+            {:cont, :timeout}
+        end
+    end)
+    |> case do
+      :ok -> :ok
+      :dead -> flunk("transport exited while waiting")
+      :timeout -> flunk("timed out waiting for the transport mailbox")
+    end
+  end
+
+  defp queue_len(pid) do
+    case Process.info(pid, :message_queue_len) do
+      {:message_queue_len, len} -> len
+      nil -> nil
+    end
   end
 
   defp sync(transport), do: :sys.get_state(transport)

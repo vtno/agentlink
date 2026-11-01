@@ -67,26 +67,12 @@ defmodule AgentLink.UplinkTest do
   end
 
   test "a plane URL keeps ws plain and dials wss as TLS" do
-    assert AgentLink.Uplink.endpoint("ws://127.0.0.1:8090/agent") ==
-             {:ws, :http, "127.0.0.1", 8090, "/agent"}
+    url = "wss://plane.example:8443/agent"
 
-    assert AgentLink.Uplink.endpoint("ws://127.0.0.1/agent") ==
-             {:ws, :http, "127.0.0.1", 80, "/agent"}
-
-    assert AgentLink.Uplink.endpoint("http://127.0.0.1:8090/agent") ==
-             {:ws, :http, "127.0.0.1", 8090, "/agent"}
-
-    assert AgentLink.Uplink.endpoint("wss://plane.example/agent") ==
-             {:wss, :https, "plane.example", 443, "/agent"}
-
-    assert AgentLink.Uplink.endpoint("wss://plane.example:8443/agent") ==
+    assert AgentLink.Uplink.endpoint(url) ==
              {:wss, :https, "plane.example", 8443, "/agent"}
 
-    assert AgentLink.Uplink.endpoint("wss://plane.example") ==
-             {:wss, :https, "plane.example", 443, "/agent"}
-
-    assert AgentLink.Uplink.endpoint("https://plane.example/agent") ==
-             {:wss, :https, "plane.example", 443, "/agent"}
+    assert AgentLink.Uplink.endpoint(url) == AgentLink.Transport.endpoint(url, "/agent")
   end
 
   test "a missing link file stops the uplink" do

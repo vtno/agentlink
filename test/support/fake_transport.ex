@@ -2,19 +2,17 @@ defmodule AgentLink.FakeTransport do
   @moduledoc """
   In-process `AgentLink.Transport` for tests. No socket.
 
-  `deliver/2` is a decoded map from the plane. `disconnect/2` is a peer close.
+  `deliver/2` is a decoded map from the plane. `disconnect/3` is a peer close.
   `sent/1` is what has been written to the plane, oldest first, not what is
   still queued. Start with `accept: false` when the plane should refuse the
-  dial; `allow/1` makes the next dial succeed.
-
-  Pass `spy: pid` to observe dials. The spy receives `{:dial, meta}`,
-  `{:socket, pid}`, and `{:received, payload}` where `payload` is the
-  `AgentLink.Frame` text. The socket pid accepts `{:push, frame}`,
-  `{:close, code, reason}`, and `:drop`, the same messages a test server uses.
+  dial. `allow/1` makes the next dial succeed and does not dial by itself.
   """
 
   @behaviour AgentLink.Transport
   use GenServer
+
+  # Same floor as the Mint client, so a refused dial cannot tight-loop.
+  @min_backoff 50
 
   defstruct [
     :owner,
@@ -22,7 +20,6 @@ defmodule AgentLink.FakeTransport do
     :headers,
     :backoff,
     :default_path,
-    :spy,
     :timer,
     :connect_token,
     outbox: [],
@@ -43,9 +40,8 @@ defmodule AgentLink.FakeTransport do
       owner: Keyword.fetch!(opts, :owner),
       url: Keyword.fetch!(opts, :url),
       headers: Keyword.get_lazy(opts, :headers, &AgentLink.Auth.headers/0),
-      backoff: Keyword.get(opts, :backoff, 500),
+      backoff: retry_delay(Keyword.get(opts, :backoff, 500)),
       default_path: Keyword.get(opts, :default_path, "/agent"),
-      spy: Keyword.get(opts, :spy),
       accept: Keyword.get(opts, :accept, true)
     }
 
@@ -65,9 +61,6 @@ defmodule AgentLink.FakeTransport do
 
   @impl true
   def hold(server), do: GenServer.call(server, :hold)
-
-  @impl true
-  def release(server), do: GenServer.call(server, :release)
 
   @impl true
   def reconnect(server, url) when is_binary(url), do: GenServer.call(server, {:reconnect, url})
@@ -94,20 +87,9 @@ defmodule AgentLink.FakeTransport do
     {:reply, :ok, state}
   end
 
-  def handle_call(:release, _from, state) do
-    state = %{cancel_timer(state) | held: false}
-
-    state =
-      if up?(state) do
-        %{state | connect_token: nil}
-      else
-        request_connect(state, 0)
-      end
-
-    {:reply, :ok, state}
-  end
-
   def handle_call({:reconnect, url}, _from, state) do
+    # Down before the dial is queued, and the owner is not told. Matches the
+    # Mint client closing its socket inside this call.
     state = %{cancel_timer(state) | held: false, url: url, up: false}
     {:reply, :ok, request_connect(state, 0)}
   end
@@ -133,69 +115,15 @@ defmodule AgentLink.FakeTransport do
   end
 
   def handle_info({:connect, _token}, state), do: {:noreply, state}
-
-  def handle_info({:push, {opcode, payload}}, state) when opcode in [:text, :binary] do
-    if up?(state) do
-      case AgentLink.Frame.decode(IO.iodata_to_binary(payload)) do
-        {:ok, message} -> send(state.owner, {:from_plane, message})
-        :error -> :ok
-      end
-    end
-
-    {:noreply, state}
-  end
-
-  def handle_info({:push, {:ping, _payload}}, state), do: {:noreply, state}
-
-  def handle_info({:close, code, reason}, state) when is_integer(code) and is_binary(reason) do
-    {:noreply, peer_closed(state, code, reason)}
-  end
-
-  # Same owner message as a Mint socket that dies without a close frame.
-  def handle_info(:drop, state), do: {:noreply, peer_closed(state, 1006, "socket closed")}
-
   def handle_info(_message, state), do: {:noreply, state}
 
   defp connect(%{accept: false} = state), do: schedule(%{state | up: false})
 
   defp connect(state) do
-    state = %{state | up: true}
-    notify_dial(state)
-    {:noreply, flush(state)}
+    {:noreply, flush(%{state | up: true})}
   end
 
-  defp notify_dial(%{spy: nil}), do: :ok
-
-  defp notify_dial(%{spy: spy} = state) do
-    {_socket, _http, _host, _port, path} =
-      AgentLink.Transport.endpoint(state.url, state.default_path)
-
-    send(spy, {:dial, dial_meta(state.headers, path)})
-    send(spy, {:socket, self()})
-  end
-
-  defp dial_meta(headers, path) do
-    %{
-      path: path,
-      authorization: header_values(headers, "authorization"),
-      x_test: header_values(headers, "x-test")
-    }
-  end
-
-  defp header_values(headers, name) do
-    name = String.downcase(name)
-
-    for {key, value} <- headers,
-        String.downcase(to_string(key)) == name,
-        do: to_string(value)
-  end
-
-  defp transmit(message, %{up: true, spy: spy} = state) do
-    payload = AgentLink.Frame.encode(message)
-    if spy, do: send(spy, {:received, payload})
-    %{state | sent: [message | state.sent]}
-  end
-
+  defp transmit(message, %{up: true} = state), do: %{state | sent: [message | state.sent]}
   defp transmit(message, state), do: enqueue(state, message)
 
   defp enqueue(state, message), do: %{state | outbox: [message | state.outbox]}
@@ -257,6 +185,9 @@ defmodule AgentLink.FakeTransport do
     Process.cancel_timer(timer)
     %{state | timer: nil}
   end
+
+  defp retry_delay(delay) when is_integer(delay) and delay >= @min_backoff, do: delay
+  defp retry_delay(_delay), do: @min_backoff
 
   defp up?(%{up: up}), do: up
 end

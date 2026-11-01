@@ -10,17 +10,16 @@ defmodule AgentLink.Transport do
 
   A peer close is forwarded with its code and reason. A missing code is 1005
   and a missing reason is an empty binary. A socket that drops with no close
-  frame is code 1006. `hold/1` stops the next dial, which is how the uplink
-  parks on close codes 4001–4004. Call it from the `transport_closed` handler:
-  the pending dial is cancelled before `hold/1` returns. `release/1` clears
-  that hold and dials when the socket is down. An open socket stays up.
-  `reconnect/2` dials a new URL now and clears a hold. That dial does not
-  report `transport_closed` for the socket it closes itself.
+  frame is code 1006. A frame that cannot be decoded closes with 1002.
+  `hold/1` stops the next dial, which is how the uplink parks on close codes
+  4001–4004. Call it from the `transport_closed` handler: the pending dial is
+  cancelled before `hold/1` returns. `reconnect/2` clears a hold and queues a
+  dial. It returns once that dial is queued, not once the socket is up. The
+  socket it closes itself does not produce `transport_closed`.
 
-  `:backoff` is a fixed delay in milliseconds, default 500, not an exponential
-  series. `:headers` defaults to `AgentLink.Auth.headers/0`. `:default_path`
-  is used when the URL has no path, default `/agent`. The client relay passes
-  `/acp`.
+  `:headers` defaults to `AgentLink.Auth.headers/0`. `:default_path` is used
+  when the URL has no path, default `/agent`. The client relay passes `/acp`.
+  A failed dial waits 500ms before the next one.
 
   `endpoint/2` is the URL parser both relays share. It is not a callback.
   `AgentLink.Uplink` still dials on its own.
@@ -37,9 +36,8 @@ defmodule AgentLink.Transport do
   @doc """
   Dial the plane. `:owner` and `:url` are required.
 
-  `:headers` defaults to `AgentLink.Auth.headers/0`. `:backoff` is the
-  reconnect delay in milliseconds, default 500. `:default_path` is used when
-  `:url` has no path, default `/agent`.
+  `:headers` defaults to `AgentLink.Auth.headers/0`. `:default_path` is used
+  when `:url` has no path, default `/agent`.
   """
   @callback start_link(keyword) :: GenServer.on_start()
 
@@ -49,12 +47,10 @@ defmodule AgentLink.Transport do
   @doc "Stop the next dial. An open socket stays up until the peer closes it."
   @callback hold(server :: term) :: :ok
 
-  @doc "Clear the hold. Dial now when the socket is down."
-  @callback release(server :: term) :: :ok
-
   @doc """
-  Dial `url` now. Clears a hold. The owner is not told that this process
-  closed the previous socket.
+  Queue a dial to `url`. Clears a hold. Returns once the dial is queued, not
+  once the socket is up. The owner is not told that this process closed the
+  previous socket.
   """
   @callback reconnect(server :: term, url :: String.t()) :: :ok
 
@@ -63,7 +59,8 @@ defmodule AgentLink.Transport do
 
   `wss` and `https` use TLS. A missing port is 443 for those and 80 otherwise.
   A missing host is `127.0.0.1`. A missing path is `default_path`. The client
-  relay passes `/acp`. The uplink passes `/agent`.
+  relay passes `/acp`. The uplink passes `/agent`. The query string is ignored.
+  Auth goes through the request headers.
   """
   @spec endpoint(String.t(), String.t()) :: endpoint
   def endpoint(url, default_path) when is_binary(url) and is_binary(default_path) do

@@ -13,6 +13,10 @@ defmodule AgentLink.Transport.WebSocket do
 
   @connect_timeout 3_000
 
+  # Failed dials wait this long. Tests may pass a longer `:backoff`.
+  # Anything under 50ms is raised so a refused dial cannot tight-loop.
+  @min_backoff 50
+
   defstruct [
     :owner,
     :url,
@@ -33,8 +37,7 @@ defmodule AgentLink.Transport.WebSocket do
   `{:transport_closed, code, reason}`.
 
   `:owner` and `:url` are required. `:headers` defaults to
-  `AgentLink.Auth.headers/0`. `:backoff` is the reconnect delay in
-  milliseconds, default 500. `:default_path` is used when `url` has no path,
+  `AgentLink.Auth.headers/0`. `:default_path` is used when `url` has no path,
   default `/agent`.
   """
   @impl true
@@ -48,7 +51,7 @@ defmodule AgentLink.Transport.WebSocket do
       owner: Keyword.fetch!(opts, :owner),
       url: Keyword.fetch!(opts, :url),
       headers: Keyword.get_lazy(opts, :headers, &AgentLink.Auth.headers/0),
-      backoff: Keyword.get(opts, :backoff, 500),
+      backoff: retry_delay(Keyword.get(opts, :backoff, 500)),
       default_path: Keyword.get(opts, :default_path, "/agent")
     }
 
@@ -78,13 +81,10 @@ defmodule AgentLink.Transport.WebSocket do
   @impl true
   def hold(server), do: GenServer.call(server, :hold)
 
-  @doc "Clear the hold. Dial now when the socket is down."
-  @impl true
-  def release(server), do: GenServer.call(server, :release)
-
   @doc """
-  Dial `url` now. Clears a hold. The owner is not told that this process
-  closed the previous socket.
+  Queue a dial to `url`. Clears a hold. Returns once the dial is queued, not
+  once the socket is up. The owner is not told that this process closed the
+  previous socket.
   """
   @impl true
   def reconnect(server, url) when is_binary(url), do: GenServer.call(server, {:reconnect, url})
@@ -95,21 +95,20 @@ defmodule AgentLink.Transport.WebSocket do
     {:reply, :ok, state}
   end
 
-  def handle_call(:release, _from, state) do
-    state = %{cancel_timer(state) | held: false}
-
-    state =
-      if up?(state) do
-        %{state | connect_token: nil}
-      else
-        request_connect(state, 0)
-      end
-
-    {:reply, :ok, state}
-  end
-
   def handle_call({:reconnect, url}, _from, state) do
-    state = %{cancel_timer(state) | held: false, url: url}
+    # Close before queueing the dial. A frame already in the mailbox then
+    # sees no socket and cannot replace this dial.
+    close_quietly(state)
+
+    state = %{
+      cancel_timer(state)
+      | held: false,
+        url: url,
+        conn: nil,
+        websocket: nil,
+        ref: nil
+    }
+
     {:reply, :ok, request_connect(state, 0)}
   end
 
@@ -128,10 +127,9 @@ defmodule AgentLink.Transport.WebSocket do
 
       {:error, conn, reason, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &apply_response/2)
-        # active: :once can deliver the TCP close before the close frame is
-        # read. Drain the socket before calling that a code 1006 drop.
-        state = if(up?(state), do: absorb_pending(state), else: state)
 
+        # A close frame is its own data message and is decoded above, or in
+        # `responses`. 1006 is a socket that died with nothing left to decode.
         state =
           if up?(state) do
             Logger.warning("transport error #{inspect(reason)}")
@@ -148,6 +146,8 @@ defmodule AgentLink.Transport.WebSocket do
     end
   end
 
+  # `reconnect/2` has already closed this socket. A late frame must not
+  # cancel the dial that call queued.
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
@@ -180,37 +180,40 @@ defmodule AgentLink.Transport.WebSocket do
            mode: :passive,
            timeout: @connect_timeout
          ) do
-      {:ok, conn} ->
-        case upgrade(conn, ws_scheme, path, state.headers) do
-          {:ok, conn, ref, websocket} ->
-            case Mint.HTTP.set_mode(conn, :active) do
-              {:ok, conn} ->
-                Logger.info("transport connected #{state.url}")
-                {:ok, %{state | conn: conn, websocket: websocket, ref: ref}}
-
-              {:error, conn, reason} ->
-                Mint.HTTP.close(conn)
-                {:error, reason, state}
-            end
-
-          {:error, conn, reason} ->
-            Mint.HTTP.close(conn)
-            {:error, reason, state}
-        end
-
-      {:error, reason} ->
-        {:error, reason, state}
+      {:ok, conn} -> upgrade(conn, ws_scheme, path, state)
+      {:error, reason} -> {:error, reason, state}
     end
   end
 
-  defp upgrade(conn, ws_scheme, path, headers) do
-    with {:ok, conn, ref} <- Mint.WebSocket.upgrade(ws_scheme, conn, path, headers),
-         {:ok, conn, status, resp_headers} <- await_upgrade(conn, ref, []),
-         {:ok, conn, websocket} <- Mint.WebSocket.new(conn, ref, status, resp_headers) do
-      {:ok, conn, ref, websocket}
+  defp upgrade(conn, ws_scheme, path, state) do
+    with {:ok, conn, ref} <- Mint.WebSocket.upgrade(ws_scheme, conn, path, state.headers),
+         {:ok, conn, responses} <- await_upgrade(conn, ref, []),
+         {:ok, conn, websocket} <-
+           Mint.WebSocket.new(conn, ref, status_of(responses, ref), headers_of(responses, ref)) do
+      state = %{state | conn: conn, websocket: websocket, ref: ref}
+      state = decode_early(state, early_data(responses, ref))
+
+      if up?(state) do
+        case Mint.HTTP.set_mode(state.conn, :active) do
+          {:ok, conn} ->
+            Logger.info("transport connected #{state.url}")
+            {:ok, %{state | conn: conn}}
+
+          {:error, conn, reason} ->
+            Mint.HTTP.close(conn)
+            {:error, reason, %{state | conn: nil, websocket: nil, ref: nil}}
+        end
+      else
+        {:ok, state}
+      end
     else
-      {:error, conn, reason} -> {:error, conn, reason}
-      {:error, conn, reason, _responses} -> {:error, conn, reason}
+      {:error, conn, reason} ->
+        Mint.HTTP.close(conn)
+        {:error, reason, state}
+
+      {:error, conn, reason, _responses} ->
+        Mint.HTTP.close(conn)
+        {:error, reason, state}
     end
   end
 
@@ -219,7 +222,7 @@ defmodule AgentLink.Transport.WebSocket do
       status = status_of(acc, ref)
 
       if status == 101 do
-        {:ok, conn, status, headers_of(acc, ref)}
+        {:ok, conn, acc}
       else
         {:error, conn, {:status, status}}
       end
@@ -229,6 +232,18 @@ defmodule AgentLink.Transport.WebSocket do
         other -> other
       end
     end
+  end
+
+  # Mint treats bytes after the 101 as the response body. They are websocket
+  # frames and have to be decoded before the socket goes active.
+  defp early_data(responses, ref) do
+    for {:data, ^ref, data} <- responses, do: data
+  end
+
+  defp decode_early(state, chunks) do
+    Enum.reduce(chunks, state, fn data, state ->
+      if up?(state), do: apply_response({:data, state.ref, data}, state), else: state
+    end)
   end
 
   defp status_of(responses, ref) do
@@ -254,12 +269,13 @@ defmodule AgentLink.Transport.WebSocket do
 
       {:error, websocket, reason} ->
         Logger.warning("transport decode failed #{inspect(reason)}")
-        %{state | websocket: websocket}
+        fail(%{state | websocket: websocket}, 1002, reason)
     end
   end
 
   defp apply_response(_response, state), do: state
 
+  defp apply_frame(_frame, %{websocket: nil} = state), do: state
   defp apply_frame({:text, payload}, state), do: forward(payload, state)
   defp apply_frame({:binary, payload}, state), do: forward(payload, state)
   defp apply_frame({:ping, payload}, state), do: send_frame(state, {:pong, payload})
@@ -272,7 +288,7 @@ defmodule AgentLink.Transport.WebSocket do
 
   defp apply_frame({:error, reason}, state) do
     Logger.warning("transport frame error #{inspect(reason)}")
-    state
+    fail(state, 1002, reason)
   end
 
   defp apply_frame(_frame, state), do: state
@@ -337,39 +353,6 @@ defmodule AgentLink.Transport.WebSocket do
     end
   end
 
-  defp absorb_pending(%{conn: nil} = state), do: state
-
-  defp absorb_pending(state) do
-    socket = Mint.HTTP.get_socket(state.conn)
-    state = drain_messages(state, socket)
-    if up?(state), do: drain_recv(state, socket), else: state
-  end
-
-  defp drain_messages(state, socket) do
-    receive do
-      {tag, ^socket, data} when tag in [:tcp, :ssl] ->
-        state |> apply_response({:data, state.ref, data}) |> drain_messages(socket)
-    after
-      0 -> state
-    end
-  end
-
-  defp drain_recv(state, socket) do
-    with :ok <- set_passive(socket),
-         {:ok, data} when is_binary(data) and data != "" <- recv_pending(socket) do
-      state = apply_response({:data, state.ref, data}, state)
-      if up?(state), do: drain_recv(state, socket), else: state
-    else
-      _ -> state
-    end
-  end
-
-  defp set_passive(socket) when is_port(socket), do: :inet.setopts(socket, active: false)
-  defp set_passive(socket), do: :ssl.setopts(socket, active: false)
-
-  defp recv_pending(socket) when is_port(socket), do: :gen_tcp.recv(socket, 0, 0)
-  defp recv_pending(socket), do: :ssl.recv(socket, 0, 0)
-
   defp fail(%{websocket: nil} = state, _code, _reason) do
     close_quietly(state)
     %{state | conn: nil, websocket: nil, ref: nil}
@@ -396,8 +379,9 @@ defmodule AgentLink.Transport.WebSocket do
 
   defp schedule(state), do: {:noreply, request_connect(state, state.backoff)}
 
-  # `send/2` puts the dial in the mailbox before this call returns, so a
-  # following call sees the dial first. A timer can still be cancelled by hold.
+  # `send/2` puts the dial in the mailbox before this call returns, so
+  # `reconnect/2` has queued the dial by the time it replies. A timer can
+  # still be cancelled by hold.
   defp request_connect(state, delay) when delay <= 0 do
     state = cancel_timer(state)
     token = make_ref()
@@ -418,6 +402,9 @@ defmodule AgentLink.Transport.WebSocket do
     Process.cancel_timer(timer)
     %{state | timer: nil}
   end
+
+  defp retry_delay(delay) when is_integer(delay) and delay >= @min_backoff, do: delay
+  defp retry_delay(_delay), do: @min_backoff
 
   defp up?(%{websocket: websocket}), do: not is_nil(websocket)
 
