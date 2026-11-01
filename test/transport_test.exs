@@ -165,6 +165,52 @@ defmodule AgentLink.TransportTest do
     refute_received {:transport_closed, _, _}
   end
 
+  test "url/2 replaces the next dial and leaves the socket, timer, and hold" do
+    ctx = start_transport(backoff: 60_000)
+    open = sync(ctx.transport)
+    assert open.conn != nil
+    assert open.timer == nil
+    assert open.held == false
+
+    :ok = WebSocket.url(ctx.transport, ctx.other_url)
+    moved = sync(ctx.transport)
+    assert moved.url == ctx.other_url
+    assert moved.conn == open.conn
+    assert moved.websocket == open.websocket
+    assert moved.ref == open.ref
+    assert moved.timer == nil
+    assert moved.held == false
+    refute_received {:transport_closed, _, _}
+    refute_received {:dial, _}
+
+    :ok = WebSocket.send_message(ctx.transport, %{"n" => 1})
+    assert_receive {:received, payload}, 1_000
+    assert AgentLink.Frame.decode(payload) == {:ok, %{"n" => 1}}
+
+    send(ctx.socket, {:close, 1001, "gone"})
+    assert_receive {:transport_closed, 1001, "gone"}, 1_000
+    waiting = sync(ctx.transport)
+    assert waiting.timer != nil
+    assert waiting.conn == nil
+
+    :ok = WebSocket.url(ctx.transport, ctx.url)
+    retargeted = sync(ctx.transport)
+    assert retargeted.url == ctx.url
+    assert retargeted.timer == waiting.timer
+    assert retargeted.held == false
+    assert retargeted.conn == nil
+    refute_received {:dial, _}
+
+    :ok = WebSocket.hold(ctx.transport)
+    :ok = WebSocket.url(ctx.transport, ctx.other_url)
+    held = sync(ctx.transport)
+    assert held.url == ctx.other_url
+    assert held.held == true
+    assert held.timer == nil
+    assert held.conn == nil
+    refute_received {:dial, _}
+  end
+
   test "reconnect dials the new url and clears a hold" do
     ctx = start_transport(backoff: 60_000)
     :ok = WebSocket.hold(ctx.transport)

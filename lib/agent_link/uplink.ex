@@ -13,9 +13,11 @@ defmodule AgentLink.Uplink do
   until the link name or plane URL changes. A close that means the instance
   id is too long logs the error and does not redial until restart. Bad-name
   and not-allowed closes also park until the name or plane URL changes or
-  the relay restarts. Parking calls `hold/1`. A changed link file calls
-  `reconnect/2`, except an instance id that is too long. The codes and
-  reasons are shared in `AgentLink.AgentSocketProtocol`.
+  the relay restarts. Parking calls `hold/1`. A non-parking close refreshes
+  the preface and the next dial URL and leaves the backoff timer. `:watch`
+  calls `reconnect/2` when the stored link still differs, except an instance
+  id that is too long. The codes and reasons are shared in
+  `AgentLink.AgentSocketProtocol`.
   """
 
   use GenServer
@@ -27,6 +29,7 @@ defmodule AgentLink.Uplink do
     :transport_pid,
     :link,
     :replaced,
+    watch_interval: 1_000,
     rejection: nil
   ]
 
@@ -36,7 +39,9 @@ defmodule AgentLink.Uplink do
   `:owner` receives `{:from_plane, message}`. `:transport` is the
   `AgentLink.Transport` module, default `AgentLink.Transport.WebSocket`.
   `:transport_opts` are passed through to that module. This process sets
-  `:owner`, `:url`, `:default_path`, and `:preface`.
+  `:owner`, `:url`, `:default_path`, and `:preface`. `:watch_interval` is
+  milliseconds between reads of the link file, default 1_000. `nil` does not
+  schedule those reads.
   """
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -60,15 +65,16 @@ defmodule AgentLink.Uplink do
 
         case module.start_link(transport_opts) do
           {:ok, pid} ->
-            Process.send_after(self(), :watch, 1_000)
+            state = %__MODULE__{
+              owner: Keyword.fetch!(opts, :owner),
+              transport: module,
+              transport_pid: pid,
+              link: link,
+              watch_interval: Keyword.get(opts, :watch_interval, 1_000)
+            }
 
-            {:ok,
-             %__MODULE__{
-               owner: Keyword.fetch!(opts, :owner),
-               transport: module,
-               transport_pid: pid,
-               link: link
-             }}
+            schedule_watch(state)
+            {:ok, state}
 
           {:error, reason} ->
             {:stop, reason}
@@ -98,7 +104,7 @@ defmodule AgentLink.Uplink do
     case read_link() do
       {:ok, link} ->
         state = maybe_redial(state, link)
-        Process.send_after(self(), :watch, 1_000)
+        schedule_watch(state)
         {:noreply, state}
 
       {:stop, reason} ->
@@ -123,7 +129,30 @@ defmodule AgentLink.Uplink do
       when is_integer(code) and is_binary(reason) do
     case AgentLink.AgentSocketProtocol.rejection(code) do
       nil ->
-        {:noreply, state}
+        # The transport retries on its timer with the preface and URL from
+        # the last dial. Read now so that retry sees a missing file, a new
+        # hello, or a new plane URL. The timer stays: this clause does not
+        # call `reconnect/2`.
+        case read_link() do
+          {:ok, link} ->
+            state =
+              if link == state.link do
+                state
+              else
+                :ok = state.transport.preface(state.transport_pid, uplink_hello(link))
+
+                if link.plane_url != state.link.plane_url do
+                  :ok = state.transport.url(state.transport_pid, link.plane_url)
+                end
+
+                %{state | link: link}
+              end
+
+            {:noreply, state}
+
+          {:stop, reason} ->
+            {:stop, reason, state}
+        end
 
       rejection ->
         log_rejection(state, rejection, reason)
@@ -144,6 +173,13 @@ defmodule AgentLink.Uplink do
   A missing path is `/agent`. `AgentLink.Transport.endpoint/2` is the parser.
   """
   def endpoint(url), do: AgentLink.Transport.endpoint(url, "/agent")
+
+  defp schedule_watch(%__MODULE__{watch_interval: nil}), do: :ok
+
+  defp schedule_watch(%__MODULE__{watch_interval: interval}) do
+    Process.send_after(self(), :watch, interval)
+    :ok
+  end
 
   defp read_link do
     case AgentLink.Link.read() do

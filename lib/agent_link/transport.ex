@@ -15,7 +15,9 @@ defmodule AgentLink.Transport do
   4001–4004. Call it from the `transport_closed` handler: the pending dial is
   cancelled before `hold/1` returns. `reconnect/2` clears a hold and queues a
   dial. It returns once that dial is queued, not once the socket is up. The
-  socket it closes itself does not produce `transport_closed`.
+  socket it closes itself does not produce `transport_closed`. `url/2`
+  replaces the URL of the next dial. The backoff timer, a hold, and an open
+  socket stay as they are.
 
   `preface/2` is sent before the outbox on every dial, including a dial this
   process starts itself. The uplink hello lives there: the plane requires
@@ -67,6 +69,13 @@ defmodule AgentLink.Transport do
   is left as it is: `reconnect/2` is what opens the next one.
   """
   @callback preface(server :: term, message :: map | nil) :: :ok
+
+  @doc """
+  Use `url` for the next dial, including a dial this process starts itself.
+  The backoff timer, a hold, and an open socket stay as they are.
+  `reconnect/2` is what cancels the timer and dials now.
+  """
+  @callback url(server :: term, url :: String.t()) :: :ok
 
   @doc """
   The socket scheme, HTTP scheme, host, port, and path for a plane URL.

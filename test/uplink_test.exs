@@ -21,12 +21,8 @@ defmodule AgentLink.UplinkTest do
     :ok
   end
 
-  test "a plane URL keeps ws plain and dials wss as TLS" do
+  test "endpoint/1 delegates to the transport" do
     url = "wss://plane.example:8443/agent"
-
-    assert AgentLink.Uplink.endpoint(url) ==
-             {:wss, :https, "plane.example", 8443, "/agent"}
-
     assert AgentLink.Uplink.endpoint(url) == AgentLink.Transport.endpoint(url, "/agent")
   end
 
@@ -49,6 +45,60 @@ defmodule AgentLink.UplinkTest do
     assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 1_000
     assert message =~ "No link file"
     refute Process.whereis(AgentLink.Uplink)
+  end
+
+  test "a non-parking close after the link file was deleted stops the uplink" do
+    uplink = start_uplink()
+    assert [_] = sent(uplink)
+    File.rm!(Application.get_env(:agent_link, :link_path))
+    ref = Process.monitor(uplink)
+    :ok = FakeTransport.disconnect(transport_pid(uplink), 1001, "going away")
+
+    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 200
+    assert message =~ "No link file"
+    refute Process.whereis(AgentLink.Uplink)
+  end
+
+  test "a non-parking close after the link changed sends the new preface and does not redial" do
+    uplink = start_uplink(watch_interval: nil)
+    assert [hello] = sent(uplink)
+    transport = transport_pid(uplink)
+    write_link!("ws://127.0.0.1:9/moved", %{"name" => "other", "label" => "renamed"})
+
+    :ok = FakeTransport.disconnect(transport, 1001, "going away")
+    %{timer: timer} = :sys.get_state(transport)
+    assert timer != nil
+    sync(uplink)
+
+    state = :sys.get_state(uplink)
+    assert state.rejection == nil
+    assert state.link.name == "other"
+    assert state.link.label == "renamed"
+    assert state.link.plane_url == "ws://127.0.0.1:9/moved"
+
+    socket = :sys.get_state(transport)
+    assert socket.timer == timer
+    assert socket.url == "ws://127.0.0.1:9/moved"
+    assert socket.held == false
+    assert socket.up == false
+
+    assert socket.preface == %{
+             "jsonrpc" => "2.0",
+             "method" => "agentlink.uplink",
+             "params" => %{
+               "name" => "other",
+               "label" => "renamed",
+               "program" => "opencode",
+               "instance" => hello["params"]["instance"]
+             }
+           }
+
+    assert [^hello] = sent(uplink)
+
+    send(uplink, :watch)
+    assert [^hello] = sent(uplink)
+    assert :sys.get_state(transport).timer == timer
+    assert :sys.get_state(transport).url == "ws://127.0.0.1:9/moved"
   end
 
   test "the hello leads, and a plane object is forwarded" do
@@ -335,13 +385,21 @@ defmodule AgentLink.UplinkTest do
   end
 
   defp start_uplink(opts \\ []) do
+    {interval, opts} = Keyword.pop(opts, :watch_interval, :default)
     transport_opts = Keyword.put_new(opts, :backoff, 60_000)
+
+    uplink_opts = [owner: self(), transport: FakeTransport, transport_opts: transport_opts]
+
+    uplink_opts =
+      if interval == :default do
+        uplink_opts
+      else
+        Keyword.put(uplink_opts, :watch_interval, interval)
+      end
 
     start_supervised!(%{
       id: AgentLink.Uplink,
-      start:
-        {AgentLink.Uplink, :start_link,
-         [[owner: self(), transport: FakeTransport, transport_opts: transport_opts]]},
+      start: {AgentLink.Uplink, :start_link, [uplink_opts]},
       restart: :temporary
     })
   end
