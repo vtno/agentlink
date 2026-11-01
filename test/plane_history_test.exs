@@ -233,6 +233,17 @@ defmodule AgentLink.Plane.HistoryTest do
            ]
   end
 
+  test "a leading blank line does not hide the first line of user text" do
+    assert History.info(history() |> History.append(user("\nhello")))["title"] == "hello"
+
+    assert History.info(history() |> History.append(user("   \nhello")))["title"] == "hello"
+  end
+
+  test "whitespace-only user text leaves the title nil" do
+    assert History.info(history() |> History.append(user("   ")))["title"] == nil
+    assert History.info(history() |> History.append(user("\n")))["title"] == nil
+  end
+
   test "updatedAt comes from :clock unless a session_info_update sets it" do
     history = history(clock: clock(["t1", "t2", "t3", "t4"]))
     assert History.info(history)["updatedAt"] == nil

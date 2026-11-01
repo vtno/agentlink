@@ -28,16 +28,19 @@ defmodule AgentLink.Plane.History do
         }
       }
 
-  `droppedTurns` and `droppedBytes` count turns that are not in the replay.
+  `droppedTurns` counts turns that are not in the replay. `droppedBytes` is
+  the total byte size of those turns, measured with `AgentLink.Frame.encode/1`.
   `keptTurns` counts the turns that are.
 
   `info/1` is the `session/list` row. The fields are `sessionId`, `cwd`,
   `title`, and `updatedAt`. A `session_info_update` with a binary `title` sets
   the title. A `nil` title clears it. Omitting `title` leaves the stored
-  title. When no `session_info_update` title is set, the title is the first
-  line of the first `user_message_chunk` text, trimmed and cut to 100
-  characters. `updatedAt` is an RFC 3339 binary, or `nil` when nothing has
-  set it. A `session_info_update` with a binary `updatedAt` sets it. A `nil`
+  title. When no `session_info_update` title is set, the title comes from the
+  first `user_message_chunk` text. `append/2` trims that text before it takes
+  the first line, and then it trims the line. The trim removes a leading
+  blank line. If nothing remains, the title is `nil`. Otherwise the line is
+  cut to 100 characters. `updatedAt` is an RFC 3339 binary, or `nil` when
+  nothing has set it. A `session_info_update` with a binary `updatedAt` sets it. A `nil`
   `updatedAt` clears it. Any other update sets it from `:clock`.
   `:clock` is a function of arity 0. It defaults to a function that returns
   `DateTime.to_iso8601/1` of `DateTime.utc_now/0`.
