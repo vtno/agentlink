@@ -126,6 +126,26 @@ defmodule AgentLink.UplinkTest do
     assert :sys.get_state(uplink).link.plane_url == "ws://127.0.0.1:9/moved"
   end
 
+  test "a rejection of the socket reconnect just opened still parks" do
+    uplink = start_uplink()
+    assert [hello] = sent(uplink)
+    transport = transport_pid(uplink)
+    :ok = FakeTransport.close_next(transport, 4001, "")
+    write_link!("ws://127.0.0.1:1/agent", %{"name" => "other"})
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(uplink, :watch)
+        sync(uplink)
+      end)
+
+    assert :sys.get_state(uplink).rejection == :name_taken
+    assert parked?(uplink)
+    assert log =~ "uplink rejected name=other"
+    assert [^hello, again] = sent(uplink)
+    assert again["params"]["name"] == "other"
+  end
+
   test "a link change still redials when a rejection is already queued" do
     uplink = start_uplink()
     assert [_] = sent(uplink)
@@ -303,8 +323,8 @@ defmodule AgentLink.UplinkTest do
     })
   end
 
-  # Watch dials before it returns and then queues `{:replaced, ref}` so a close
-  # already in flight cannot park that dial. The second read runs the mark.
+  # A watch queues `{:replaced, ref}` and then dials. The second read runs the
+  # mark and any close that dial reported.
   defp sync(uplink) do
     :sys.get_state(uplink)
     :sys.get_state(uplink)

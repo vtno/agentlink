@@ -6,6 +6,8 @@ defmodule AgentLink.FakeTransport do
   `sent/1` is what has been written to the plane, oldest first, not what is
   still queued. Start with `accept: false` when the plane should refuse the
   dial. `allow/1` makes the next dial succeed and does not dial by itself.
+  `close_next/3` makes the next `reconnect/2` open and then close before
+  that call returns.
   """
 
   @behaviour AgentLink.Transport
@@ -27,7 +29,8 @@ defmodule AgentLink.FakeTransport do
     sent: [],
     held: false,
     up: false,
-    accept: true
+    accept: true,
+    close_next: nil
   ]
 
   @impl true
@@ -92,6 +95,14 @@ defmodule AgentLink.FakeTransport do
   @doc "The next dial reaches the plane. Does not dial by itself."
   def allow(server), do: GenServer.call(server, :allow)
 
+  @doc """
+  The next `reconnect/2` opens, writes the preface, and the plane closes it
+  before that call returns.
+  """
+  def close_next(server, code, reason \\ "") when is_integer(code) and is_binary(reason) do
+    GenServer.call(server, {:close_next, code, reason})
+  end
+
   @impl true
   def handle_call(:hold, _from, state) do
     state = %{cancel_timer(state) | held: true, connect_token: nil}
@@ -102,7 +113,18 @@ defmodule AgentLink.FakeTransport do
     # Down before the dial is queued, and the owner is not told. Matches the
     # Mint client closing its socket inside this call.
     state = %{cancel_timer(state) | held: false, url: url, up: false}
-    {:reply, :ok, request_connect(state, 0)}
+
+    state =
+      case state.close_next do
+        nil ->
+          request_connect(state, 0)
+
+        {code, reason} ->
+          state = send_preface(%{state | up: true, close_next: nil})
+          peer_closed(state, code, reason)
+      end
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:preface, message}, _from, state) do
@@ -123,6 +145,10 @@ defmodule AgentLink.FakeTransport do
   def handle_call(:sent, _from, state), do: {:reply, Enum.reverse(state.sent), state}
 
   def handle_call(:allow, _from, state), do: {:reply, :ok, %{state | accept: true}}
+
+  def handle_call({:close_next, code, reason}, _from, state) do
+    {:reply, :ok, %{state | close_next: {code, reason}}}
+  end
 
   @impl true
   def handle_info({:connect, token}, %{connect_token: token, held: false} = state) do
