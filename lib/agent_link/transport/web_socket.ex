@@ -200,7 +200,9 @@ defmodule AgentLink.Transport.WebSocket do
           if up?(state), do: Logger.info("transport connected #{state.url}")
           {:ok, state}
 
-        {:error, conn, reason} ->
+        # `set_mode/2` fails as `{:error, reason}`. The early bytes stay
+        # undecoded; `connect/1` logs this and schedules the retry.
+        {:error, reason} ->
           Mint.HTTP.close(conn)
           {:error, reason, %{state | conn: nil, websocket: nil, ref: nil}}
       end
