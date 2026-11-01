@@ -54,6 +54,12 @@ defmodule AgentLink.Plane.Subscription do
     {:reply, :ok, state}
   end
 
+  @impl true
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, %__MODULE__{client_pid: pid} = state) do
+    send(state.owner, {:subscription_down, state.client_id, state.session_id})
+    {:stop, :normal, state}
+  end
+
   @doc """
   End this client's subscription.
 
@@ -66,12 +72,6 @@ defmodule AgentLink.Plane.Subscription do
     GenServer.stop(server)
   catch
     :exit, {:noproc, _} -> :ok
-  end
-
-  @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, %__MODULE__{client_pid: pid} = state) do
-    send(state.owner, {:subscription_down, state.client_id, state.session_id})
-    {:stop, :normal, state}
   end
 
   defp initial(opts) do

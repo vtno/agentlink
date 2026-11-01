@@ -3,8 +3,8 @@ defmodule AgentLink.Plane.Subscribe do
   One subscription for a session a client has open. The session holds the
   subscription pid. It does not store the client id.
 
-  `AgentLink.Plane.Subscription` is the production behaviour. Tests use
-  `AgentLink.FakeSubscribe`.
+  `AgentLink.Plane.Subscribe` is the behaviour. `AgentLink.Plane.Subscription`
+  is the production implementation. Tests use `AgentLink.FakeSubscribe`.
 
   `start_link/1` requires `:client_pid`, `:client_id`, `:session_id`, and
   `:owner`. None of them has a default. `:client_pid` and `:owner` are pids.
