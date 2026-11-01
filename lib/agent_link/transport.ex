@@ -17,12 +17,17 @@ defmodule AgentLink.Transport do
   dial. It returns once that dial is queued, not once the socket is up. The
   socket it closes itself does not produce `transport_closed`.
 
+  `preface/2` is sent before the outbox on every dial, including a dial this
+  process starts itself. The uplink hello lives there: the plane requires
+  that object to be the first frame, and a hello already written to a socket
+  is not still sitting in the outbox when the next dial opens.
+
   `:headers` defaults to `AgentLink.Auth.headers/0`. `:default_path` is used
   when the URL has no path, default `/agent`. The client relay passes `/acp`.
   A failed dial waits 500ms before the next one.
 
   `endpoint/2` is the URL parser both relays share. It is not a callback.
-  `AgentLink.Uplink` still dials on its own.
+  `AgentLink.Uplink` dials through this behaviour.
   """
 
   @type endpoint :: {
@@ -37,7 +42,9 @@ defmodule AgentLink.Transport do
   Dial the plane. `:owner` and `:url` are required.
 
   `:headers` defaults to `AgentLink.Auth.headers/0`. `:default_path` is used
-  when `:url` has no path, default `/agent`.
+  when `:url` has no path, default `/agent`. `:preface` is the map sent
+  before the outbox on every dial, including the first. `:backoff` is
+  milliseconds, default 500.
   """
   @callback start_link(keyword) :: GenServer.on_start()
 
@@ -53,6 +60,13 @@ defmodule AgentLink.Transport do
   previous socket.
   """
   @callback reconnect(server :: term, url :: String.t()) :: :ok
+
+  @doc """
+  Send `message` before the outbox on every dial this process opens, including
+  a dial it starts itself. `nil` clears it. The socket that is already open
+  is left as it is: `reconnect/2` is what opens the next one.
+  """
+  @callback preface(server :: term, message :: map | nil) :: :ok
 
   @doc """
   The socket scheme, HTTP scheme, host, port, and path for a plane URL.

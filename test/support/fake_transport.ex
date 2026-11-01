@@ -6,6 +6,9 @@ defmodule AgentLink.FakeTransport do
   `sent/1` is what has been written to the plane, oldest first, not what is
   still queued. Start with `accept: false` when the plane should refuse the
   dial. `allow/1` makes the next dial succeed and does not dial by itself.
+  `close_next/3` makes the next `reconnect/2` open and then close before
+  that call returns. `close_on_preface/3` makes the next `preface/2` report
+  a close of the open socket before that call returns.
   """
 
   @behaviour AgentLink.Transport
@@ -20,13 +23,16 @@ defmodule AgentLink.FakeTransport do
     :headers,
     :backoff,
     :default_path,
+    :preface,
     :timer,
     :connect_token,
     outbox: [],
     sent: [],
     held: false,
     up: false,
-    accept: true
+    accept: true,
+    close_next: nil,
+    close_on_preface: nil
   ]
 
   @impl true
@@ -42,6 +48,7 @@ defmodule AgentLink.FakeTransport do
       headers: Keyword.get_lazy(opts, :headers, &AgentLink.Auth.headers/0),
       backoff: retry_delay(Keyword.get(opts, :backoff, 500)),
       default_path: Keyword.get(opts, :default_path, "/agent"),
+      preface: Keyword.get(opts, :preface),
       accept: Keyword.get(opts, :accept, true)
     }
 
@@ -65,6 +72,15 @@ defmodule AgentLink.FakeTransport do
   @impl true
   def reconnect(server, url) when is_binary(url), do: GenServer.call(server, {:reconnect, url})
 
+  @doc """
+  Send `message` before the outbox on every dial, including a dial this
+  process starts itself. `nil` clears it. An open socket is left as it is.
+  """
+  @impl true
+  def preface(server, message) when is_map(message) or is_nil(message) do
+    GenServer.call(server, {:preface, message})
+  end
+
   @doc "A decoded object from the plane, or `:closed` when the socket is down."
   def deliver(server, message) when is_map(message) do
     GenServer.call(server, {:deliver, message})
@@ -81,6 +97,22 @@ defmodule AgentLink.FakeTransport do
   @doc "The next dial reaches the plane. Does not dial by itself."
   def allow(server), do: GenServer.call(server, :allow)
 
+  @doc """
+  The next `reconnect/2` opens, writes the preface, and the plane closes it
+  before that call returns.
+  """
+  def close_next(server, code, reason \\ "") when is_integer(code) and is_binary(reason) do
+    GenServer.call(server, {:close_next, code, reason})
+  end
+
+  @doc """
+  The next `preface/2` stores the preface, then the plane closes the open
+  socket before that call returns.
+  """
+  def close_on_preface(server, code, reason \\ "") when is_integer(code) and is_binary(reason) do
+    GenServer.call(server, {:close_on_preface, code, reason})
+  end
+
   @impl true
   def handle_call(:hold, _from, state) do
     state = %{cancel_timer(state) | held: true, connect_token: nil}
@@ -91,7 +123,33 @@ defmodule AgentLink.FakeTransport do
     # Down before the dial is queued, and the owner is not told. Matches the
     # Mint client closing its socket inside this call.
     state = %{cancel_timer(state) | held: false, url: url, up: false}
-    {:reply, :ok, request_connect(state, 0)}
+
+    state =
+      case state.close_next do
+        nil ->
+          request_connect(state, 0)
+
+        {code, reason} ->
+          state = send_preface(%{state | up: true, close_next: nil})
+          peer_closed(state, code, reason)
+      end
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:preface, message}, _from, state) do
+    state = %{state | preface: message}
+
+    state =
+      case state.close_on_preface do
+        nil ->
+          state
+
+        {code, reason} ->
+          peer_closed(%{state | close_on_preface: nil}, code, reason)
+      end
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:deliver, message}, _from, %{up: true} = state) do
@@ -109,6 +167,14 @@ defmodule AgentLink.FakeTransport do
 
   def handle_call(:allow, _from, state), do: {:reply, :ok, %{state | accept: true}}
 
+  def handle_call({:close_next, code, reason}, _from, state) do
+    {:reply, :ok, %{state | close_next: {code, reason}}}
+  end
+
+  def handle_call({:close_on_preface, code, reason}, _from, state) do
+    {:reply, :ok, %{state | close_on_preface: {code, reason}}}
+  end
+
   @impl true
   def handle_info({:connect, token}, %{connect_token: token, held: false} = state) do
     connect(%{state | timer: nil, connect_token: nil})
@@ -120,8 +186,15 @@ defmodule AgentLink.FakeTransport do
   defp connect(%{accept: false} = state), do: schedule(%{state | up: false})
 
   defp connect(state) do
-    {:noreply, flush(%{state | up: true})}
+    state = send_preface(%{state | up: true})
+    {:noreply, flush(state)}
   end
+
+  defp send_preface(%{preface: message} = state) when is_map(message) do
+    %{state | sent: [message | state.sent]}
+  end
+
+  defp send_preface(state), do: state
 
   defp transmit(message, %{up: true} = state), do: %{state | sent: [message | state.sent]}
   defp transmit(message, state), do: enqueue(state, message)

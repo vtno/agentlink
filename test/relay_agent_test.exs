@@ -249,7 +249,8 @@ defmodule AgentLink.Relay.AgentTest do
   end
 
   defp uplink_outbox do
-    :sys.get_state(AgentLink.Uplink).outbox
+    %{transport_pid: pid} = :sys.get_state(AgentLink.Uplink)
+    :sys.get_state(pid).outbox
   end
 
   defp stop(name) do

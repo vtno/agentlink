@@ -221,6 +221,28 @@ defmodule AgentLink.TransportTest do
     assert Process.alive?(ctx.transport)
   end
 
+  test "a preface leads every dial" do
+    preface = %{"method" => "agentlink.uplink", "params" => %{"name" => "opencode"}}
+    ctx = start_transport(preface: preface, backoff: 60_000)
+    assert_receive {:received, first}, 1_000
+    assert AgentLink.Frame.decode(first) == {:ok, preface}
+
+    :ok = WebSocket.send_message(ctx.transport, %{"n" => 1})
+    assert_receive {:received, second}, 1_000
+    assert AgentLink.Frame.decode(second) == {:ok, %{"n" => 1}}
+
+    next = %{"method" => "agentlink.uplink", "params" => %{"name" => "other"}}
+    :ok = WebSocket.preface(ctx.transport, next)
+    :ok = WebSocket.reconnect(ctx.transport, ctx.url)
+    assert_receive {:dial, dial}, 1_000
+    assert dial.path == "/agent"
+    assert_receive {:socket, _socket}, 1_000
+    assert_receive {:received, third}, 1_000
+    assert AgentLink.Frame.decode(third) == {:ok, next}
+    refute_received {:received, _}
+    refute_received {:transport_closed, _, _}
+  end
+
   test "the websocket answers a ping with a pong" do
     ctx = start_transport()
     send(ctx.socket, {:push, {:ping, "z"}})
@@ -314,6 +336,37 @@ defmodule AgentLink.TransportTest do
     refute_received {:transport_closed, _, _}
   end
 
+  test "preface is sent before a queued outbox on each dial" do
+    transport =
+      start_fake(accept: false, backoff: 60_000, preface: %{"method" => "agentlink.uplink"})
+
+    :ok = FakeTransport.send_message(transport, %{"n" => 1})
+    :ok = FakeTransport.send_message(transport, %{"n" => 2})
+    assert FakeTransport.sent(transport) == []
+
+    :ok = FakeTransport.allow(transport)
+    :ok = FakeTransport.reconnect(transport, "ws://127.0.0.1:9/acp")
+
+    assert FakeTransport.sent(transport) == [
+             %{"method" => "agentlink.uplink"},
+             %{"n" => 1},
+             %{"n" => 2}
+           ]
+
+    :ok =
+      FakeTransport.preface(transport, %{
+        "method" => "agentlink.uplink",
+        "params" => %{"name" => "other"}
+      })
+
+    :ok = FakeTransport.reconnect(transport, "ws://127.0.0.1:9/moved")
+
+    assert List.last(FakeTransport.sent(transport)) == %{
+             "method" => "agentlink.uplink",
+             "params" => %{"name" => "other"}
+           }
+  end
+
   test "FakeTransport hold cancels a scheduled dial" do
     transport = start_fake(backoff: 60_000)
     :ok = FakeTransport.disconnect(transport, 1001, "gone")
@@ -337,6 +390,8 @@ defmodule AgentLink.TransportTest do
 
     transport_opts =
       maybe_put(transport_opts, :default_path, Keyword.get(opts, :default_path, :omit))
+
+    transport_opts = maybe_put(transport_opts, :preface, Keyword.get(opts, :preface, :omit))
 
     transport_opts =
       case Keyword.get(opts, :headers, [{"authorization", "Bearer sekret"}]) do
@@ -371,6 +426,7 @@ defmodule AgentLink.TransportTest do
     ]
 
     fake_opts = maybe_put(fake_opts, :backoff, Keyword.get(opts, :backoff, :omit))
+    fake_opts = maybe_put(fake_opts, :preface, Keyword.get(opts, :preface, :omit))
 
     start_supervised!(
       {FakeTransport, fake_opts},

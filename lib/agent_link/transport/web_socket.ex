@@ -3,8 +3,6 @@ defmodule AgentLink.Transport.WebSocket do
   Production behaviour. Mint owns the HTTP upgrade and the WebSocket frame
   codec. A `wss` URL dials TLS. Mint checks the peer certificate against the
   system CA store.
-
-  `AgentLink.Uplink` still dials on its own. It does not call this module.
   """
 
   @behaviour AgentLink.Transport
@@ -23,6 +21,7 @@ defmodule AgentLink.Transport.WebSocket do
     :headers,
     :backoff,
     :default_path,
+    :preface,
     :conn,
     :websocket,
     :ref,
@@ -38,7 +37,7 @@ defmodule AgentLink.Transport.WebSocket do
 
   `:owner` and `:url` are required. `:headers` defaults to
   `AgentLink.Auth.headers/0`. `:default_path` is used when `url` has no path,
-  default `/agent`.
+  default `/agent`. `:preface` is sent before the outbox on every dial.
   """
   @impl true
   def start_link(opts) do
@@ -52,7 +51,8 @@ defmodule AgentLink.Transport.WebSocket do
       url: Keyword.fetch!(opts, :url),
       headers: Keyword.get_lazy(opts, :headers, &AgentLink.Auth.headers/0),
       backoff: retry_delay(Keyword.get(opts, :backoff, 500)),
-      default_path: Keyword.get(opts, :default_path, "/agent")
+      default_path: Keyword.get(opts, :default_path, "/agent"),
+      preface: Keyword.get(opts, :preface)
     }
 
     {:ok, request_connect(state, 0)}
@@ -89,6 +89,15 @@ defmodule AgentLink.Transport.WebSocket do
   @impl true
   def reconnect(server, url) when is_binary(url), do: GenServer.call(server, {:reconnect, url})
 
+  @doc """
+  Send `message` before the outbox on every dial, including a dial this
+  process starts itself. `nil` clears it. An open socket is left as it is.
+  """
+  @impl true
+  def preface(server, message) when is_map(message) or is_nil(message) do
+    GenServer.call(server, {:preface, message})
+  end
+
   @impl true
   def handle_call(:hold, _from, state) do
     state = %{cancel_timer(state) | held: true, connect_token: nil}
@@ -110,6 +119,10 @@ defmodule AgentLink.Transport.WebSocket do
     }
 
     {:reply, :ok, request_connect(state, 0)}
+  end
+
+  def handle_call({:preface, message}, _from, state) do
+    {:reply, :ok, %{state | preface: message}}
   end
 
   @impl true
@@ -162,7 +175,8 @@ defmodule AgentLink.Transport.WebSocket do
 
     case dial(state) do
       {:ok, state} ->
-        state = flush(state)
+        state = send_preface(state)
+        state = if up?(state), do: flush(state), else: state
         if up?(state), do: {:noreply, state}, else: schedule(state)
 
       {:error, reason, state} ->
@@ -323,6 +337,12 @@ defmodule AgentLink.Transport.WebSocket do
     end
   end
 
+  defp send_preface(%{preface: message} = state) when is_map(message) do
+    send_frame(state, {:text, AgentLink.Frame.encode(message)})
+  end
+
+  defp send_preface(state), do: state
+
   defp transmit(message, state) do
     if up?(state) do
       state = send_frame(state, {:text, AgentLink.Frame.encode(message)})
@@ -333,6 +353,7 @@ defmodule AgentLink.Transport.WebSocket do
   end
 
   # Newest first. `flush/1` reverses so the plane sees the earlier object first.
+  # `preface` is not part of this list. `connect/1` sends it ahead of the flush.
   defp enqueue(state, message), do: %{state | outbox: [message | state.outbox]}
 
   defp flush(%{outbox: []} = state), do: state
