@@ -37,9 +37,9 @@ defmodule AgentLink.Plane.History do
   the title. A `nil` title clears it. Omitting `title` leaves the stored
   title. When no `session_info_update` title is set, the title comes from the
   first `user_message_chunk` text. `append/2` trims that text before it takes
-  the first line, and then it trims the line. The trim removes a leading
-  blank line. If nothing remains, the title is `nil`. Otherwise the line is
-  cut to 100 characters. `updatedAt` is an RFC 3339 binary, or `nil` when
+  the first line, and then it trims the line. The first trim, the one on the
+  whole text, removes a leading blank line. If nothing remains, the title is
+  `nil`. Otherwise the line is cut to 100 characters. `updatedAt` is an RFC 3339 binary, or `nil` when
   nothing has set it. A `session_info_update` with a binary `updatedAt` sets it. A `nil`
   `updatedAt` clears it. Any other update sets it from `:clock`.
   `:clock` is a function of arity 0. It defaults to a function that returns
@@ -93,7 +93,7 @@ defmodule AgentLink.Plane.History do
   @spec append(t, update :: map) :: t
   def append(%__MODULE__{} = history, update) when is_map(update) do
     history
-    |> remember(update)
+    |> put_title_and_updated_at(update)
     |> put_update(update)
     |> cap()
   end
@@ -158,13 +158,13 @@ defmodule AgentLink.Plane.History do
 
   defp utc_now, do: DateTime.utc_now() |> DateTime.to_iso8601()
 
-  defp remember(history, %{"sessionUpdate" => "session_info_update"} = update) do
+  defp put_title_and_updated_at(history, %{"sessionUpdate" => "session_info_update"} = update) do
     history
     |> put_info_title(update)
     |> put_info_time(update)
   end
 
-  defp remember(history, %{"sessionUpdate" => "user_message_chunk"} = update) do
+  defp put_title_and_updated_at(history, %{"sessionUpdate" => "user_message_chunk"} = update) do
     history = stamp(history)
 
     if history.saw_user do
@@ -174,7 +174,7 @@ defmodule AgentLink.Plane.History do
     end
   end
 
-  defp remember(history, _update), do: stamp(history)
+  defp put_title_and_updated_at(history, _update), do: stamp(history)
 
   defp put_info_title(history, %{"title" => title}) when is_binary(title) do
     %{history | info_title: title}
