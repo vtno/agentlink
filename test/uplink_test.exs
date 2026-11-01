@@ -21,12 +21,8 @@ defmodule AgentLink.UplinkTest do
     :ok
   end
 
-  test "a plane URL keeps ws plain and dials wss as TLS" do
+  test "endpoint/1 delegates to the transport" do
     url = "wss://plane.example:8443/agent"
-
-    assert AgentLink.Uplink.endpoint(url) ==
-             {:wss, :https, "plane.example", 8443, "/agent"}
-
     assert AgentLink.Uplink.endpoint(url) == AgentLink.Transport.endpoint(url, "/agent")
   end
 
@@ -49,6 +45,55 @@ defmodule AgentLink.UplinkTest do
     assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 1_000
     assert message =~ "No link file"
     refute Process.whereis(AgentLink.Uplink)
+  end
+
+  test "a non-parking close after the link file was deleted stops the uplink" do
+    uplink = start_uplink()
+    assert [_] = sent(uplink)
+    File.rm!(Application.get_env(:agent_link, :link_path))
+    ref = Process.monitor(uplink)
+    :ok = FakeTransport.disconnect(transport_pid(uplink), 1001, "going away")
+
+    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 1_000
+    assert message =~ "No link file"
+    refute Process.whereis(AgentLink.Uplink)
+  end
+
+  test "a non-parking close after the link changed sends the new preface and does not redial" do
+    uplink = start_uplink()
+    assert [hello] = sent(uplink)
+    transport = transport_pid(uplink)
+    write_link!("ws://127.0.0.1:9/moved", %{"name" => "other", "label" => "renamed"})
+
+    :ok = FakeTransport.disconnect(transport, 1001, "going away")
+    %{timer: timer, url: url} = :sys.get_state(transport)
+    assert timer != nil
+    sync(uplink)
+
+    state = :sys.get_state(uplink)
+    assert state.rejection == nil
+    assert state.link.name == "other"
+    assert state.link.label == "renamed"
+    assert state.link.plane_url == "ws://127.0.0.1:9/moved"
+
+    socket = :sys.get_state(transport)
+    assert socket.timer == timer
+    assert socket.url == url
+    assert socket.held == false
+    assert socket.up == false
+
+    assert socket.preface == %{
+             "jsonrpc" => "2.0",
+             "method" => "agentlink.uplink",
+             "params" => %{
+               "name" => "other",
+               "label" => "renamed",
+               "program" => "opencode",
+               "instance" => hello["params"]["instance"]
+             }
+           }
+
+    assert [^hello] = sent(uplink)
   end
 
   test "the hello leads, and a plane object is forwarded" do

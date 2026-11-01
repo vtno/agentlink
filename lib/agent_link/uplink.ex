@@ -123,7 +123,24 @@ defmodule AgentLink.Uplink do
       when is_integer(code) and is_binary(reason) do
     case AgentLink.AgentSocketProtocol.rejection(code) do
       nil ->
-        {:noreply, state}
+        # The transport retries on its timer with the preface from the last
+        # dial. Read now so that retry sees a missing file or a new hello.
+        # The timer stays: this clause does not call `reconnect/2`.
+        case read_link() do
+          {:ok, link} ->
+            state =
+              if link == state.link do
+                state
+              else
+                :ok = state.transport.preface(state.transport_pid, uplink_hello(link))
+                %{state | link: link}
+              end
+
+            {:noreply, state}
+
+          {:stop, reason} ->
+            {:stop, reason, state}
+        end
 
       rejection ->
         log_rejection(state, rejection, reason)
