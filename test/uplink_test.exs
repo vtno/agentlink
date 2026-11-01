@@ -60,7 +60,7 @@ defmodule AgentLink.UplinkTest do
   end
 
   test "a non-parking close after the link changed sends the new preface and does not redial" do
-    uplink = start_uplink()
+    uplink = start_uplink(watch_interval: nil)
     assert [hello] = sent(uplink)
     transport = transport_pid(uplink)
     write_link!("ws://127.0.0.1:9/moved", %{"name" => "other", "label" => "renamed"})
@@ -95,8 +95,6 @@ defmodule AgentLink.UplinkTest do
 
     assert [^hello] = sent(uplink)
 
-    # The message, not the 1s timer from init. The stored link already matches,
-    # so this watch must not open another dial.
     send(uplink, :watch)
     assert [^hello] = sent(uplink)
     assert :sys.get_state(transport).timer == timer
@@ -387,13 +385,21 @@ defmodule AgentLink.UplinkTest do
   end
 
   defp start_uplink(opts \\ []) do
+    {interval, opts} = Keyword.pop(opts, :watch_interval, :default)
     transport_opts = Keyword.put_new(opts, :backoff, 60_000)
+
+    uplink_opts = [owner: self(), transport: FakeTransport, transport_opts: transport_opts]
+
+    uplink_opts =
+      if interval == :default do
+        uplink_opts
+      else
+        Keyword.put(uplink_opts, :watch_interval, interval)
+      end
 
     start_supervised!(%{
       id: AgentLink.Uplink,
-      start:
-        {AgentLink.Uplink, :start_link,
-         [[owner: self(), transport: FakeTransport, transport_opts: transport_opts]]},
+      start: {AgentLink.Uplink, :start_link, [uplink_opts]},
       restart: :temporary
     })
   end
