@@ -182,12 +182,13 @@ defmodule AgentLink.Uplink do
   end
 
   defp redial(%__MODULE__{} = state, link) do
-    # The mark goes out before the dial. A close from the socket this call
-    # opens is queued behind it and still parks. A close already waiting
-    # stays ahead of the mark and is dropped.
+    # Preface first. A close already in the transport mailbox is reported
+    # during that call, ahead of the mark, and is dropped. The mark goes out
+    # before the dial, so a close from the socket this call opens stays
+    # behind it and still parks.
+    :ok = state.transport.preface(state.transport_pid, uplink_hello(link))
     ref = make_ref()
     send(self(), {:replaced, ref})
-    :ok = state.transport.preface(state.transport_pid, uplink_hello(link))
     :ok = state.transport.reconnect(state.transport_pid, link.plane_url)
     %{state | link: link, replaced: ref}
   end

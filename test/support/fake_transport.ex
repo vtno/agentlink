@@ -7,7 +7,8 @@ defmodule AgentLink.FakeTransport do
   still queued. Start with `accept: false` when the plane should refuse the
   dial. `allow/1` makes the next dial succeed and does not dial by itself.
   `close_next/3` makes the next `reconnect/2` open and then close before
-  that call returns.
+  that call returns. `close_on_preface/3` makes the next `preface/2` report
+  a close of the open socket before that call returns.
   """
 
   @behaviour AgentLink.Transport
@@ -30,7 +31,8 @@ defmodule AgentLink.FakeTransport do
     held: false,
     up: false,
     accept: true,
-    close_next: nil
+    close_next: nil,
+    close_on_preface: nil
   ]
 
   @impl true
@@ -103,6 +105,14 @@ defmodule AgentLink.FakeTransport do
     GenServer.call(server, {:close_next, code, reason})
   end
 
+  @doc """
+  The next `preface/2` stores the preface, then the plane closes the open
+  socket before that call returns.
+  """
+  def close_on_preface(server, code, reason \\ "") when is_integer(code) and is_binary(reason) do
+    GenServer.call(server, {:close_on_preface, code, reason})
+  end
+
   @impl true
   def handle_call(:hold, _from, state) do
     state = %{cancel_timer(state) | held: true, connect_token: nil}
@@ -128,7 +138,18 @@ defmodule AgentLink.FakeTransport do
   end
 
   def handle_call({:preface, message}, _from, state) do
-    {:reply, :ok, %{state | preface: message}}
+    state = %{state | preface: message}
+
+    state =
+      case state.close_on_preface do
+        nil ->
+          state
+
+        {code, reason} ->
+          peer_closed(%{state | close_on_preface: nil}, code, reason)
+      end
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:deliver, message}, _from, %{up: true} = state) do
@@ -148,6 +169,10 @@ defmodule AgentLink.FakeTransport do
 
   def handle_call({:close_next, code, reason}, _from, state) do
     {:reply, :ok, %{state | close_next: {code, reason}}}
+  end
+
+  def handle_call({:close_on_preface, code, reason}, _from, state) do
+    {:reply, :ok, %{state | close_on_preface: {code, reason}}}
   end
 
   @impl true

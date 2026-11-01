@@ -146,6 +146,29 @@ defmodule AgentLink.UplinkTest do
     assert again["params"]["name"] == "other"
   end
 
+  test "a close already in the transport is dropped when the link changes" do
+    uplink = start_uplink()
+    assert [hello] = sent(uplink)
+    transport = transport_pid(uplink)
+    :ok = FakeTransport.close_on_preface(transport, 4001, "")
+    write_link!("ws://127.0.0.1:1/agent", %{"name" => "other"})
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(uplink, :watch)
+        sync(uplink)
+      end)
+
+    state = :sys.get_state(uplink)
+    assert state.rejection == nil
+    assert state.link.name == "other"
+    refute parked?(uplink)
+    refute log =~ "uplink rejected"
+
+    assert [^hello, again] = sent(uplink)
+    assert again["params"]["name"] == "other"
+  end
+
   test "a link change still redials when a rejection is already queued" do
     uplink = start_uplink()
     assert [_] = sent(uplink)
@@ -323,8 +346,8 @@ defmodule AgentLink.UplinkTest do
     })
   end
 
-  # A watch queues `{:replaced, ref}` and then dials. The second read runs the
-  # mark and any close that dial reported.
+  # A watch may queue a close from `preface/2`, then `{:replaced, ref}`, then
+  # dial. The second read runs whatever that watch left in the mailbox.
   defp sync(uplink) do
     :sys.get_state(uplink)
     :sys.get_state(uplink)
