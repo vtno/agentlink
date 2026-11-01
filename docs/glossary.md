@@ -8,7 +8,7 @@ Relay. Copies JSON-RPC between a local stdio and a plane socket. `AgentLink.Rela
 
 Frame. `AgentLink.Frame` is one JSON-RPC object on the wire. Stdio is one object per line. The agent relay and the uplink put one object in each text frame. On the plane, `AgentLink.Plane.client_frame/2` and `AgentLink.Plane.agent_frame/2` split that text on newlines, decode each piece, and keep no remainder. `client_frame/2` answers a JSON-RPC batch with -32600.
 
-Transport. `AgentLink.Transport` is the WebSocket a relay dials. `AgentLink.Transport.WebSocket` is the Mint client. The owner receives `{:from_plane, message}` for one decoded object and `{:transport_closed, code, reason}` when that socket closes. `hold/1` stops the next dial. `AgentLink.Uplink` still dials on its own.
+Transport. `AgentLink.Transport` is the WebSocket a relay dials. `AgentLink.Transport.WebSocket` is the Mint client. The owner receives `{:from_plane, message}` for one decoded object and `{:transport_closed, code, reason}` when that socket closes. `hold/1` stops the next dial. `preface/2` is the object sent before the outbox on every dial. `AgentLink.Uplink` dials through this behaviour.
 
 Link. The file. Name, label, program, and plane URL. Not the live connection. The uplink reads it when it dials. A missing file stops the relay.
 

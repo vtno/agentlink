@@ -20,6 +20,7 @@ defmodule AgentLink.FakeTransport do
     :headers,
     :backoff,
     :default_path,
+    :preface,
     :timer,
     :connect_token,
     outbox: [],
@@ -42,6 +43,7 @@ defmodule AgentLink.FakeTransport do
       headers: Keyword.get_lazy(opts, :headers, &AgentLink.Auth.headers/0),
       backoff: retry_delay(Keyword.get(opts, :backoff, 500)),
       default_path: Keyword.get(opts, :default_path, "/agent"),
+      preface: Keyword.get(opts, :preface),
       accept: Keyword.get(opts, :accept, true)
     }
 
@@ -64,6 +66,15 @@ defmodule AgentLink.FakeTransport do
 
   @impl true
   def reconnect(server, url) when is_binary(url), do: GenServer.call(server, {:reconnect, url})
+
+  @doc """
+  Send `message` before the outbox on every dial, including a dial this
+  process starts itself. `nil` clears it. An open socket is left as it is.
+  """
+  @impl true
+  def preface(server, message) when is_map(message) or is_nil(message) do
+    GenServer.call(server, {:preface, message})
+  end
 
   @doc "A decoded object from the plane, or `:closed` when the socket is down."
   def deliver(server, message) when is_map(message) do
@@ -94,6 +105,10 @@ defmodule AgentLink.FakeTransport do
     {:reply, :ok, request_connect(state, 0)}
   end
 
+  def handle_call({:preface, message}, _from, state) do
+    {:reply, :ok, %{state | preface: message}}
+  end
+
   def handle_call({:deliver, message}, _from, %{up: true} = state) do
     send(state.owner, {:from_plane, message})
     {:reply, :ok, state}
@@ -120,8 +135,15 @@ defmodule AgentLink.FakeTransport do
   defp connect(%{accept: false} = state), do: schedule(%{state | up: false})
 
   defp connect(state) do
-    {:noreply, flush(%{state | up: true})}
+    state = send_preface(%{state | up: true})
+    {:noreply, flush(state)}
   end
+
+  defp send_preface(%{preface: message} = state) when is_map(message) do
+    %{state | sent: [message | state.sent]}
+  end
+
+  defp send_preface(state), do: state
 
   defp transmit(message, %{up: true} = state), do: %{state | sent: [message | state.sent]}
   defp transmit(message, state), do: enqueue(state, message)
