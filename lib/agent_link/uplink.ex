@@ -13,9 +13,11 @@ defmodule AgentLink.Uplink do
   until the link name or plane URL changes. A close that means the instance
   id is too long logs the error and does not redial until restart. Bad-name
   and not-allowed closes also park until the name or plane URL changes or
-  the relay restarts. Parking calls `hold/1`. A changed link file calls
-  `reconnect/2`, except an instance id that is too long. The codes and
-  reasons are shared in `AgentLink.AgentSocketProtocol`.
+  the relay restarts. Parking calls `hold/1`. A non-parking close refreshes
+  the preface and the next dial URL and leaves the backoff timer. `:watch`
+  calls `reconnect/2` when the stored link still differs, except an instance
+  id that is too long. The codes and reasons are shared in
+  `AgentLink.AgentSocketProtocol`.
   """
 
   use GenServer
@@ -123,9 +125,10 @@ defmodule AgentLink.Uplink do
       when is_integer(code) and is_binary(reason) do
     case AgentLink.AgentSocketProtocol.rejection(code) do
       nil ->
-        # The transport retries on its timer with the preface from the last
-        # dial. Read now so that retry sees a missing file or a new hello.
-        # The timer stays: this clause does not call `reconnect/2`.
+        # The transport retries on its timer with the preface and URL from
+        # the last dial. Read now so that retry sees a missing file, a new
+        # hello, or a new plane URL. The timer stays: this clause does not
+        # call `reconnect/2`.
         case read_link() do
           {:ok, link} ->
             state =
@@ -133,6 +136,11 @@ defmodule AgentLink.Uplink do
                 state
               else
                 :ok = state.transport.preface(state.transport_pid, uplink_hello(link))
+
+                if link.plane_url != state.link.plane_url do
+                  :ok = state.transport.url(state.transport_pid, link.plane_url)
+                end
+
                 %{state | link: link}
               end
 

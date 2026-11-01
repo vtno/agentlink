@@ -54,7 +54,7 @@ defmodule AgentLink.UplinkTest do
     ref = Process.monitor(uplink)
     :ok = FakeTransport.disconnect(transport_pid(uplink), 1001, "going away")
 
-    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 1_000
+    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 200
     assert message =~ "No link file"
     refute Process.whereis(AgentLink.Uplink)
   end
@@ -66,7 +66,7 @@ defmodule AgentLink.UplinkTest do
     write_link!("ws://127.0.0.1:9/moved", %{"name" => "other", "label" => "renamed"})
 
     :ok = FakeTransport.disconnect(transport, 1001, "going away")
-    %{timer: timer, url: url} = :sys.get_state(transport)
+    %{timer: timer} = :sys.get_state(transport)
     assert timer != nil
     sync(uplink)
 
@@ -78,7 +78,7 @@ defmodule AgentLink.UplinkTest do
 
     socket = :sys.get_state(transport)
     assert socket.timer == timer
-    assert socket.url == url
+    assert socket.url == "ws://127.0.0.1:9/moved"
     assert socket.held == false
     assert socket.up == false
 
@@ -94,6 +94,13 @@ defmodule AgentLink.UplinkTest do
            }
 
     assert [^hello] = sent(uplink)
+
+    # The message, not the 1s timer from init. The stored link already matches,
+    # so this watch must not open another dial.
+    send(uplink, :watch)
+    assert [^hello] = sent(uplink)
+    assert :sys.get_state(transport).timer == timer
+    assert :sys.get_state(transport).url == "ws://127.0.0.1:9/moved"
   end
 
   test "the hello leads, and a plane object is forwarded" do

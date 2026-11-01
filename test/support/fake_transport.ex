@@ -81,6 +81,14 @@ defmodule AgentLink.FakeTransport do
     GenServer.call(server, {:preface, message})
   end
 
+  @doc """
+  Use `url` for the next dial, including a dial this process starts itself.
+  The backoff timer, a hold, and an open socket stay as they are, so a retry
+  already scheduled keeps waiting.
+  """
+  @impl true
+  def url(server, url) when is_binary(url), do: GenServer.call(server, {:url, url})
+
   @doc "A decoded object from the plane, or `:closed` when the socket is down."
   def deliver(server, message) when is_map(message) do
     GenServer.call(server, {:deliver, message})
@@ -150,6 +158,10 @@ defmodule AgentLink.FakeTransport do
       end
 
     {:reply, :ok, state}
+  end
+
+  def handle_call({:url, url}, _from, state) do
+    {:reply, :ok, %{state | url: url}}
   end
 
   def handle_call({:deliver, message}, _from, %{up: true} = state) do

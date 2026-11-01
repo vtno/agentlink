@@ -98,6 +98,14 @@ defmodule AgentLink.Transport.WebSocket do
     GenServer.call(server, {:preface, message})
   end
 
+  @doc """
+  Use `url` for the next dial, including a dial this process starts itself.
+  The backoff timer, a hold, and an open socket stay as they are, so a retry
+  already scheduled keeps waiting.
+  """
+  @impl true
+  def url(server, url) when is_binary(url), do: GenServer.call(server, {:url, url})
+
   @impl true
   def handle_call(:hold, _from, state) do
     state = %{cancel_timer(state) | held: true, connect_token: nil}
@@ -123,6 +131,10 @@ defmodule AgentLink.Transport.WebSocket do
 
   def handle_call({:preface, message}, _from, state) do
     {:reply, :ok, %{state | preface: message}}
+  end
+
+  def handle_call({:url, url}, _from, state) do
+    {:reply, :ok, %{state | url: url}}
   end
 
   @impl true
