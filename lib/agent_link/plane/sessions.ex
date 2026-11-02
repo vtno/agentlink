@@ -11,8 +11,10 @@ defmodule AgentLink.Plane.Sessions do
   An unknown session is `{:error, :unknown}` from `load/4` and from `resume/4`.
 
   `leave/3` drops one client from one session. `disconnect/1` drops that
-  client from every session. The session process and its history stay, so a
-  later `load/4` still returns the replay.
+  client from every session, including a subscription that has already
+  exited. `stop/1` and `unsubscribe/2` run only when that subscription is
+  alive. The session process and its history stay, so a later `load/4`
+  still returns the replay.
 
   `broadcast/3` appends one inner update on a known session. `update` is the
   object `AgentLink.Plane.History.append/2` stores. An unknown session returns
@@ -97,7 +99,9 @@ defmodule AgentLink.Plane.Sessions do
   Drop this client's subscription for one session.
 
   Returns `:ok` when the client has no subscription for that session. The
-  session and its history stay.
+  session and its history stay. If the subscription has already exited, the
+  directory entry is still removed, and `stop/1` and `unsubscribe/2` are not
+  called.
   """
   @spec leave(String.t(), String.t(), String.t()) :: :ok
   def leave(runtime, session_id, client_id)
@@ -109,6 +113,8 @@ defmodule AgentLink.Plane.Sessions do
   Drop every subscription for this client.
 
   Returns `:ok` when the client has none. Sessions and their history stay.
+  If a subscription has already exited, that directory entry is still
+  removed, and `stop/1` and `unsubscribe/2` are not called.
   """
   @spec disconnect(String.t()) :: :ok
   def disconnect(client_id) when is_binary(client_id) do
@@ -269,19 +275,21 @@ defmodule AgentLink.Plane.Sessions do
 
   defp drop(state, client_id, keys) do
     Enum.reduce(keys, state, fn key, state ->
-      case current(state, client_id, key) do
-        nil ->
-          state
+      case get_in(state.clients, [client_id, key]) do
+        subscription when is_pid(subscription) ->
+          if Process.alive?(subscription) do
+            state.subscribe.stop(subscription)
 
-        subscription ->
-          state.subscribe.stop(subscription)
-
-          case fetch_session(state, runtime_of(key), session_of(key)) do
-            nil -> :ok
-            pid -> AgentLink.Plane.Session.unsubscribe(pid, subscription)
+            case fetch_session(state, runtime_of(key), session_of(key)) do
+              nil -> :ok
+              pid -> AgentLink.Plane.Session.unsubscribe(pid, subscription)
+            end
           end
 
           forget(state, client_id, key)
+
+        _absent ->
+          state
       end
     end)
   end

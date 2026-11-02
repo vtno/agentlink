@@ -148,6 +148,31 @@ defmodule AgentLink.Plane.SessionsTest do
     assert Process.alive?(session("ses"))
   end
 
+  test "leave and disconnect remove a dead client's directory entry" do
+    ada_client = client()
+    assert :ok = Sessions.open("lab", "one", "ada", ada_client, attrs("/tmp"))
+    assert :ok = Sessions.open("lab", "two", "ada", ada_client, attrs("/tmp"))
+    assert :ok = Sessions.open("lab", "one", "bea", self(), attrs("/tmp"))
+
+    one = subscription("ada", "one")
+    two = subscription("ada", "two")
+    one_ref = Process.monitor(one)
+    two_ref = Process.monitor(two)
+
+    Process.exit(ada_client, :kill)
+
+    assert_receive {:DOWN, ^one_ref, :process, ^one, :normal}
+    assert_receive {:DOWN, ^two_ref, :process, ^two, :normal}
+
+    assert :ok = Sessions.leave("lab", "one", "ada")
+    refute Map.has_key?(:sys.get_state(Sessions).clients["ada"], {"lab", "one"})
+    assert is_pid(:sys.get_state(Sessions).clients["ada"][{"lab", "two"}])
+
+    assert :ok = Sessions.disconnect("ada")
+    refute Map.has_key?(:sys.get_state(Sessions).clients, "ada")
+    assert is_pid(:sys.get_state(Sessions).clients["bea"][{"lab", "one"}])
+  end
+
   test "list filters on cwd and sorts newest first" do
     assert :ok =
              Sessions.open(
