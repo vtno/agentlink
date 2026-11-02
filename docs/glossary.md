@@ -22,4 +22,6 @@ Slot. The plane's session state for one connected agent. Prompt queue, the in-fl
 
 History. `AgentLink.Plane.History` is the replay buffer for one session. It keeps the newest whole turns that fit a turn limit and a byte limit. The newest turn stays even when that turn alone is larger than `:max_bytes`. A `user_message_chunk` starts a turn. Updates before the first one are one turn. The plane does not call it yet.
 
+Subscription. `AgentLink.Plane.Subscription` is one process for a session a client has open. It implements `AgentLink.Plane.Subscribe`. `notify/2` sends `{:send, json}` to the client pid. `json` is `AgentLink.Frame.encode/1`. When the client dies, `:owner` receives `{:subscription_down, client_id, session_id}` and the process exits with `:normal`. `stop/1` also exits with `:normal`. The plane does not start these processes yet.
+
 Agent socket protocol. `AgentLink.AgentSocketProtocol` defines the handshake's permanent-rejection close codes shared by the plane's agent socket and the relay's uplink: 4001 name taken, 4002 instance too long (maximum 128 bytes), 4003 bad name, 4004 not allowed. It does not cover the client socket. Each rejection parks the uplink with a logged reason. Restart retries any rejection; changing the link name or plane URL retries all except 4002. Other closes and transient failures retry after 500ms.
