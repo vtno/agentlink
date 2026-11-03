@@ -215,17 +215,7 @@ defmodule AgentLink.Plane.Sessions do
   end
 
   defp initial(opts) do
-    %__MODULE__{subscribe: subscribe_module!(opts)}
-  end
-
-  defp subscribe_module!(opts) do
-    module = Keyword.get(opts, :subscribe, AgentLink.Plane.Subscription)
-
-    if is_atom(module) do
-      module
-    else
-      raise ArgumentError, ":subscribe must be a module, got: #{inspect(module)}"
-    end
+    %__MODULE__{subscribe: AgentLink.Plane.Session.subscribe_module!(opts)}
   end
 
   defp ensure_session(state, runtime, session_id, attrs) do
@@ -355,14 +345,7 @@ defmodule AgentLink.Plane.Sessions do
     Keyword.merge(history_opts(attrs), session_id: session_id, cwd: cwd!(attrs))
   end
 
-  defp history_opts(%{history: history}) do
-    if Keyword.keyword?(history) do
-      history
-    else
-      raise ArgumentError, ":history must be a keyword, got: #{inspect(history)}"
-    end
-  end
-
+  defp history_opts(%{history: history}), do: AgentLink.Plane.Session.history!(history)
   defp history_opts(%{}), do: []
 
   defp cwd!(%{cwd: cwd}) when is_binary(cwd), do: cwd

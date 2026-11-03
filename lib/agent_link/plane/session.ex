@@ -140,6 +140,7 @@ defmodule AgentLink.Plane.Session do
 
     history =
       opts
+      |> Keyword.get(:history, [])
       |> history!()
       |> Keyword.merge(session_id: session_id, cwd: cwd)
       |> AgentLink.Plane.History.new()
@@ -152,9 +153,9 @@ defmodule AgentLink.Plane.Session do
     }
   end
 
-  defp history!(opts) do
-    history = Keyword.get(opts, :history, [])
-
+  # AgentLink.Plane.Sessions calls these. The directory does not repeat the check.
+  @doc false
+  def history!(history) do
     if Keyword.keyword?(history) do
       history
     else
@@ -162,7 +163,8 @@ defmodule AgentLink.Plane.Session do
     end
   end
 
-  defp subscribe_module!(opts) do
+  @doc false
+  def subscribe_module!(opts) when is_list(opts) do
     module = Keyword.get(opts, :subscribe, AgentLink.Plane.Subscription)
 
     if is_atom(module) do
