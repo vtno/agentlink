@@ -30,9 +30,10 @@ defmodule AgentLink.Config do
 
   The config file is `config` under `:root`. For the default root, that path
   is `AgentLink.Paths.config/0`. The file is a JSON object. `plane` and
-  `target` are optional strings. Other keys are ignored. A `token` key is an
-  error, and the error names the token file. A missing file leaves `plane`
-  and `target` unset. A file that is not a JSON object is an error.
+  `target` are optional strings. A missing key and a null value are unset.
+  Other keys are ignored. A `token` key is an error, and the error names the
+  token file. A missing file leaves `plane` and `target` unset. A file that
+  is not a JSON object is an error.
 
   The token file is `token` under `:root`. For the default root, that path is
   `AgentLink.Paths.token/0`. `load/1` reads it only when the token is still

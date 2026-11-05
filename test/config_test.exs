@@ -73,6 +73,10 @@ defmodule AgentLink.ConfigTest do
 
     assert {:ok, config} = Config.load(root: root, env: %{})
     assert config == %Config{plane: "ws://plane.example/acp", target: nil, token: nil}
+
+    write_config!(root, %{"plane" => "ws://plane.example/acp", "target" => nil})
+    assert {:ok, config} = Config.load(root: root, env: %{})
+    assert config == %Config{plane: "ws://plane.example/acp", target: nil, token: nil}
   end
 
   test "a token key in the config file is an error that names the token file" do
