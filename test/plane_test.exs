@@ -1289,6 +1289,65 @@ defmodule AgentLink.PlaneTest do
     end
   end
 
+  test "a non-map session update with a sessionId is dropped" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    open_session!(id, "ses_1")
+    open_session!(id, "ses_2")
+    assert :sys.get_state(AgentLink.Plane).clients[id].session_id == "ses_2"
+
+    updates = [nil, "text", [1], 1]
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        for session_id <- ["ses_1", "ses_2"], update <- updates do
+          AgentLink.Plane.agent_frame(
+            "lab",
+            Jason.encode!(%{
+              "jsonrpc" => "2.0",
+              "method" => "session/update",
+              "params" => %{"sessionId" => session_id, "update" => update}
+            })
+          )
+        end
+
+        _ = :sys.get_state(AgentLink.Plane)
+      end)
+
+    for session_id <- ["ses_1", "ses_2"] do
+      assert length(Regex.scan(~r/plane dropped session\/update session=#{session_id} /, log)) ==
+               length(updates)
+    end
+
+    refute_received {:send, _}
+
+    call(id, "session/load", %{"sessionId" => "ses_1", "cwd" => "/tmp", "mcpServers" => []}, 3)
+    assert %{"id" => 3, "result" => %{}} = reply!()
+
+    AgentLink.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "ses_1",
+          "update" => %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{"text" => "kept"}
+          }
+        }
+      })
+    )
+
+    assert %{
+             "params" => %{
+               "sessionId" => "ses_1",
+               "update" => %{"content" => %{"text" => "kept"}}
+             }
+           } =
+             reply!()
+  end
+
   test "session new without a cwd stores the workspace" do
     id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")

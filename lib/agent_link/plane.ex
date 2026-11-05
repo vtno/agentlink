@@ -27,12 +27,16 @@ defmodule AgentLink.Plane do
   success the plane calls `AgentLink.Plane.Sessions.open/5`. The plane
   answers `session/list`, `session/load`, `session/resume`, and
   `session/close` from that directory and does not forward them. A live
-  `session/update` that carries a `sessionId` goes through
+  `session/update` with a binary `sessionId` and a map `update` goes through
   `AgentLink.Plane.Sessions.broadcast/3`. Each client that has that session
-  open receives it. `AgentLink.Client.session_id` is the last session that
-  client opened, loaded, or resumed. Delivery of `session/update` does not
-  read that field. An agent question goes only to the client whose prompt
-  is in flight. `fs/read_text_file` is forwarded only when that client's
+  open receives it. That delivery does not read
+  `AgentLink.Client.session_id`. A `session/update` with a binary `sessionId`
+  whose `update` is not a map is dropped. The plane logs a warning and does
+  not store that update. A `session/update` with no `sessionId` goes to every
+  client on that runtime. `AgentLink.Client.session_id` is the last session
+  that client opened, loaded, or resumed. An agent question goes only to the
+  client whose prompt is in flight. `fs/read_text_file` is forwarded only
+  when that client's
   `fs.readTextFile` is true, and `fs/write_text_file` only when
   `fs.writeTextFile` is true. `terminal/*` is forwarded only when `terminal`
   is true. Any other `fs/*` or `terminal/*` request is not forwarded. The
@@ -45,6 +49,7 @@ defmodule AgentLink.Plane do
   """
 
   use GenServer
+  require Logger
 
   defstruct clients: %{}, monitors: %{}, slots: %{}
 
@@ -512,13 +517,21 @@ defmodule AgentLink.Plane do
 
   defp route_notice(state, slot, %{"method" => "session/update"} = message) do
     session_id = session_of(message)
+    update = update_of(message)
 
-    case update_of(message) do
-      update when is_binary(session_id) and is_map(update) ->
+    cond do
+      is_binary(session_id) and is_map(update) ->
         publish(slot, session_id, update)
         state
 
-      _ ->
+      is_binary(session_id) ->
+        Logger.warning(
+          "plane dropped session/update session=#{session_id} because update is not a map"
+        )
+
+        state
+
+      true ->
         fanout(state, slot, session_id, message)
     end
   end
