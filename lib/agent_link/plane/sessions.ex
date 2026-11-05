@@ -1,6 +1,6 @@
 defmodule AgentLink.Plane.Sessions do
   @moduledoc """
-  The session directory. The plane will call this module. It maps each client
+  The session directory. The plane calls this module. It maps each client
   id to that client's subscription pids. `AgentLink.Plane.Session` holds the
   pids and does not keep that map.
 
@@ -30,7 +30,7 @@ defmodule AgentLink.Plane.Sessions do
   most 50 rows. `next_cursor` is `nil` on the last page.
 
   `:subscribe` on `start_link/1` defaults to `AgentLink.Plane.Subscription`.
-  The plane does not call this directory yet.
+  `AgentLink.Plane.Supervisor` starts this directory.
   """
 
   use GenServer

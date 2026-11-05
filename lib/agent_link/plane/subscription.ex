@@ -10,7 +10,7 @@ defmodule AgentLink.Plane.Subscription do
   When `:client_pid` dies, `:owner` receives
   `{:subscription_down, client_id, session_id}` and this process exits with
   `:normal`. `stop/1` exits the same way and sends no message to `:owner`.
-  The plane does not start this process.
+  The session directory starts this process.
   """
 
   @behaviour AgentLink.Plane.Subscribe
@@ -63,9 +63,10 @@ defmodule AgentLink.Plane.Subscription do
   @doc """
   End this client's subscription.
 
-  The session calls this when the client sends `session/close`. The process
-  exits with `:normal`. `:owner` receives no message. Returns `:ok`, including
-  when the process has already stopped.
+  The session directory calls this when the client sends `session/close` or
+  when the client disconnects. The process exits with `:normal`. `:owner`
+  receives no message. Returns `:ok`, including when the process has already
+  stopped.
   """
   @impl true
   def stop(server) do

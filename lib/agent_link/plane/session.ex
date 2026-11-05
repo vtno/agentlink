@@ -20,7 +20,7 @@ defmodule AgentLink.Plane.Session do
   `:history`. `:subscribe` is the module, default
   `AgentLink.Plane.Subscription`.
 
-  The plane does not start this process yet.
+  `AgentLink.Plane.Sessions` starts this process from `open/5`.
   """
 
   use GenServer

@@ -356,6 +356,7 @@ defmodule AgentLink.UplinkTest do
     on_exit(fn -> AgentLink.TestHelpers.restore(:master_token, previous) end)
 
     start_supervised!(AgentLink.Registry)
+    start_supervised!(AgentLink.Plane.Sessions)
     start_supervised!(AgentLink.Plane)
 
     server =

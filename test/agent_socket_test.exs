@@ -3,6 +3,7 @@ defmodule AgentLink.AgentSocketTest do
 
   setup do
     start_supervised!(AgentLink.Registry)
+    start_supervised!(AgentLink.Plane.Sessions)
     start_supervised!(AgentLink.Plane)
     :ok
   end
