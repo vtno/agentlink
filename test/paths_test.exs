@@ -1,6 +1,12 @@
 defmodule AgentLink.PathsTest do
   use ExUnit.Case, async: false
 
+  test "the config file and the token file default under ~/.agentlink" do
+    root = Path.join(System.user_home!(), ".agentlink")
+    assert AgentLink.Paths.config() == Path.join(root, "config")
+    assert AgentLink.Paths.token() == Path.join(root, "token")
+  end
+
   test "the link file and the workspace default under ~/.agentlink" do
     root = Path.join(System.user_home!(), ".agentlink")
     assert AgentLink.Paths.root() == root

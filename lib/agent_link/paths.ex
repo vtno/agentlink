@@ -12,6 +12,12 @@ defmodule AgentLink.Paths do
     Application.get_env(:agent_link, :link_path) || Path.join(root(), "agent.link.json")
   end
 
+  @doc "JSON file with the plane URL and an optional target."
+  def config, do: Path.join(root(), "config")
+
+  @doc "Token file."
+  def token, do: Path.join(root(), "token")
+
   @doc "Plane WebSocket the uplink dials on this machine."
   def plane_url(port \\ 8090) when is_integer(port) and port >= 1 and port <= 65_535 do
     "ws://127.0.0.1:#{port}/agent"
