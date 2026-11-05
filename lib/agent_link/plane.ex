@@ -23,20 +23,33 @@ defmodule AgentLink.Plane do
   @moduledoc """
   WebSocket proxy for ACP stdio. `initialize` is cached per agent. The agent
   sees the first client's `clientCapabilities`. Each client keeps the
-  advertisement from its own `initialize`. Every other method is forwarded.
-  Clients on the same `{agent, sessionId}` share live updates. An agent
-  question goes only to the client whose prompt or load is in flight.
-  `fs/read_text_file` is forwarded only when that client's `fs.readTextFile`
-  is true, and `fs/write_text_file` only when `fs.writeTextFile` is true.
-  `terminal/*` is forwarded only when `terminal` is true. Any other `fs/*`
-  or `terminal/*` request is not forwarded. The plane answers the agent with
-  JSON-RPC `-32601` and the message `client does not support this method`.
-  A disconnect declines that client's outstanding questions and drops its
-  queued prompts and initialize waiters. The active prompt releases the slot
-  only when the agent replies. One agent process runs one prompt at a time.
+  advertisement from its own `initialize`. `session/new` is forwarded. On
+  success the plane calls `AgentLink.Plane.Sessions.open/5`. The plane
+  answers `session/list`, `session/load`, `session/resume`, and
+  `session/close` from that directory and does not forward them. A live
+  `session/update` with a binary `sessionId` and a map `update` goes through
+  `AgentLink.Plane.Sessions.broadcast/3`. Each client that has that session
+  open receives it. That delivery does not read
+  `AgentLink.Client.session_id`. A `session/update` with a binary `sessionId`
+  whose `update` is not a map is dropped. The plane logs a warning and does
+  not store that update. A `session/update` with no `sessionId` goes to every
+  client on that runtime. `AgentLink.Client.session_id` is the last session
+  that client opened, loaded, or resumed. An agent question goes only to the
+  client whose prompt is in flight. `fs/read_text_file` is forwarded only
+  when that client's
+  `fs.readTextFile` is true, and `fs/write_text_file` only when
+  `fs.writeTextFile` is true. `terminal/*` is forwarded only when `terminal`
+  is true. Any other `fs/*` or `terminal/*` request is not forwarded. The
+  plane answers the agent with JSON-RPC `-32601` and the message
+  `client does not support this method`. A disconnect calls
+  `AgentLink.Plane.Sessions.disconnect/1`, declines that client's outstanding
+  questions, and drops its queued prompts and initialize waiters. The active
+  prompt releases the slot only when the agent replies. One agent process
+  runs one prompt at a time.
   """
 
   use GenServer
+  require Logger
 
   defstruct clients: %{}, monitors: %{}, slots: %{}
 
@@ -137,6 +150,7 @@ defmodule AgentLink.Plane do
         {:noreply, state}
 
       {client_id, monitors} ->
+        :ok = AgentLink.Plane.Sessions.disconnect(client_id)
         slots = Map.new(state.slots, fn {name, slot} -> {name, drop_client(slot, client_id)} end)
 
         {:noreply,
@@ -163,6 +177,9 @@ defmodule AgentLink.Plane do
       message["method"] in ["runtime/list", "runtime/select"] ->
         on_runtime(state, client_id, message)
 
+      message["method"] in ["session/list", "session/load", "session/resume", "session/close"] ->
+        on_session(state, client_id, message)
+
       message["id"] == nil ->
         with_runtime(state, client_id, message, fn state, slot, _client_id, message ->
           write_agent(slot, message)
@@ -184,12 +201,7 @@ defmodule AgentLink.Plane do
         end)
 
       true ->
-        kind =
-          case message["method"] do
-            "session/new" -> :session_new
-            "session/load" -> :session_load
-            _ -> :forward
-          end
+        kind = if message["method"] == "session/new", do: :session_new, else: :forward
 
         with_runtime(state, client_id, message, fn state, slot, client_id, message ->
           forward(state, slot, client_id, message, kind)
@@ -230,6 +242,94 @@ defmodule AgentLink.Plane do
 
   # A runtime request without an id is a notice. Ignore it.
   defp on_runtime(state, _client_id, _message), do: state
+
+  # These four methods are answered here. A notice has no id and is dropped.
+  defp on_session(state, client_id, %{"id" => id} = message) when not is_nil(id) do
+    with_runtime(state, client_id, message, fn state, slot, client_id, message ->
+      case message["method"] do
+        "session/list" -> on_list(state, slot, client_id, message)
+        "session/load" -> on_join(state, slot, client_id, message, :load)
+        "session/resume" -> on_join(state, slot, client_id, message, :resume)
+        "session/close" -> on_close(state, slot, client_id, message)
+      end
+    end)
+  end
+
+  defp on_session(state, _client_id, _message), do: state
+
+  defp on_list(state, slot, client_id, message) do
+    case list_args(message["params"]) do
+      {:ok, opts} ->
+        case AgentLink.Plane.Sessions.list(slot.name, opts) do
+          {:error, :invalid_cursor} ->
+            {fail(state, client_id, message["id"], -32602, "invalid cursor"), slot}
+
+          %{sessions: sessions, next_cursor: next} ->
+            {reply(state, client_id, message["id"], {:ok, list_result(sessions, next)}), slot}
+        end
+
+      {:error, reason} ->
+        {fail(state, client_id, message["id"], -32602, reason), slot}
+    end
+  end
+
+  defp on_join(state, slot, client_id, message, mode) do
+    case session_of(message) do
+      session_id when is_binary(session_id) ->
+        join(state, slot, client_id, message, mode, session_id)
+
+      _ ->
+        {fail(state, client_id, message["id"], -32602, "sessionId is required"), slot}
+    end
+  end
+
+  defp join(state, slot, client_id, message, :load, session_id) do
+    case AgentLink.Plane.Sessions.load(
+           slot.name,
+           session_id,
+           client_id,
+           client_pid(state, client_id)
+         ) do
+      {:ok, replay} ->
+        state = Enum.reduce(replay, state, &push(&2, client_id, &1))
+        {answer_join(state, slot, client_id, message, session_id), slot}
+
+      {:error, :unknown} ->
+        {fail(state, client_id, message["id"], -32002, "session not found"), slot}
+    end
+  end
+
+  defp join(state, slot, client_id, message, :resume, session_id) do
+    case AgentLink.Plane.Sessions.resume(
+           slot.name,
+           session_id,
+           client_id,
+           client_pid(state, client_id)
+         ) do
+      :ok ->
+        {answer_join(state, slot, client_id, message, session_id), slot}
+
+      {:error, :unknown} ->
+        {fail(state, client_id, message["id"], -32002, "session not found"), slot}
+    end
+  end
+
+  defp answer_join(state, _slot, client_id, message, session_id) do
+    state = bind_session(state, client_id, session_id)
+    reply(state, client_id, message["id"], {:ok, %{}})
+  end
+
+  defp on_close(state, slot, client_id, message) do
+    case session_of(message) do
+      session_id when is_binary(session_id) ->
+        :ok = AgentLink.Plane.Sessions.leave(slot.name, session_id, client_id)
+        state = release_session(state, client_id, session_id)
+        {reply(state, client_id, message["id"], {:ok, %{}}), slot}
+
+      _ ->
+        {fail(state, client_id, message["id"], -32602, "sessionId is required"), slot}
+    end
+  end
 
   defp with_runtime(state, client_id, message, fun) do
     case ensure_runtime(state, client_id) do
@@ -331,7 +431,8 @@ defmodule AgentLink.Plane do
           client_id: client_id,
           client_req_id: message["id"],
           kind: kind,
-          session_id: session_of(message)
+          session_id: session_of(message),
+          cwd: cwd_of(message)
         }
 
         {state,
@@ -379,22 +480,20 @@ defmodule AgentLink.Plane do
     {state, slot}
   end
 
-  defp deliver(state, slot, %{kind: kind} = pending, message)
-       when kind in [:session_new, :session_load] do
+  defp deliver(state, slot, %{kind: :session_new} = pending, message) do
     cache = cache_of(message)
-    state = reply(state, pending.client_id, pending.client_req_id, cache)
 
     state =
       case cache do
-        {:ok, result} ->
-          session_id = if kind == :session_new, do: result["sessionId"], else: pending.session_id
-          bind_session(state, pending.client_id, session_id)
+        {:ok, %{"sessionId" => session_id}} when is_binary(session_id) ->
+          state = bind_session(state, pending.client_id, session_id)
+          open_session(state, slot, pending, session_id)
 
         _ ->
           state
       end
 
-    {state, slot}
+    {reply(state, pending.client_id, pending.client_req_id, cache), slot}
   end
 
   defp deliver(state, slot, pending, message) do
@@ -403,22 +502,12 @@ defmodule AgentLink.Plane do
     if pending.kind == :prompt do
       session_id = pending.session_id
 
-      state =
-        if is_binary(session_id) do
-          broadcast(state, slot, session_id, %{
-            "jsonrpc" => "2.0",
-            "method" => "session/update",
-            "params" => %{
-              "sessionId" => session_id,
-              "update" => %{
-                "sessionUpdate" => "session_info_update",
-                "_meta" => %{"stopReason" => stop_reason(message)}
-              }
-            }
-          })
-        else
-          state
-        end
+      if is_binary(session_id) do
+        publish(slot, session_id, %{
+          "sessionUpdate" => "session_info_update",
+          "_meta" => %{"stopReason" => stop_reason(message)}
+        })
+      end
 
       pump(state, %{slot | prompt_inflight: false})
     else
@@ -426,28 +515,30 @@ defmodule AgentLink.Plane do
     end
   end
 
-  defp route_notice(state, slot, message) do
+  defp route_notice(state, slot, %{"method" => "session/update"} = message) do
     session_id = session_of(message)
+    update = update_of(message)
 
-    case load_in_flight(slot, session_id) do
-      %{client_id: client_id} ->
-        push(state, client_id, message)
+    cond do
+      is_binary(session_id) and is_map(update) ->
+        publish(slot, session_id, update)
+        state
 
-      nil when is_binary(session_id) ->
-        broadcast(state, slot, session_id, message)
+      is_binary(session_id) ->
+        Logger.warning(
+          "plane dropped session/update session=#{session_id} because update is not a map"
+        )
 
-      nil ->
-        broadcast(state, slot, nil, message)
+        state
+
+      true ->
+        fanout(state, slot, session_id, message)
     end
   end
 
-  defp load_in_flight(slot, session_id) when is_binary(session_id) do
-    Enum.find_value(slot.agent_pending, fn {_id, pending} ->
-      if pending.kind == :session_load and pending.session_id == session_id, do: pending
-    end)
+  defp route_notice(state, slot, message) do
+    fanout(state, slot, session_of(message), message)
   end
-
-  defp load_in_flight(_slot, _session_id), do: nil
 
   defp ask_issuer(state, slot, message) do
     case issuer(slot, session_of(message)) do
@@ -517,7 +608,7 @@ defmodule AgentLink.Plane do
   defp issuer(slot, session_id) do
     matches =
       Enum.filter(slot.agent_pending, fn {_id, pending} ->
-        pending.kind in [:prompt, :session_load] and session_match?(pending, session_id)
+        pending.kind == :prompt and session_match?(pending, session_id)
       end)
 
     case matches do
@@ -571,22 +662,12 @@ defmodule AgentLink.Plane do
     session_id = session_of(item.message)
     slot = %{slot | prompt_queue: queue}
 
-    state =
-      if is_binary(session_id) and text != "" do
-        broadcast(state, slot, session_id, %{
-          "jsonrpc" => "2.0",
-          "method" => "session/update",
-          "params" => %{
-            "sessionId" => session_id,
-            "update" => %{
-              "sessionUpdate" => "user_message_chunk",
-              "content" => %{"type" => "text", "text" => text}
-            }
-          }
-        })
-      else
-        state
-      end
+    if is_binary(session_id) and text != "" do
+      publish(slot, session_id, %{
+        "sessionUpdate" => "user_message_chunk",
+        "content" => %{"type" => "text", "text" => text}
+      })
+    end
 
     agent_id = slot.next_agent_id
     {state, slot} = forward(state, slot, item.client_id, item.message, :prompt)
@@ -663,7 +744,11 @@ defmodule AgentLink.Plane do
     end
   end
 
-  defp broadcast(state, slot, session_id, message) do
+  defp publish(slot, session_id, update) do
+    AgentLink.Plane.Sessions.broadcast(slot.name, session_id, update)
+  end
+
+  defp fanout(state, slot, session_id, message) do
     json = Jason.encode!(message)
 
     Enum.each(peers(state, slot.name, session_id), fn {_id, %{pid: pid}} ->
@@ -694,6 +779,36 @@ defmodule AgentLink.Plane do
   end
 
   defp bind_session(state, _client_id, _session_id), do: state
+
+  defp release_session(state, client_id, session_id) do
+    case state.clients[client_id] do
+      %AgentLink.Client{session_id: ^session_id} = client ->
+        %{state | clients: Map.put(state.clients, client_id, %{client | session_id: nil})}
+
+      _ ->
+        state
+    end
+  end
+
+  defp open_session(state, slot, pending, session_id) do
+    case state.clients[pending.client_id] do
+      %AgentLink.Client{pid: pid} ->
+        :ok =
+          AgentLink.Plane.Sessions.open(slot.name, session_id, pending.client_id, pid, %{
+            cwd: pending.cwd
+          })
+
+        state
+
+      nil ->
+        state
+    end
+  end
+
+  defp client_pid(state, client_id) do
+    %AgentLink.Client{pid: pid} = state.clients[client_id]
+    pid
+  end
 
   defp client_runtime(state, client_id) do
     case state.clients[client_id] do
@@ -743,11 +858,61 @@ defmodule AgentLink.Plane do
       not is_binary(message["method"])
   end
 
-  defp session_of(message) do
-    case get_in(message, ["params", "sessionId"]) do
+  defp session_of(%{"params" => params}) when is_map(params) do
+    case params["sessionId"] do
       id when is_binary(id) -> id
       _ -> nil
     end
+  end
+
+  defp session_of(_message), do: nil
+
+  defp update_of(%{"params" => %{"update" => update}}) when is_map(update), do: update
+  defp update_of(_message), do: nil
+
+  # The relay fills a missing cwd on the agent machine. The directory needs a
+  # binary before that write, so a missing or empty cwd uses this machine's
+  # workspace.
+  defp cwd_of(%{"params" => %{"cwd" => cwd}}) when is_binary(cwd) and cwd != "", do: cwd
+  defp cwd_of(_message), do: AgentLink.Paths.workdir()
+
+  defp list_args(nil), do: {:ok, []}
+
+  defp list_args(params) when is_map(params) do
+    with {:ok, opts} <- list_cwd(params, []),
+         {:ok, opts} <- list_cursor(params, opts) do
+      {:ok, opts}
+    end
+  end
+
+  defp list_args(_params), do: {:error, "invalid params"}
+
+  defp list_cwd(params, opts) do
+    case Map.get(params, "cwd", :absent) do
+      :absent -> {:ok, opts}
+      nil -> {:ok, opts}
+      cwd when is_binary(cwd) -> {:ok, Keyword.put(opts, :cwd, cwd)}
+      _ -> {:error, "invalid cwd"}
+    end
+  end
+
+  defp list_cursor(params, opts) do
+    case Map.get(params, "cursor", :absent) do
+      :absent -> {:ok, opts}
+      nil -> {:ok, opts}
+      cursor when is_binary(cursor) -> {:ok, Keyword.put(opts, :cursor, cursor)}
+      _ -> {:error, "invalid cursor"}
+    end
+  end
+
+  defp list_result(sessions, nil), do: %{"sessions" => sessions}
+
+  defp list_result(sessions, next) when is_binary(next) do
+    %{"sessions" => sessions, "nextCursor" => next}
+  end
+
+  defp fail(state, client_id, id, code, message) do
+    reply(state, client_id, id, {:error, %{"code" => code, "message" => message}})
   end
 
   defp stop_reason(%{"result" => %{"stopReason" => reason}}) when is_binary(reason), do: reason

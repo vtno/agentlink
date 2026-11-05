@@ -13,6 +13,7 @@ defmodule AgentLink.PlaneTest do
 
   setup do
     start_supervised!(AgentLink.Registry)
+    start_supervised!(AgentLink.Plane.Sessions)
     start_supervised!(AgentLink.Plane)
     :ok
   end
@@ -230,7 +231,7 @@ defmodule AgentLink.PlaneTest do
     assert {:agent, %{"method" => "initialize"}} = from_agent!()
   end
 
-  test "session new and load bind the session, and an error does not" do
+  test "session new opens the directory and a failed new does not" do
     id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 1)
@@ -246,6 +247,7 @@ defmodule AgentLink.PlaneTest do
     )
 
     assert %{"error" => _} = reply!()
+    assert listed(id, 9) == []
 
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 2)
     assert {:agent, %{"id" => agent_id}} = from_agent!()
@@ -260,16 +262,8 @@ defmodule AgentLink.PlaneTest do
     )
 
     assert %{"result" => %{"sessionId" => "ses_1"}} = reply!()
-
-    call(id, "session/load", %{"sessionId" => "ses_2", "cwd" => "/tmp", "mcpServers" => []}, 3)
-    assert {:agent, %{"id" => agent_id}} = from_agent!()
-
-    AgentLink.Plane.agent_frame(
-      "lab",
-      Jason.encode!(%{"jsonrpc" => "2.0", "id" => agent_id, "result" => %{}})
-    )
-
-    assert %{"id" => 3, "result" => %{}} = reply!()
+    assert [%{"sessionId" => "ses_1", "cwd" => "/tmp"}] = listed(id, 8)
+    assert :sys.get_state(AgentLink.Plane).clients[id].session_id == "ses_1"
   end
 
   test "prompts run one at a time and the stop is broadcast" do
@@ -346,7 +340,7 @@ defmodule AgentLink.PlaneTest do
     refute_receive {:send, _}, 50
   end
 
-  test "a live update goes only to clients on that session, unless a load is in flight" do
+  test "a live update goes only to clients that have that session open" do
     id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
@@ -370,16 +364,21 @@ defmodule AgentLink.PlaneTest do
     )
 
     assert %{"method" => "session/update"} = reply!()
-    refute_receive {^other, {:send, _}}, 50
+    _ = :sys.get_state(AgentLink.Plane)
+    sync_client(other)
+    refute_received {^other, {:send, _}}
 
     call(
       other_id,
       "session/load",
-      %{"sessionId" => "ses_9", "cwd" => "/tmp", "mcpServers" => []},
+      %{"sessionId" => "ses_1", "cwd" => "/tmp", "mcpServers" => []},
       2
     )
 
-    assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
+    assert %{"params" => %{"update" => %{"content" => %{"text" => "yo"}}}} = client_reply!(other)
+    assert %{"id" => 2, "result" => %{}} = client_reply!(other)
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/load"}}
 
     AgentLink.Plane.agent_frame(
       "lab",
@@ -387,21 +386,14 @@ defmodule AgentLink.PlaneTest do
         "jsonrpc" => "2.0",
         "method" => "session/update",
         "params" => %{
-          "sessionId" => "ses_9",
+          "sessionId" => "ses_1",
           "update" => %{"sessionUpdate" => "agent_message_chunk"}
         }
       })
     )
 
+    assert %{"method" => "session/update"} = reply!()
     assert %{"method" => "session/update"} = client_reply!(other)
-    refute_receive {:send, _}, 50
-
-    AgentLink.Plane.agent_frame(
-      "lab",
-      Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
-    )
-
-    assert %{"id" => 2} = client_reply!(other)
   end
 
   test "a notice with no session reaches every client on the agent" do
@@ -439,14 +431,9 @@ defmodule AgentLink.PlaneTest do
       1
     )
 
-    assert {:agent, %{"id" => load_id}} = from_agent!()
-
-    AgentLink.Plane.agent_frame(
-      "lab",
-      Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
-    )
-
-    client_reply!(other)
+    assert %{"id" => 1, "result" => %{}} = client_reply!(other)
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/load"}}
 
     call(
       id,
@@ -495,33 +482,29 @@ defmodule AgentLink.PlaneTest do
     assert {:agent, %{"id" => "perm", "result" => %{"outcome" => "allow"}}} = from_agent!()
   end
 
-  test "a permission during load goes only to the phone that is loading" do
+  test "an unknown load or resume is session not found and is not forwarded" do
     id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
     open_session!(id, "ses_1")
-    {other, other_id} = spawn_client()
 
-    call(
-      other_id,
-      "session/load",
-      %{"sessionId" => "ses_9", "cwd" => "/tmp", "mcpServers" => []},
-      1
-    )
+    call(id, "session/load", %{"sessionId" => "missing", "cwd" => "/tmp", "mcpServers" => []}, 2)
 
-    assert {:agent, %{"method" => "session/load"}} = from_agent!()
+    assert %{"id" => 2, "error" => %{"code" => -32002, "message" => "session not found"}} =
+             reply!()
 
-    AgentLink.Plane.agent_frame(
-      "lab",
-      Jason.encode!(%{
-        "jsonrpc" => "2.0",
-        "id" => "perm",
-        "method" => "session/request_permission",
-        "params" => %{"sessionId" => "ses_9"}
-      })
-    )
+    call(id, "session/resume", %{"sessionId" => "missing"}, 3)
 
-    assert %{"method" => "session/request_permission"} = client_reply!(other)
-    refute_receive {:send, _}, 50
+    assert %{"id" => 3, "error" => %{"code" => -32002, "message" => "session not found"}} =
+             reply!()
+
+    call(id, "session/load", %{}, 4)
+
+    assert %{"id" => 4, "error" => %{"code" => -32602, "message" => "sessionId is required"}} =
+             reply!()
+
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/load"}}
+    refute_received {:agent, %{"method" => "session/resume"}}
   end
 
   test "an error answer is forwarded, and a permission with no issuer is declined" do
@@ -684,6 +667,11 @@ defmodule AgentLink.PlaneTest do
     )
 
     assert %{"id" => 5} = reply!()
+
+    assert %{
+             "params" => %{"update" => %{"sessionUpdate" => "session_info_update"}}
+           } = reply!()
+
     refute_receive {:send, _}, 50
     refute_receive {:agent, %{"method" => "session/prompt"}}, 50
   end
@@ -789,7 +777,7 @@ defmodule AgentLink.PlaneTest do
     end
   end
 
-  test "disconnecting a loading client declines all its questions but preserves a peer's prompt and questions" do
+  test "disconnecting a peer leaves the opener's prompt and session" do
     agent!("lab")
 
     survivor =
@@ -810,29 +798,19 @@ defmodule AgentLink.PlaneTest do
     load_client_session!(pid, id, "ses_1")
 
     call(id, "session/load", %{"sessionId" => "ses_2", "cwd" => "/tmp", "mcpServers" => []}, 2)
-    assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
+
+    assert %{"id" => 2, "error" => %{"code" => -32002, "message" => "session not found"}} =
+             client_reply!(pid)
+
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/load"}}
+
     call(survivor, "session/prompt", %{"sessionId" => "ses_1", "prompt" => []}, 3)
     assert {:agent, %{"method" => "session/prompt", "id" => prompt_id}} = from_agent!()
 
-    agent_ask("ses_2", "read", "fs/read_text_file")
-    agent_ask("ses_2", "term", "terminal/create")
     agent_ask("ses_1", "perm", "session/request_permission")
-    assert %{"method" => "fs/read_text_file"} = client_reply!(pid)
-    assert %{"method" => "terminal/create"} = client_reply!(pid)
     assert %{"id" => fan_id, "method" => "session/request_permission"} = reply!()
     disconnect_client!(pid, id)
-
-    for req_id <- ["read", "term"] do
-      assert_receive {:agent,
-                      %{
-                        "id" => ^req_id,
-                        "error" => %{
-                          "code" => -32000,
-                          "message" => "no app is attached to this session"
-                        }
-                      }},
-                     500
-    end
 
     slot = :sys.get_state(AgentLink.Plane).slots["lab"]
     assert %{^fan_id => %{client_id: ^survivor}} = slot.fan_pending
@@ -845,11 +823,6 @@ defmodule AgentLink.PlaneTest do
     )
 
     assert {:agent, %{"id" => "perm", "result" => %{}}} = from_agent!()
-
-    AgentLink.Plane.agent_frame(
-      "lab",
-      Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
-    )
 
     AgentLink.Plane.agent_frame(
       "lab",
@@ -1084,15 +1057,319 @@ defmodule AgentLink.PlaneTest do
     assert %{"error" => %{"message" => "runtime is not allowed"}} = reply!()
   end
 
-  defp load_client_session!(pid, id, session_id) do
-    call(id, "session/load", %{"sessionId" => session_id, "cwd" => "/tmp", "mcpServers" => []}, 1)
-    assert {:agent, %{"method" => "session/load", "id" => load_id}} = from_agent!()
+  test "session list is answered from the directory" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    open_session!(id, "ses_a", "/tmp")
+    open_session!(id, "ses_b", "/elsewhere")
+
+    call(id, "session/list", %{"cwd" => "/tmp"}, 1)
+
+    assert %{"id" => 1, "result" => %{"sessions" => [%{"sessionId" => "ses_a", "cwd" => "/tmp"}]}} =
+             reply!()
+
+    call(id, "session/list", %{"cursor" => "nope"}, 2)
+    assert %{"id" => 2, "error" => %{"code" => -32602, "message" => "invalid cursor"}} = reply!()
+
+    call(id, "session/list", %{"cwd" => 1}, 3)
+    assert %{"id" => 3, "error" => %{"code" => -32602, "message" => "invalid cwd"}} = reply!()
+
+    call(id, "session/list", %{"cursor" => 1}, 4)
+    assert %{"id" => 4, "error" => %{"code" => -32602, "message" => "invalid cursor"}} = reply!()
+
+    AgentLink.Plane.client_frame(id, ~s({"jsonrpc":"2.0","method":"session/list"}))
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/list"}}
+    refute_received {:send, _}
+
+    ids = Enum.map(1..51, &"page_#{&1}")
+
+    for session_id <- ids do
+      open_session!(id, session_id, "/pages")
+    end
+
+    call(id, "session/list", %{"cwd" => "/pages"}, 5)
+    assert %{"id" => 5, "result" => %{"sessions" => first, "nextCursor" => cursor}} = reply!()
+    assert length(first) == 50
+    assert is_binary(cursor)
+
+    call(id, "session/list", %{"cwd" => "/pages", "cursor" => cursor}, 6)
+    assert %{"id" => 6, "result" => result} = reply!()
+    assert length(result["sessions"]) == 1
+    refute Map.has_key?(result, "nextCursor")
+
+    got = Enum.map(first ++ result["sessions"], & &1["sessionId"])
+    assert Enum.sort(got) == Enum.sort(ids)
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/list"}}
+  end
+
+  test "load replays then answers and a later update reaches both clients" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    open_session!(id, "ses_1")
+    prompt!(id, "ses_1", 4)
 
     AgentLink.Plane.agent_frame(
       "lab",
-      Jason.encode!(%{"jsonrpc" => "2.0", "id" => load_id, "result" => %{}})
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "ses_1",
+          "update" => %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{"type" => "text", "text" => "yo"}
+          }
+        }
+      })
     )
 
+    assert %{"params" => %{"update" => %{"sessionUpdate" => "agent_message_chunk"}}} = reply!()
+
+    {other, other_id} = spawn_client()
+
+    call(
+      other_id,
+      "session/load",
+      %{"sessionId" => "ses_1", "cwd" => "/tmp", "mcpServers" => []},
+      1
+    )
+
+    assert %{
+             "method" => "session/update",
+             "params" => %{
+               "sessionId" => "ses_1",
+               "update" => %{"sessionUpdate" => "user_message_chunk"}
+             }
+           } = client_reply!(other)
+
+    assert %{
+             "method" => "session/update",
+             "params" => %{
+               "update" => %{
+                 "sessionUpdate" => "agent_message_chunk",
+                 "content" => %{"text" => "yo"}
+               }
+             }
+           } = client_reply!(other)
+
+    assert %{"id" => 1, "result" => %{}} = client_reply!(other)
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/load"}}
+
+    AgentLink.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "ses_1",
+          "update" => %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{"text" => "next"}
+          }
+        }
+      })
+    )
+
+    assert %{"params" => %{"update" => %{"content" => %{"text" => "next"}}}} = reply!()
+
+    assert %{"params" => %{"update" => %{"content" => %{"text" => "next"}}}} =
+             client_reply!(other)
+  end
+
+  test "resume joins with no replay" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    open_session!(id, "ses_1")
+    prompt!(id, "ses_1", 4)
+    {other, other_id} = spawn_client()
+
+    call(other_id, "session/resume", %{"sessionId" => "ses_1", "cwd" => "/tmp"}, 1)
+    assert %{"id" => 1, "result" => %{}} = client_reply!(other)
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/resume"}}
+
+    AgentLink.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "ses_1",
+          "update" => %{"sessionUpdate" => "agent_message_chunk"}
+        }
+      })
+    )
+
+    assert %{"method" => "session/update"} = reply!()
+    assert %{"method" => "session/update"} = client_reply!(other)
+    assert :sys.get_state(AgentLink.Plane).clients[other_id].session_id == "ses_1"
+  end
+
+  test "close drops one client and a later load still has the prompt" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    open_session!(id, "ses_1")
+    open_session!(id, "ses_2")
+    {other, other_id} = spawn_client()
+    load_client_session!(other, other_id, "ses_1")
+    prompt!(id, "ses_1", 4)
+
+    assert %{"params" => %{"update" => %{"sessionUpdate" => "user_message_chunk"}}} =
+             client_reply!(other)
+
+    call(id, "session/close", %{"sessionId" => "ses_1"}, 5)
+    assert %{"id" => 5, "result" => %{}} = reply!()
+    call(id, "session/close", %{"sessionId" => "ses_1"}, 6)
+    assert %{"id" => 6, "result" => %{}} = reply!()
+    call(id, "session/close", %{}, 7)
+
+    assert %{"id" => 7, "error" => %{"code" => -32602, "message" => "sessionId is required"}} =
+             reply!()
+
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/close"}}
+    assert :sys.get_state(AgentLink.Plane).clients[id].session_id == "ses_2"
+
+    AgentLink.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "ses_1",
+          "update" => %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{"text" => "after"}
+          }
+        }
+      })
+    )
+
+    assert %{"params" => %{"update" => %{"content" => %{"text" => "after"}}}} =
+             client_reply!(other)
+
+    refute_received {:send, _}
+
+    call(id, "session/load", %{"sessionId" => "ses_1", "cwd" => "/tmp", "mcpServers" => []}, 8)
+
+    assert %{"params" => %{"update" => %{"sessionUpdate" => "user_message_chunk"}}} = reply!()
+    assert %{"params" => %{"update" => %{"content" => %{"text" => "after"}}}} = reply!()
+    assert %{"id" => 8, "result" => %{}} = reply!()
+
+    assert Enum.map(listed(id, 9), & &1["sessionId"]) |> Enum.sort() == ["ses_1", "ses_2"]
+  end
+
+  test "one client receives updates for every session it opened" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    open_session!(id, "ses_1")
+    open_session!(id, "ses_2")
+    assert :sys.get_state(AgentLink.Plane).clients[id].session_id == "ses_2"
+
+    for session_id <- ["ses_1", "ses_2"] do
+      AgentLink.Plane.agent_frame(
+        "lab",
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => session_id,
+            "update" => %{
+              "sessionUpdate" => "agent_message_chunk",
+              "content" => %{"text" => session_id}
+            }
+          }
+        })
+      )
+
+      assert %{"params" => %{"sessionId" => ^session_id}} = reply!()
+    end
+  end
+
+  test "a non-map session update with a sessionId is dropped" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    open_session!(id, "ses_1")
+    open_session!(id, "ses_2")
+    assert :sys.get_state(AgentLink.Plane).clients[id].session_id == "ses_2"
+
+    updates = [nil, "text", [1], 1]
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        for session_id <- ["ses_1", "ses_2"], update <- updates do
+          AgentLink.Plane.agent_frame(
+            "lab",
+            Jason.encode!(%{
+              "jsonrpc" => "2.0",
+              "method" => "session/update",
+              "params" => %{"sessionId" => session_id, "update" => update}
+            })
+          )
+        end
+
+        _ = :sys.get_state(AgentLink.Plane)
+      end)
+
+    for session_id <- ["ses_1", "ses_2"] do
+      assert length(Regex.scan(~r/plane dropped session\/update session=#{session_id} /, log)) ==
+               length(updates)
+    end
+
+    refute_received {:send, _}
+
+    call(id, "session/load", %{"sessionId" => "ses_1", "cwd" => "/tmp", "mcpServers" => []}, 3)
+    assert %{"id" => 3, "result" => %{}} = reply!()
+
+    AgentLink.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "ses_1",
+          "update" => %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{"text" => "kept"}
+          }
+        }
+      })
+    )
+
+    assert %{
+             "params" => %{
+               "sessionId" => "ses_1",
+               "update" => %{"content" => %{"text" => "kept"}}
+             }
+           } =
+             reply!()
+  end
+
+  test "session new without a cwd stores the workspace" do
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    agent!("lab")
+    call(id, "session/new", %{}, 1)
+    assert {:agent, %{"id" => agent_id, "method" => "session/new"}} = from_agent!()
+
+    AgentLink.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => agent_id,
+        "result" => %{"sessionId" => "ses_1"}
+      })
+    )
+
+    assert %{"result" => %{"sessionId" => "ses_1"}} = reply!()
+    cwd = AgentLink.Paths.workdir()
+    assert [%{"sessionId" => "ses_1", "cwd" => ^cwd}] = listed(id, 2)
+  end
+
+  defp load_client_session!(pid, id, session_id) do
+    call(id, "session/load", %{"sessionId" => session_id, "cwd" => "/tmp", "mcpServers" => []}, 1)
     assert %{"id" => 1, "result" => %{}} = client_reply!(pid)
   end
 
@@ -1130,7 +1407,20 @@ defmodule AgentLink.PlaneTest do
       {:send, json} ->
         send(parent, {:agent, Jason.decode!(json)})
         agent_loop(parent)
+
+      {:sync, from} ->
+        send(from, {:synced, self()})
+        agent_loop(parent)
     end
+  end
+
+  # Wait until the plane has handled earlier casts, then until the agent
+  # process has forwarded every message already in its mailbox.
+  defp sync_agent(name \\ "lab") do
+    _ = :sys.get_state(AgentLink.Plane)
+    pid = AgentLink.Registry.pid(name)
+    send(pid, {:sync, self()})
+    assert_receive {:synced, ^pid}, 500
   end
 
   defp spawn_client do
@@ -1154,7 +1444,16 @@ defmodule AgentLink.PlaneTest do
       {:send, json} ->
         send(parent, {self(), {:send, json}})
         client_loop(parent)
+
+      {:sync, from} ->
+        send(from, {:synced, self()})
+        client_loop(parent)
     end
+  end
+
+  defp sync_client(pid) do
+    send(pid, {:sync, self()})
+    assert_receive {:synced, ^pid}, 500
   end
 
   defp call(id, method, params, req_id) do
@@ -1239,8 +1538,8 @@ defmodule AgentLink.PlaneTest do
             }} = from_agent!()
   end
 
-  defp open_session!(id, session_id) do
-    call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, session_id)
+  defp open_session!(id, session_id, cwd \\ "/tmp") do
+    call(id, "session/new", %{"cwd" => cwd, "mcpServers" => []}, session_id)
     {:agent, %{"id" => agent_id}} = from_agent!()
 
     AgentLink.Plane.agent_frame(
@@ -1253,5 +1552,11 @@ defmodule AgentLink.PlaneTest do
     )
 
     assert %{"result" => %{"sessionId" => ^session_id}} = reply!()
+  end
+
+  defp listed(id, req_id) do
+    call(id, "session/list", %{}, req_id)
+    assert %{"id" => ^req_id, "result" => %{"sessions" => sessions}} = reply!()
+    sessions
   end
 end

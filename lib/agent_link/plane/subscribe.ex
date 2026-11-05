@@ -14,7 +14,8 @@ defmodule AgentLink.Plane.Subscribe do
   `{:subscription_down, client_id, session_id}` and the process exits with
   `:normal`. `start_link/1` links to the caller, and `:normal` leaves that
   caller running. `stop/1` also exits with `:normal`. `:owner` receives no message
-  from `stop/1`. The plane does not start these processes yet.
+  from `stop/1`. The session directory starts one when a client opens, loads,
+  or resumes a session.
   """
 
   @doc """

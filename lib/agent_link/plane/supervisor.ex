@@ -1,6 +1,6 @@
 defmodule AgentLink.Plane.Supervisor do
   @moduledoc """
-  The plane: the registry, the sockets, and the HTTP listener.
+  The plane: the registry, the session directory, the sockets, and the HTTP listener.
   An agent relay is not a child here, so one agent relay cannot take the plane down.
   """
 
@@ -18,6 +18,7 @@ defmodule AgentLink.Plane.Supervisor do
     Supervisor.init(
       [
         AgentLink.Registry,
+        AgentLink.Plane.Sessions,
         AgentLink.Plane,
         AgentLink.Setup.Watch,
         {Bandit, plug: AgentLink.Router, scheme: :http, port: port, ip: {127, 0, 0, 1}}

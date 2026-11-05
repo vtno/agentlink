@@ -29,6 +29,7 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :port, 18_096)
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
     assert Process.whereis(AgentLink.Plane)
+    assert Process.whereis(AgentLink.Plane.Sessions)
     assert Process.whereis(AgentLink.Registry)
     assert Process.whereis(AgentLink.Plane.Supervisor)
     refute Process.whereis(AgentLink.Relay.Agent)
@@ -60,6 +61,7 @@ defmodule AgentLink.ApplicationTest do
     assert_receive {:agent_opened, _agent, _cwd}
     assert Process.whereis(AgentLink.Relay.Agent)
     refute Process.whereis(AgentLink.Plane)
+    refute Process.whereis(AgentLink.Plane.Sessions)
     refute Process.whereis(AgentLink.Plane.Supervisor)
   end
 

@@ -13,6 +13,7 @@ defmodule AgentLink.RouterTest do
   setup do
     previous = Application.get_env(:agent_link, :master_token)
     start_supervised!(AgentLink.Registry)
+    start_supervised!(AgentLink.Plane.Sessions)
     start_supervised!(AgentLink.Plane)
 
     start_supervised!(

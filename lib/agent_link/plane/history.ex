@@ -1,7 +1,8 @@
 defmodule AgentLink.Plane.History do
   @moduledoc """
   The capped replay of one session. The history is one struct. The module
-  starts no process. The plane does not call it yet.
+  starts no process. The session process calls `append/2` when the plane
+  broadcasts a live update.
 
   `append/2` stores one inner `session/update` object. A `user_message_chunk`
   starts a turn. Updates that arrive before the first `user_message_chunk` are

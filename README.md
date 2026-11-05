@@ -231,7 +231,7 @@ The client sends ACP requests. The methods include `initialize`, `session/new`, 
 
 The plane forwards only the first `initialize` for a runtime. An `initialize` that arrives before the agent answers waits for that result. After the agent answers, a later `initialize` on that runtime receives the cached result. Each client keeps the `clientCapabilities` from its own `initialize`. The agent sees only the capabilities from the first `initialize`.
 
-The agent runs one `session/prompt` at a time. An agent request goes to the client that has the matching `session/prompt` or `session/load` in flight. The plane applies the capability rules below to that client. When no client matches, the plane answers the agent with JSON-RPC error -32000. The message is `no app is attached to this session`. When more than one client matches, the plane sends that same error.
+The agent runs one `session/prompt` at a time. An agent request goes to the client that has the matching `session/prompt` in flight. The plane applies the capability rules below to that client. When no client matches, the plane answers the agent with JSON-RPC error -32000. The message is `no app is attached to this session`. When more than one client matches, the plane sends that same error.
 
 The plane forwards an agent file or terminal request for that client only in the cases below.
 
@@ -241,7 +241,9 @@ The plane forwards an agent file or terminal request for that client only in the
 
 The plane does not forward any other method whose name starts with `fs/` or `terminal/`. Those refusals use JSON-RPC error -32601 and the message `client does not support this method`.
 
-The plane sends an agent notification that carries a `sessionId` to the clients on that runtime with that `sessionId`. During `session/load` for that session, the client whose `session/load` is in flight receives the notification instead. The plane sends an agent notification with no `sessionId` to every client on that runtime.
+The plane sends a live `session/update` with a binary `sessionId` and a map `update` to each client that has that session open. It calls `AgentLink.Plane.Sessions.broadcast/3`. A `session/update` with a binary `sessionId` whose `update` is not a map is dropped. The plane logs a warning and does not store that update. A client opens a session with `session/new`, `session/load`, or `session/resume`. `session/close` drops that client from that session. The session stays in the directory, so a later `session/load` still replays the stored updates. The plane sends a `session/update` with no `sessionId` to every client on that runtime.
+
+The plane answers `session/list` from the directory and does not forward it. A bad cursor is JSON-RPC error -32602 and the message `invalid cursor`. For a known session, the plane sends the replay and then answers `session/load` with an empty result. It does not forward `session/load`. An unknown session is JSON-RPC error -32002 and the message `session not found`. `session/resume` joins a known session and does not replay. `session/close` answers an empty result. A second `session/close` for that session answers an empty result again. The plane does not forward `session/close`.
 
 The plane answers a non-JSON text frame with JSON-RPC error -32700 and the message `parse error`.
 
