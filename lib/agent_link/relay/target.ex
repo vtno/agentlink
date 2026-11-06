@@ -2,7 +2,7 @@ defmodule AgentLink.Relay.Target do
   @moduledoc """
   Selects the target agent from the names that are online. The caller
   supplies those names. This module starts no process and defines no
-  Elixir behaviour. The client relay does not call `select/2` yet.
+  Elixir behaviour. `AgentLink.Relay.Client` calls `select/2`.
   """
 
   @doc """

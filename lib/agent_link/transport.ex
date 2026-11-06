@@ -29,7 +29,7 @@ defmodule AgentLink.Transport do
   A failed dial waits 500ms before the next one.
 
   `endpoint/2` is the URL parser both relays share. It is not a callback.
-  `AgentLink.Uplink` dials through this behaviour.
+  `AgentLink.Uplink` and `AgentLink.Relay.Client` dial through this behaviour.
   """
 
   @type endpoint :: {
