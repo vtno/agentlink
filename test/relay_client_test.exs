@@ -386,12 +386,29 @@ defmodule AgentLink.Relay.ClientTest do
     FakeStdio.refuse(:sys.get_state(client).stdio_term)
     deliver_down(client, %{"jsonrpc" => "2.0", "method" => "session/update"})
     assert_receive {:DOWN, ^ref, :process, ^client, {:shutdown, "stdio closed"}}
+  end
 
-    {_sup, client} = supervise()
+  test "a plane close after runtime/select holds the socket and stops" do
+    {sup, client} = supervise()
     ready_client(client)
+    transport = transport!(client)
+
+    # The transport is linked to the client. Drop that link so the stop
+    # does not take the transport down before the hold can be read.
+    :sys.replace_state(client, fn state ->
+      Process.unlink(state.transport_pid)
+      state
+    end)
+
     ref = Process.monitor(client)
-    FakeStdio.exit_status(:sys.get_state(client).stdio_term, 3)
-    assert_receive {:DOWN, ^ref, :process, ^client, {:shutdown, "stdio closed"}}
+    assert :ok = FakeTransport.disconnect(transport, 1006, "")
+    assert_receive {:DOWN, ^ref, :process, ^client, {:shutdown, "plane closed"}}
+    assert_not_restarted(sup)
+
+    socket = :sys.get_state(transport)
+    assert socket.held == true
+    assert socket.timer == nil
+    GenServer.stop(transport)
   end
 
   test "stopping the client relay closes stdio" do

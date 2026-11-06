@@ -3,8 +3,8 @@ defmodule AgentLink.FakeStdio do
   In-process `AgentLink.Stdio` for tests. No port.
 
   `emit/2` delivers bytes to the owner as `{pid, {:data, binary}}`. `eof/1`
-  delivers `{pid, :eof}`. `exit_status/2` delivers `{pid, {:exit_status, status}}`.
-  `written/1` is the iodata passed to `write/2`, oldest first, as binaries.
+  delivers `{pid, :eof}`. `written/1` is the iodata passed to `write/2`, oldest
+  first, as binaries.
   `refuse/1` makes the next `write/2` return `:closed`.
 
   This process traps exits. The owner dying does not stop it. `close/1` does,
@@ -50,11 +50,6 @@ defmodule AgentLink.FakeStdio do
   @doc "Deliver end of stdin to the owner."
   def eof(pid) when is_pid(pid), do: GenServer.call(pid, :eof)
 
-  @doc "Deliver an exit status to the owner."
-  def exit_status(pid, status) when is_pid(pid) and is_integer(status) do
-    GenServer.call(pid, {:exit_status, status})
-  end
-
   @impl true
   def handle_call({:write, _data}, _from, %__MODULE__{refuse: true} = state) do
     {:reply, :closed, state}
@@ -79,11 +74,6 @@ defmodule AgentLink.FakeStdio do
 
   def handle_call(:eof, _from, %__MODULE__{} = state) do
     send(state.owner, {self(), :eof})
-    {:reply, :ok, state}
-  end
-
-  def handle_call({:exit_status, status}, _from, %__MODULE__{} = state) do
-    send(state.owner, {self(), {:exit_status, status}})
     {:reply, :ok, state}
   end
 

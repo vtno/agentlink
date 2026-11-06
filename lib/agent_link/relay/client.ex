@@ -14,7 +14,8 @@ defmodule AgentLink.Relay.Client do
   `{:shutdown, message}`. `child_spec/1` uses `restart: :transient`, so a
   supervisor does not start it again. A closed plane socket while one of
   those requests is in flight sends that request again. The transport dials
-  again on its own.
+  again on its own. After `runtime/select` succeeds, a closed plane socket
+  calls `hold/1` and stops this process with `{:shutdown, "plane closed"}`.
 
   After `runtime/select` succeeds, each ACP message is copied unchanged,
   except an `initialize` result. That result sets
@@ -113,11 +114,6 @@ defmodule AgentLink.Relay.Client do
     shutdown("stdio closed", state)
   end
 
-  def handle_info({term, {:exit_status, status}}, %__MODULE__{stdio_term: term} = state) do
-    Logger.error("stdio closed status=#{status}")
-    {:stop, {:shutdown, "stdio closed"}, state}
-  end
-
   def handle_info({:from_plane, message}, %__MODULE__{} = state) when is_map(message) do
     case on_plane(state, message) do
       {:ok, state} -> {:noreply, state}
@@ -128,18 +124,18 @@ defmodule AgentLink.Relay.Client do
 
   # The request already left on the socket that closed. Send it again.
   # Messages still queued in the transport stay there until the next dial.
+  # After runtime/select, that subscription died with the old client id.
+  # hold/1 cancels the dial before it returns, then this process stops.
   def handle_info({:transport_closed, code, reason}, %__MODULE__{} = state)
       when is_integer(code) and is_binary(reason) do
     Logger.info("client relay plane socket closed code=#{code}")
 
-    state =
-      if state.phase == :copy do
-        state
-      else
-        send_pending(state)
-      end
-
-    {:noreply, state}
+    if state.phase == :copy do
+      :ok = state.transport.hold(state.transport_pid)
+      shutdown("plane closed", state)
+    else
+      {:noreply, send_pending(state)}
+    end
   end
 
   def handle_info(message, %__MODULE__{} = state) do
