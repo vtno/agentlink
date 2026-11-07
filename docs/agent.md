@@ -4,4 +4,6 @@
 
 `AgentLink.Agent` is that behaviour. A link's `program` is only the product name, such as `opencode`. The name does not choose the module.
 
+`AgentLink.Agent.Launch.load/1` reads `command` and `args` from the link file. The relay does not call `load/1`. `AgentLink.OpenCode` is still the production behaviour.
+
 For `session/new` and `session/load`, the relay fills a missing, null, or empty `cwd` in params with its workspace, `AgentLink.Paths.workdir()`, before the message reaches the agent. An explicit `cwd` passes through unchanged.
