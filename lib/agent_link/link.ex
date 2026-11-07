@@ -1,8 +1,16 @@
 defmodule AgentLink.Link do
   @moduledoc """
   The relay's link file. The uplink sends this name when it dials.
-  A missing file stops the relay. The file holds the name, the label, the program, and the plane URL.
+  A missing file stops the relay. This struct holds the name, the label,
+  the program, and the plane URL. `command` and `args` stay out of it.
   """
+
+  @type t :: %__MODULE__{
+          name: String.t(),
+          label: String.t(),
+          program: String.t(),
+          plane_url: String.t()
+        }
 
   defstruct name: "opencode",
             label: "this machine",
@@ -14,12 +22,21 @@ defmodule AgentLink.Link do
 
   @doc "Read the link file. An error tells the operator to create it."
   def read(path \\ nil) do
+    case read_object(path) do
+      {:ok, link, _object} -> {:ok, link}
+      {:error, message} -> {:error, message}
+    end
+  end
+
+  # `AgentLink.Agent.Launch.load/1` validates `command` and `args` from the
+  # same decoded object that builds the link. One read, one decode.
+  @doc false
+  @spec read_object(String.t() | nil) :: {:ok, t(), map()} | {:error, String.t()}
+  def read_object(path \\ nil) do
     path = path || path()
 
-    case File.read(path) do
-      {:ok, body} -> decode(path, body)
-      {:error, :enoent} -> {:error, missing(path)}
-      {:error, reason} -> {:error, "Could not read #{path}: #{inspect(reason)}\n"}
+    with {:ok, object} <- decode(path) do
+      {:ok, from_map(object), object}
     end
   end
 
@@ -39,9 +56,17 @@ defmodule AgentLink.Link do
 
   def slug(_), do: ""
 
-  defp decode(path, body) do
+  defp decode(path) do
+    case File.read(path) do
+      {:ok, body} -> decode_body(path, body)
+      {:error, :enoent} -> {:error, missing(path)}
+      {:error, reason} -> {:error, "Could not read #{path}: #{inspect(reason)}\n"}
+    end
+  end
+
+  defp decode_body(path, body) do
     case Jason.decode(body) do
-      {:ok, map} when is_map(map) -> {:ok, from_map(map)}
+      {:ok, object} when is_map(object) -> {:ok, object}
       _ -> {:error, "#{path} is not a JSON object.\n"}
     end
   end
