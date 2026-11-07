@@ -96,14 +96,15 @@ defmodule AgentLink.CLI do
   end
 
   defp options(rest) do
-    case OptionParser.parse(rest, strict: [port: :integer, token: :string, opencode_bin: :string]) do
-      {opts, [], []} -> {:ok, opts}
-      _ -> {:error, usage()}
-    end
+    strict_options(rest, port: :integer, token: :string, opencode_bin: :string)
   end
 
   defp connect_options(rest) do
-    case OptionParser.parse(rest, strict: [plane: :string, target: :string, token: :string]) do
+    strict_options(rest, plane: :string, target: :string, token: :string)
+  end
+
+  defp strict_options(rest, strict) do
+    case OptionParser.parse(rest, strict: strict) do
       {opts, [], []} -> {:ok, opts}
       _ -> {:error, usage()}
     end

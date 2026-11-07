@@ -28,7 +28,9 @@ defmodule AgentLink.Application do
   `AgentLink.Relay.Client.child_spec/1` sets `restart: :transient`. The
   supervisor's own stop exits with status 1. In the test environment,
   `:halt_listener` receives `{:connect_watching, pid}` after the watcher
-  monitors the client relay, and `{:connect_exit, code}` instead of halting.
+  monitors the client relay, `{:connect_supervisor, pid}` after the watcher
+  monitors `AgentLink.Supervisor`, and `{:connect_exit, code}` instead of
+  halting.
   """
 
   use Application
@@ -300,7 +302,9 @@ defmodule AgentLink.Application do
 
       {:supervisor, sup} ->
         drop_monitor(sup_ref)
-        watch_connect_client(listener, Process.monitor(sup), client_ref)
+        ref = Process.monitor(sup)
+        if is_pid(listener), do: send(listener, {:connect_supervisor, sup})
+        watch_connect_client(listener, ref, client_ref)
 
       :stop ->
         :ok
