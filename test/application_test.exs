@@ -33,6 +33,7 @@ defmodule AgentLink.ApplicationTest do
     assert Process.whereis(AgentLink.Registry)
     assert Process.whereis(AgentLink.Plane.Supervisor)
     refute Process.whereis(AgentLink.Relay.Agent)
+    refute_client_relay()
   end
 
   test "relay mode stops when the link file is missing" do
@@ -63,6 +64,7 @@ defmodule AgentLink.ApplicationTest do
     refute Process.whereis(AgentLink.Plane)
     refute Process.whereis(AgentLink.Plane.Sessions)
     refute Process.whereis(AgentLink.Plane.Supervisor)
+    refute_client_relay()
   end
 
   test "all mode starts both" do
@@ -71,6 +73,7 @@ defmodule AgentLink.ApplicationTest do
     assert Process.whereis(AgentLink.Relay.Agent)
     assert Process.whereis(AgentLink.Relay.Agent.Supervisor)
     assert plane_only?(AgentLink.Plane.Supervisor)
+    refute_client_relay()
   end
 
   test "an agent relay crash loop leaves the plane up" do
@@ -100,6 +103,11 @@ defmodule AgentLink.ApplicationTest do
     write_link()
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _cwd}
+  end
+
+  defp refute_client_relay do
+    ids = AgentLink.Supervisor |> Supervisor.which_children() |> Enum.map(&elem(&1, 0))
+    refute AgentLink.Relay.Client in ids
   end
 
   defp plane_only?(supervisor) do
