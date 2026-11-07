@@ -29,9 +29,10 @@ defmodule AgentLink.Agent.Process do
   A path that is absolute on this host is used unchanged. It is not passed
   to the finder. It is not expanded against `cwd` or the VM cwd. On Unix, a
   host-absolute path starts with `/`. On Windows, `:os.type/0` returns
-  `{:win32, _}` and a host-absolute path is a UNC path that starts with
-  `\\\\`, or a drive letter, a colon, and a slash. That slash may be `/` or
-  `\\`. `AgentLink.Agent.Launch` accepts a POSIX path, a UNC path, and a
+  `{:win32, _}` and a host-absolute path starts with two slashes, or with a
+  drive letter, a colon, and a slash. Each of those two slashes may be `/`
+  or `\\`. The slash after the colon may be `/` or `\\`. A single leading
+  slash is not absolute. `AgentLink.Agent.Launch` accepts a POSIX path, a UNC path, and a
   drive path on every host. `open/3` accepts only a path that is absolute
   on this host.
 
@@ -81,9 +82,8 @@ defmodule AgentLink.Agent.Process do
   Close `port` when it is open.
 
   Returns `:ok`. A second call also returns `:ok`. `close/1` closes the
-  port, which closes the child's stdin. The fixture writes `eof` and
-  halts. `close/1` does not reap a process tree. The fixture starts no
-  child process.
+  port, which closes the child's stdin. `close/1` does not reap a process
+  tree.
   """
   @spec close(term) :: :ok
   def close(port) do
@@ -123,7 +123,11 @@ defmodule AgentLink.Agent.Process do
     end
   end
 
-  defp windows_absolute?(<<"\\\\", _rest::binary>>), do: true
+  # `:filename.win32_pathtype/1` treats two leading slashes as absolute.
+  # Each slash may be `/` or `\`. One leading slash is not absolute.
+  defp windows_absolute?(<<sep1, sep2, _rest::binary>>)
+       when sep1 in [?/, ?\\] and sep2 in [?/, ?\\],
+       do: true
 
   defp windows_absolute?(<<letter, ":", sep, _rest::binary>>)
        when (letter in ?A..?Z or letter in ?a..?z) and sep in [?/, ?\\],
