@@ -31,7 +31,7 @@ defmodule AgentLink.Agent.Process do
   host-absolute path starts with `/`. On Windows, `:os.type/0` returns
   `{:win32, _}` and a host-absolute path starts with two slashes, or with a
   drive letter, a colon, and a slash. Each of those two slashes may be `/`
-  or `\\`. The slash after the colon may be `/` or `\\`. A single leading
+  or `\\`. The slash after the colon may be `/` or `\\`. On Windows, a single leading
   slash is not absolute. `AgentLink.Agent.Launch` accepts a POSIX path, a UNC path, and a
   drive path on every host. `open/3` accepts only a path that is absolute
   on this host.
