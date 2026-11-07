@@ -4,6 +4,16 @@ defmodule AgentLink.ApplicationTest.ClosedStdio do
   def close(_term), do: :ok
 end
 
+defmodule AgentLink.ApplicationTest.EofAtOpen do
+  def open(owner) when is_pid(owner) do
+    send(owner, {owner, :eof})
+    {:ok, owner}
+  end
+
+  def write(_term, _data), do: :ok
+  def close(_term), do: :ok
+end
+
 defmodule AgentLink.ApplicationTest do
   use ExUnit.Case, async: false
 
@@ -22,7 +32,8 @@ defmodule AgentLink.ApplicationTest do
       :config_env,
       :connect_transport,
       :connect_stdio,
-      :halt_listener
+      :halt_listener,
+      :connect_watcher
     ]
 
     connect_env = Map.new(connect_keys, &{&1, Application.get_env(:agent_link, &1)})
@@ -206,6 +217,20 @@ defmodule AgentLink.ApplicationTest do
                      "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"}}
 
     assert_receive {:connect_exit, 1}
+
+    assert [{AgentLink.Relay.Client, :undefined, :worker, [AgentLink.Relay.Client]}] =
+             Supervisor.which_children(sup)
+  end
+
+  test "stdin already closed when the client relay starts exits 0" do
+    root = connect_root()
+    Application.put_env(:agent_link, :halt_listener, self())
+    put_connect(root, %{}, "ws://plane/acp", "lab", "sekret")
+    Application.put_env(:agent_link, :connect_stdio, AgentLink.ApplicationTest.EofAtOpen)
+
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert_receive {:connect_exit, 0}
+    refute_received {:connect_exit, 1}
 
     assert [{AgentLink.Relay.Client, :undefined, :worker, [AgentLink.Relay.Client]}] =
              Supervisor.which_children(sup)
