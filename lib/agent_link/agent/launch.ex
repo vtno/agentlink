@@ -32,14 +32,16 @@ defmodule AgentLink.Agent.Launch do
   the trimmed string. A blank command is an error. A relative command is an
   error. `.` and `..` are relative. `./opencode`, `bin/kimi`, `.\\opencode`,
   `bin\\kimi`, and a drive-relative form such as `C:opencode` are relative.
+  A single leading backslash is relative. `\\opencode`,
+  `\\Users\\me\\kimi.exe`, and `\\` are relative.
 
-  A command is absolute when it starts with `/`, when it starts with `\\`,
-  or when it starts with a drive letter, a colon, and a slash. The slash
-  may be `/` or `\\`. Those are the absolute forms for the Linux, macOS,
-  and Windows targets this project builds. A bare name contains neither
-  `/` nor `\\`, and it is not a drive-relative form. `load/1` keeps an
-  absolute path or a bare name. It does not search `PATH`, and it does not
-  require the path to name a file that exists.
+  A command is absolute when it starts with `/`. A command is absolute
+  when it starts with `\\\\`. A command is absolute when it starts with a
+  drive letter, a colon, and a slash. That slash may be `/` or `\\`.
+  These forms cover Linux, macOS, and Windows. A bare name contains
+  neither `/` nor `\\`, and it is not a drive-relative form. `load/1`
+  keeps an absolute path or a bare name. It does not search `PATH`, and
+  it does not require the path to name a file that exists.
 
   `args` is required. It must be a list of strings. `[]` is valid. Each
   string is stored as written.
@@ -100,13 +102,14 @@ defmodule AgentLink.Agent.Launch do
   end
 
   # Linux, macOS, and Windows share this check. `Path.type/1` follows the host OS.
+  # One leading backslash is not absolute. Two leading backslashes are a UNC path.
   defp absolute?(<<letter, ":", sep, _rest::binary>>)
        when (letter in ?A..?Z or letter in ?a..?z) and sep in [?/, ?\\] do
     true
   end
 
   defp absolute?(<<"/", _rest::binary>>), do: true
-  defp absolute?(<<"\\", _rest::binary>>), do: true
+  defp absolute?(<<"\\\\", _rest::binary>>), do: true
   defp absolute?(_text), do: false
 
   defp bare?(text) do

@@ -69,7 +69,10 @@ defmodule AgentLink.Agent.LaunchTest do
       "C:bin\\kimi",
       ".",
       "..",
-      "~/bin/opencode"
+      "~/bin/opencode",
+      "\\opencode",
+      "\\Users\\me\\kimi.exe",
+      "\\"
     ]
 
     for command <- relatives do
@@ -161,8 +164,6 @@ defmodule AgentLink.Agent.LaunchTest do
       "C:/Program Files/kimi.exe",
       "c:/opencode.exe",
       "C:\\Program Files\\kimi.exe",
-      "\\opencode",
-      "\\Users\\me\\kimi.exe",
       "\\\\server\\share\\codex-acp.exe",
       "//server/share/codex-acp.exe"
     ]
