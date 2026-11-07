@@ -2,9 +2,10 @@ defmodule AgentLink.CLI do
   @moduledoc """
   The start command. No arguments runs the plane and the relay.
   `plane` is the plane alone. `relay` starts `AgentLink.Relay.Agent`.
+  `connect` starts `AgentLink.Relay.Client`.
   """
 
-  defstruct mode: :all, port: nil, token: nil, opencode_bin: nil
+  defstruct mode: :all, port: nil, token: nil, opencode_bin: nil, plane: nil, target: nil
 
   @doc "Read the command and store the mode, port, token, and OpenCode executable."
   def apply(argv \\ nil) do
@@ -52,6 +53,7 @@ defmodule AgentLink.CLI do
   def parse(["-h" | _]), do: {:ok, :help}
   def parse(["plane" | rest]), do: listen(rest, :plane)
   def parse(["relay" | rest]), do: relay(rest)
+  def parse(["connect" | rest]), do: connect(rest)
   def parse(["--" <> _ | _] = argv), do: listen(argv, :all)
   def parse(_argv), do: {:error, usage()}
 
@@ -61,6 +63,7 @@ defmodule AgentLink.CLI do
     agentlink [--port PORT] [--token TOKEN] [--opencode-bin PATH]
     agentlink plane [--port PORT] [--token TOKEN]
     agentlink relay --token TOKEN [--opencode-bin PATH]
+    agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
     """
   end
 
@@ -83,8 +86,24 @@ defmodule AgentLink.CLI do
     end
   end
 
+  defp connect(rest) do
+    with {:ok, opts} <- connect_options(rest),
+         {:ok, plane} <- optional_text(opts[:plane]),
+         {:ok, target} <- optional_text(opts[:target]),
+         {:ok, token} <- optional_text(opts[:token]) do
+      {:ok, %__MODULE__{mode: :connect, plane: plane, target: target, token: token}}
+    end
+  end
+
   defp options(rest) do
     case OptionParser.parse(rest, strict: [port: :integer, token: :string, opencode_bin: :string]) do
+      {opts, [], []} -> {:ok, opts}
+      _ -> {:error, usage()}
+    end
+  end
+
+  defp connect_options(rest) do
+    case OptionParser.parse(rest, strict: [plane: :string, target: :string, token: :string]) do
       {opts, [], []} -> {:ok, opts}
       _ -> {:error, usage()}
     end
@@ -107,9 +126,11 @@ defmodule AgentLink.CLI do
   defp required_token(token) when is_binary(token) and token != "", do: {:ok, token}
   defp required_token(_), do: {:error, "agentlink relay needs --token.\n" <> usage()}
 
-  defp optional_token(nil), do: {:ok, nil}
-  defp optional_token(""), do: {:error, usage()}
-  defp optional_token(token) when is_binary(token), do: {:ok, token}
+  defp optional_token(token), do: optional_text(token)
+
+  defp optional_text(nil), do: {:ok, nil}
+  defp optional_text(""), do: {:error, usage()}
+  defp optional_text(text) when is_binary(text), do: {:ok, text}
 
   defp optional_port(nil), do: {:ok, nil}
 
@@ -126,6 +147,14 @@ defmodule AgentLink.CLI do
     if File.exists?(expanded),
       do: {:ok, expanded},
       else: {:error, "opencode bin not found: #{expanded}\n" <> usage()}
+  end
+
+  defp store(%__MODULE__{mode: :connect, plane: plane, target: target, token: token}) do
+    Application.put_env(:agent_link, :mode, :connect)
+    Application.put_env(:agent_link, :connect_plane, plane)
+    Application.put_env(:agent_link, :connect_target, target)
+    Application.put_env(:agent_link, :connect_token, token)
+    :ok
   end
 
   defp store(%__MODULE__{mode: mode, port: port, token: token, opencode_bin: opencode_bin}) do

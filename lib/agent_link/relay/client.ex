@@ -24,7 +24,8 @@ defmodule AgentLink.Relay.Client do
   other capability stays. `session/list`, `session/load`, `session/resume`,
   and `session/close` are copied through. The plane answers them.
 
-  `AgentLink.Application` does not start this process.
+  `agentlink connect` starts this process. A missing token is rejected by
+  that command before `start_link/1`. This process still accepts no token.
   """
 
   use GenServer
