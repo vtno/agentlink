@@ -1,4 +1,24 @@
 defmodule AgentLink.Agent.ProcessTest do
+  @moduledoc """
+  Direct tests for `AgentLink.Agent.Process`.
+
+  The executable is the OTP runtime. On Unix the file is `erlexec`. On
+  Windows the file is `erl.exe`. The test compiles
+  `agentlink_process_fixture.erl` with `:compile.file/2`. The fixture
+  reads handshake lines from stdin. `ping`, `argv`, `cwd`, `env`, `echo`,
+  `stderr`, and `exit` each reply before the next line. The tests do not
+  call `Process.sleep/1`.
+
+  `{port, {:exit_status, 17}}` arrives while the port is open, and the os
+  pid is then gone. After `close/1`, the fixture sees stdin EOF, writes
+  `eof` to the stamp file, and exits. The test waits until that file
+  contains `eof` and the os pid is gone. A timer is not the success
+  condition.
+
+  These tests were run on Linux x86_64. macOS and Windows were not run.
+  The symlink cases use `File.ln_s!/2` and were run on Linux.
+  """
+
   use ExUnit.Case, async: false
 
   alias AgentLink.Agent.Launch
@@ -117,33 +137,42 @@ defmodule AgentLink.Agent.ProcessTest do
     File.write!(path, "not a program")
     File.chmod!(path, 0o644)
 
-    assert AgentProcess.open(self(), %Launch{command: path, args: []}, dir, refuse_finder(path)) ==
-             {:error, "could not open #{path}: :eacces"}
+    assert {:error, "could not open " <> rest} =
+             AgentProcess.open(self(), %Launch{command: path, args: []}, dir, refuse_finder(path))
+
+    assert String.starts_with?(rest, path <> ": ")
   end
 
-  test "a foreign or relative command is not executed", %{beam_dir: beam_dir, exe: exe} do
+  test "a command that is not absolute on this host is not executed", %{
+    beam_dir: beam_dir,
+    exe: exe
+  } do
+    vm_cwd = make_dir()
     launch_cwd = make_dir()
-    vm_cwd = File.cwd!()
-    stamp = Path.join(launch_cwd, "foreign-stamp")
-
-    for root <- [vm_cwd, launch_cwd], command <- foreign_commands() do
-      path = plant_trap(root, command, exe)
-      assert {:ok, %File.Stat{type: :regular}} = File.stat(path)
-    end
-
-    System.put_env("AGENTLINK_FIXTURE_STAMP", stamp)
+    stamp = Path.join(launch_cwd, "rejected-stamp")
+    previous = File.cwd!()
+    File.cd!(vm_cwd)
 
     try do
-      for command <- foreign_commands() do
+      for root <- [vm_cwd, launch_cwd], command <- rejected_commands() do
+        plant_trap(root, command, exe)
+      end
+
+      System.put_env("AGENTLINK_FIXTURE_STAMP", stamp)
+
+      for command <- rejected_commands() do
+        before = owned_ports()
         launch = %Launch{command: command, args: fixture_args(beam_dir, [])}
 
         assert AgentProcess.open(self(), launch, launch_cwd, refuse_finder(command)) ==
                  {:error, "#{command} is not an executable path on this host"}
 
         refute File.exists?(stamp)
+        assert owned_ports() == before
       end
     after
       System.delete_env("AGENTLINK_FIXTURE_STAMP")
+      File.cd!(previous)
     end
   end
 
@@ -270,13 +299,23 @@ defmodule AgentLink.Agent.ProcessTest do
     ["-noshell", "-pa", beam_dir, "-run", "agentlink_process_fixture", "start", "--" | plain]
   end
 
-  defp foreign_commands do
-    [
-      "C:\\agentlink-trap.exe",
-      "\\\\server\\share\\app.exe",
-      "D:/agentlink-trap.exe",
-      "./agentlink-trap"
-    ]
+  defp rejected_commands do
+    case :os.type() do
+      {:win32, _} ->
+        [
+          "/usr/bin/agentlink-trap",
+          "./agentlink-trap",
+          "subdir/agentlink-trap"
+        ]
+
+      _ ->
+        [
+          "C:\\agentlink-trap.exe",
+          "\\\\server\\share\\app.exe",
+          "D:/agentlink-trap.exe",
+          "./agentlink-trap"
+        ]
+    end
   end
 
   defp opened!(command, args, cwd, finder) do
@@ -395,22 +434,20 @@ defmodule AgentLink.Agent.ProcessTest do
   end
 
   defp plant_trap(root, command, exe) do
+    root = Path.expand(root)
     path = Path.expand(command, root)
-    File.mkdir_p!(Path.dirname(path))
-    File.rm(path)
-    File.ln_s!(exe, path)
 
-    on_exit(fn ->
-      File.rm_rf!(path)
-      parent = Path.dirname(path)
-      root = Path.expand(root)
+    if contained?(path, root) do
+      File.mkdir_p!(Path.dirname(path))
+      File.rm(path)
+      File.ln_s!(exe, path)
+      assert {:ok, %File.Stat{type: :regular}} = File.stat(path)
+    end
+  end
 
-      if parent != root and String.starts_with?(parent, root <> "/") do
-        File.rm_rf!(parent)
-      end
-    end)
-
-    path
+  defp contained?(path, root) do
+    relative = Path.relative_to(path, root)
+    relative not in [path, "."] and not String.starts_with?(relative, "..")
   end
 
   defp refuse_finder(command) do

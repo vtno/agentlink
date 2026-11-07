@@ -47,8 +47,8 @@ defmodule AgentLink.Agent.Process do
   `:exit_status`, `:use_stdio`, `{:args, args}`, and `{:cd, cwd}`. `:env`
   is omitted, so the port inherits the VM environment. `:stderr_to_stdout`
   is omitted. `ErlangError` and `ArgumentError` from `Port.open/2` are
-  returned as an error that names the path and the Erlang reason, such as
-  `:eacces`.
+  returned as an error that names the path and the reason from the spawn.
+  The OS decides that reason.
   """
   @spec open(pid, Launch.t(), String.t(), (String.t() -> String.t() | nil)) ::
           {:ok, port} | {:error, String.t()}
@@ -80,8 +80,10 @@ defmodule AgentLink.Agent.Process do
   @doc """
   Close `port` when it is open.
 
-  Returns `:ok`. A second call also returns `:ok`. This closes the port.
-  It does not reap a process tree.
+  Returns `:ok`. A second call also returns `:ok`. `close/1` closes the
+  port, which closes the child's stdin. The fixture writes `eof` and
+  halts. `close/1` does not reap a process tree. The fixture starts no
+  child process.
   """
   @spec close(term) :: :ok
   def close(port) do
