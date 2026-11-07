@@ -12,7 +12,7 @@ ACP messages are JSON-RPC. The agent writes one JSON object per line on its stan
 
 You need Elixir 1.17 or a later 1.x release. To run an agent, you also need the `opencode` binary. AgentLink looks for `opencode` on `PATH`, then at `$HOME/.local/bin/opencode`.
 
-`agentlink plane` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
+`agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
 
 Create `$HOME/.agentlink/agent.link.json` with the object below when you start a relay.
 
@@ -38,9 +38,10 @@ See [Link file](#link-file) for the field rules.
 mix run --no-halt -- --port 8090 --token 'the-token'
 mix run --no-halt -- plane --port 8090
 mix run --no-halt -- relay --token 'the-token' --opencode-bin /usr/local/bin/opencode
+mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 ```
 
-`plane` starts the plane alone. `relay` starts the relay alone. See [Command line](#command-line) for the flags.
+`plane` starts the plane alone. `relay` starts the relay alone. `connect` starts the client relay alone. See [Command line](#command-line) for the flags.
 
 A plane with no token creates one for that process and prints it. Look for `AgentLink created a token for this process. Pass the same --token to start again.` AgentLink also prints `agentlink relay --token '…'`. AgentLink does not write the token to disk. Pass the same `--token` the next time you start the plane.
 
@@ -66,6 +67,7 @@ To build one binary, set `BURRITO_TARGET` to `linux`, `macos`, or `windows`.
 agentlink
 agentlink plane --port 8090
 agentlink relay --token 'the-token'
+agentlink connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 ```
 
 ## Reach a plane on another machine
@@ -134,6 +136,7 @@ The listener is plain `ws://` on `127.0.0.1`. The token identifies the caller. T
 agentlink [--port PORT] [--token TOKEN] [--opencode-bin PATH]
 agentlink plane [--port PORT] [--token TOKEN]
 agentlink relay --token TOKEN [--opencode-bin PATH]
+agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 ```
 
 `agentlink` with no arguments starts the plane and the relay.
@@ -143,6 +146,12 @@ agentlink relay --token TOKEN [--opencode-bin PATH]
 `--token` is the token. `agentlink relay` requires `--token`. Without it, AgentLink prints `agentlink relay needs --token.` A plane with no token creates one. See [Security model](#security-model).
 
 `--opencode-bin` is the OpenCode executable. AgentLink rejects the flag when that file does not exist. `agentlink plane` rejects the flag and prints `agentlink plane does not run opencode.`
+
+`agentlink connect` starts the client relay. The editor runs that command as its ACP agent over stdio. The command does not start the plane or the agent relay, and it does not read the link file.
+
+`--plane` is the plane WebSocket URL. `--target` is the agent name. `--token` is the bearer token. For each value, a flag that has text wins over the environment variable, and an environment variable that has text wins over the file. A blank value is unset. The variables are `AGENTLINK_PLANE`, `AGENTLINK_TARGET`, and `AGENTLINK_TOKEN`. The config file is `$HOME/.agentlink/config`, a JSON object with `plane` and an optional `target`. The token file is `$HOME/.agentlink/token`. Its mode is 0600 or tighter. A `token` key in the config file is an error.
+
+A URL with no path uses `/acp`. When the plane URL is missing, the error begins `agentlink connect needs a plane URL.` The command exits with status 1. When the token is missing, the error begins `agentlink connect needs a token.` The command exits with status 1. When no single online agent can be selected, the client relay stops and the command exits with status 1. The client relay's message lists the online agents. When none are online, the message says that no agent is online. When stdin closes, including when it is already closed as the client relay starts, the command exits with status 0.
 
 `--help` and `-h` print the usage and exit with status 0. A bad command exits with status 1.
 

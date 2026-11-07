@@ -1,3 +1,19 @@
+defmodule AgentLink.ApplicationTest.ClosedStdio do
+  def open(_owner), do: {:error, :closed}
+  def write(_term, _data), do: :closed
+  def close(_term), do: :ok
+end
+
+defmodule AgentLink.ApplicationTest.EofAtOpen do
+  def open(owner) when is_pid(owner) do
+    send(owner, {owner, :eof})
+    {:ok, owner}
+  end
+
+  def write(_term, _data), do: :ok
+  def close(_term), do: :ok
+end
+
 defmodule AgentLink.ApplicationTest do
   use ExUnit.Case, async: false
 
@@ -8,12 +24,27 @@ defmodule AgentLink.ApplicationTest do
       {Application.get_env(:agent_link, :mode), Application.get_env(:agent_link, :port),
        Application.get_env(:agent_link, :link_path)}
 
+    connect_keys = [
+      :connect_plane,
+      :connect_target,
+      :connect_token,
+      :config_root,
+      :config_env,
+      :connect_transport,
+      :connect_stdio,
+      :halt_listener,
+      :connect_watcher
+    ]
+
+    connect_env = Map.new(connect_keys, &{&1, Application.get_env(:agent_link, &1)})
+
     on_exit(fn ->
       Application.delete_env(:agent_link, :agent_listener)
       {mode, port, link_path} = previous
       if mode, do: Application.put_env(:agent_link, :mode, mode)
       if port, do: Application.put_env(:agent_link, :port, port)
       restore_link(link_path)
+      Enum.each(connect_env, fn {key, value} -> AgentLink.TestHelpers.restore(key, value) end)
 
       if pid = Process.whereis(AgentLink.Supervisor) do
         Process.exit(pid, :kill)
@@ -74,6 +105,171 @@ defmodule AgentLink.ApplicationTest do
     assert Process.whereis(AgentLink.Relay.Agent.Supervisor)
     assert plane_only?(AgentLink.Plane.Supervisor)
     refute_client_relay()
+  end
+
+  test "connect mode starts only the client relay from the config files" do
+    root = connect_root()
+    write_connect_config!(root, %{"plane" => "ws://from-file/acp", "target" => "from-file"})
+    write_connect_token!(root, "from-file\n")
+    put_connect(root, %{}, nil, nil, nil)
+
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+
+    assert [{AgentLink.Relay.Client, client, :worker, [AgentLink.Relay.Client]}] =
+             Supervisor.which_children(sup)
+
+    refute Process.whereis(AgentLink.Plane)
+    refute Process.whereis(AgentLink.Plane.Sessions)
+    refute Process.whereis(AgentLink.Plane.Supervisor)
+    refute Process.whereis(AgentLink.Relay.Agent)
+    refute Process.whereis(AgentLink.Relay.Agent.Supervisor)
+    refute Process.whereis(AgentLink.Registry)
+
+    transport = :sys.get_state(:sys.get_state(client).transport_pid)
+    assert transport.url == "ws://from-file/acp"
+    assert transport.default_path == "/acp"
+    assert transport.headers == [{"authorization", "Bearer from-file"}]
+
+    deliver_runtimes(client, ["from-file"])
+    :sys.get_state(client)
+    assert List.last(sent(client))["params"] == %{"name" => "from-file"}
+  end
+
+  test "connect mode prefers a flag over the environment and the environment over the file" do
+    root = connect_root()
+    write_connect_config!(root, %{"plane" => "ws://from-file/acp", "target" => "from-file"})
+    write_connect_token!(root, "from-file")
+
+    put_connect(
+      root,
+      %{
+        "AGENTLINK_PLANE" => "ws://from-env/acp",
+        "AGENTLINK_TARGET" => "from-env",
+        "AGENTLINK_TOKEN" => "from-env"
+      },
+      "ws://from-flag/acp",
+      nil,
+      nil
+    )
+
+    assert {:ok, _sup} = AgentLink.Application.start(:normal, [])
+    client = connect_client!()
+    transport = :sys.get_state(:sys.get_state(client).transport_pid)
+    assert transport.url == "ws://from-flag/acp"
+    assert transport.headers == [{"authorization", "Bearer from-env"}]
+
+    deliver_runtimes(client, ["from-file", "from-env"])
+    :sys.get_state(client)
+    assert List.last(sent(client))["params"] == %{"name" => "from-env"}
+  end
+
+  test "connect mode exits when the plane URL or the token is missing" do
+    root = connect_root()
+
+    put_connect(root, %{}, nil, nil, "sekret")
+    assert {:error, message} = AgentLink.Application.start(:normal, [])
+    assert message =~ "needs a plane URL"
+    assert message =~ Path.join(root, "config")
+    refute Process.whereis(AgentLink.Supervisor)
+
+    put_connect(root, %{}, "ws://plane/acp", nil, nil)
+    assert {:error, message} = AgentLink.Application.start(:normal, [])
+    assert message =~ "needs a token"
+    assert message =~ Path.join(root, "token")
+    refute Process.whereis(AgentLink.Relay.Client)
+  end
+
+  test "connect mode exits when the token file cannot be read" do
+    root = connect_root()
+    write_connect_config!(root, %{"plane" => "ws://plane/acp"})
+    write_connect_token!(root, "sekret", 0o644)
+    put_connect(root, %{}, nil, nil, nil)
+
+    assert {:error, message} = AgentLink.Application.start(:normal, [])
+    assert message =~ "0644"
+    assert message =~ Path.join(root, "token")
+    refute Process.whereis(AgentLink.Supervisor)
+  end
+
+  test "connect mode exits when stdio fails to open" do
+    root = connect_root()
+    put_connect(root, %{}, "ws://plane/acp", "lab", "sekret")
+    Application.put_env(:agent_link, :connect_stdio, AgentLink.ApplicationTest.ClosedStdio)
+
+    assert {:error, "stdio open failed: :closed"} = AgentLink.Application.start(:normal, [])
+    refute Process.whereis(AgentLink.Supervisor)
+  end
+
+  test "a bad target exits 1 and the client relay stays down" do
+    root = connect_root()
+    Application.put_env(:agent_link, :halt_listener, self())
+    put_connect(root, %{}, "ws://plane/acp", "missing", "sekret")
+
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert_receive {:connect_watching, _watcher}
+    client = connect_client!(sup)
+    ref = Process.monitor(client)
+
+    deliver_runtimes(client, ["lab"])
+
+    assert_receive {:DOWN, ^ref, :process, ^client,
+                    {:shutdown,
+                     "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"}}
+
+    assert_receive {:connect_exit, 1}
+
+    assert [{AgentLink.Relay.Client, :undefined, :worker, [AgentLink.Relay.Client]}] =
+             Supervisor.which_children(sup)
+  end
+
+  test "stdin already closed when the client relay starts exits 0" do
+    root = connect_root()
+    Application.put_env(:agent_link, :halt_listener, self())
+    put_connect(root, %{}, "ws://plane/acp", "lab", "sekret")
+    Application.put_env(:agent_link, :connect_stdio, AgentLink.ApplicationTest.EofAtOpen)
+
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert_receive {:connect_exit, 0}
+    refute_received {:connect_exit, 1}
+
+    assert [{AgentLink.Relay.Client, :undefined, :worker, [AgentLink.Relay.Client]}] =
+             Supervisor.which_children(sup)
+  end
+
+  test "stdin closing exits 0" do
+    root = connect_root()
+    Application.put_env(:agent_link, :halt_listener, self())
+    put_connect(root, %{}, "ws://plane/acp", "lab", "sekret")
+
+    assert {:ok, _sup} = AgentLink.Application.start(:normal, [])
+    assert_receive {:connect_watching, _watcher}
+    client = connect_client!()
+    :ok = AgentLink.FakeStdio.eof(:sys.get_state(client).stdio_term)
+
+    assert_receive {:connect_exit, 0}
+    refute_received {:connect_exit, 1}
+  end
+
+  test "a client relay crash starts another, and a later bad target exits 1" do
+    root = connect_root()
+    Application.put_env(:agent_link, :halt_listener, self())
+    put_connect(root, %{}, "ws://plane/acp", "missing", "sekret")
+
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert_receive {:connect_watching, _watcher}
+    client = connect_client!(sup)
+    ref = Process.monitor(client)
+    Process.exit(client, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^client, :killed}
+
+    assert_receive {:connect_watching, _watcher}
+    refute_received {:connect_exit, _}
+    new_client = connect_client!(sup)
+    assert is_pid(new_client)
+    assert new_client != client
+
+    deliver_runtimes(new_client, ["lab"])
+    assert_receive {:connect_exit, 1}
   end
 
   test "an agent relay crash loop leaves the plane up" do
@@ -148,6 +344,67 @@ defmodule AgentLink.ApplicationTest do
       nil ->
         flunk("agent relay did not start")
     end
+  end
+
+  defp connect_root do
+    path =
+      Path.join(System.tmp_dir!(), "agentlink-connect-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(path)
+    on_exit(fn -> File.rm_rf(path) end)
+    path
+  end
+
+  defp write_connect_config!(root, map) do
+    File.write!(Path.join(root, "config"), Jason.encode!(map))
+  end
+
+  defp write_connect_token!(root, body, mode \\ 0o600) do
+    path = Path.join(root, "token")
+    File.rm(path)
+    File.write!(path, body)
+    File.chmod!(path, mode)
+  end
+
+  defp put_connect(root, env, plane, target, token) do
+    Application.put_env(:agent_link, :mode, :connect)
+    Application.put_env(:agent_link, :config_root, root)
+    Application.put_env(:agent_link, :config_env, env)
+    Application.put_env(:agent_link, :connect_plane, plane)
+    Application.put_env(:agent_link, :connect_target, target)
+    Application.put_env(:agent_link, :connect_token, token)
+    Application.put_env(:agent_link, :connect_transport, AgentLink.FakeTransport)
+    Application.put_env(:agent_link, :connect_stdio, AgentLink.FakeStdio)
+
+    Application.put_env(
+      :agent_link,
+      :link_path,
+      Path.join(root, "missing-#{System.unique_integer([:positive])}.json")
+    )
+  end
+
+  defp connect_client!(sup \\ AgentLink.Supervisor) do
+    [{AgentLink.Relay.Client, client, :worker, [AgentLink.Relay.Client]}] =
+      Supervisor.which_children(sup)
+
+    client
+  end
+
+  defp deliver_runtimes(client, names) do
+    rows = Enum.map(names, &%{"name" => &1, "label" => &1, "program" => "opencode"})
+
+    message = %{
+      "jsonrpc" => "2.0",
+      "id" => "agentlink:runtime/list",
+      "result" => %{"runtimes" => rows}
+    }
+
+    assert :ok = AgentLink.FakeTransport.deliver(:sys.get_state(client).transport_pid, message)
+    :ok
+  end
+
+  defp sent(client) do
+    AgentLink.FakeTransport.sent(:sys.get_state(client).transport_pid)
   end
 
   defp write_link do

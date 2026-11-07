@@ -92,6 +92,95 @@ defmodule AgentLink.CLITest do
     AgentLink.TestHelpers.restore(:mode, mode)
   end
 
+  test "connect takes a plane, a target, and a token" do
+    assert {:ok,
+            %AgentLink.CLI{
+              mode: :connect,
+              plane: "wss://plane.example/acp",
+              target: "lab",
+              token: "sekret",
+              port: nil,
+              opencode_bin: nil
+            }} =
+             AgentLink.CLI.parse([
+               "connect",
+               "--token",
+               "sekret",
+               "--plane",
+               "wss://plane.example/acp",
+               "--target",
+               "lab"
+             ])
+
+    assert {:ok, %AgentLink.CLI{mode: :connect, plane: nil, target: nil, token: nil}} =
+             AgentLink.CLI.parse(["connect"])
+  end
+
+  test "connect rejects a blank flag, a port, and an extra argument" do
+    assert {:error, message} = AgentLink.CLI.parse(["connect", "--token", ""])
+    assert message =~ "agentlink connect"
+
+    assert {:error, message} = AgentLink.CLI.parse(["connect", "--plane", ""])
+    assert message =~ "agentlink connect"
+
+    assert {:error, message} = AgentLink.CLI.parse(["connect", "--target", ""])
+    assert message =~ "agentlink connect"
+
+    assert {:error, message} =
+             AgentLink.CLI.parse(["connect", "--port", "1", "--token", "sekret"])
+
+    assert message =~ "agentlink connect"
+
+    assert {:error, message} =
+             AgentLink.CLI.parse(["connect", "--opencode-bin", "opencode", "--token", "sekret"])
+
+    assert message =~ "agentlink connect"
+    assert {:error, message} = AgentLink.CLI.parse(["connect", "extra"])
+    assert message =~ "agentlink connect"
+  end
+
+  test "apply stores connect flags and leaves the master token" do
+    previous = %{
+      mode: Application.get_env(:agent_link, :mode),
+      token: Application.get_env(:agent_link, :master_token),
+      plane: Application.get_env(:agent_link, :connect_plane),
+      target: Application.get_env(:agent_link, :connect_target),
+      connect_token: Application.get_env(:agent_link, :connect_token)
+    }
+
+    Application.put_env(:agent_link, :connect_plane, "stale")
+    Application.put_env(:agent_link, :master_token, "plane-token")
+
+    assert :ok =
+             AgentLink.CLI.apply([
+               "connect",
+               "--plane",
+               "ws://plane.example/acp",
+               "--target",
+               "lab",
+               "--token",
+               "sekret"
+             ])
+
+    assert Application.get_env(:agent_link, :mode) == :connect
+    assert Application.get_env(:agent_link, :connect_plane) == "ws://plane.example/acp"
+    assert Application.get_env(:agent_link, :connect_target) == "lab"
+    assert Application.get_env(:agent_link, :connect_token) == "sekret"
+    assert Application.get_env(:agent_link, :master_token) == "plane-token"
+
+    assert :ok = AgentLink.CLI.apply(["connect"])
+    assert Application.get_env(:agent_link, :connect_plane) == nil
+    assert Application.get_env(:agent_link, :connect_target) == nil
+    assert Application.get_env(:agent_link, :connect_token) == nil
+    assert Application.get_env(:agent_link, :master_token) == "plane-token"
+
+    AgentLink.TestHelpers.restore(:mode, previous.mode)
+    AgentLink.TestHelpers.restore(:master_token, previous.token)
+    AgentLink.TestHelpers.restore(:connect_plane, previous.plane)
+    AgentLink.TestHelpers.restore(:connect_target, previous.target)
+    AgentLink.TestHelpers.restore(:connect_token, previous.connect_token)
+  end
+
   test "apply stores the command" do
     previous = %{
       mode: Application.get_env(:agent_link, :mode),
