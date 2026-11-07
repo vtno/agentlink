@@ -14,6 +14,96 @@ defmodule AgentLink.ApplicationTest.EofAtOpen do
   def close(_term), do: :ok
 end
 
+defmodule AgentLink.ApplicationTest.ObservedTransport do
+  @moduledoc """
+  `AgentLink.Transport` for connect boot tests. Calls go to
+  `AgentLink.FakeTransport`.
+
+  `start_link/1` sends `{:connect_dial, pid, view}` to the
+  `:connect_observer` pid. `view` is the `:url`, `:headers`, and
+  `:default_path` the client relay passed. `send_message/2` sends
+  `{:connect_plane, message}` after `message` is in `FakeTransport.sent/1`.
+  """
+
+  @behaviour AgentLink.Transport
+
+  @impl true
+  def start_link(opts) do
+    case AgentLink.FakeTransport.start_link(opts) do
+      {:ok, pid} = ok ->
+        send(observer(), {:connect_dial, pid, dial(opts)})
+        ok
+
+      other ->
+        other
+    end
+  end
+
+  @impl true
+  def send_message(pid, message) when is_map(message) do
+    :ok = AgentLink.FakeTransport.send_message(pid, message)
+    # `sent/1` runs after the cast. A message still queued is not on the wire.
+    if message in AgentLink.FakeTransport.sent(pid),
+      do: send(observer(), {:connect_plane, message})
+
+    :ok
+  end
+
+  @impl true
+  def hold(pid), do: AgentLink.FakeTransport.hold(pid)
+
+  @impl true
+  def reconnect(pid, url) when is_binary(url), do: AgentLink.FakeTransport.reconnect(pid, url)
+
+  @impl true
+  def preface(pid, message) when is_map(message) or is_nil(message) do
+    AgentLink.FakeTransport.preface(pid, message)
+  end
+
+  @impl true
+  def url(pid, url) when is_binary(url), do: AgentLink.FakeTransport.url(pid, url)
+
+  defp dial(opts) do
+    %{
+      url: Keyword.fetch!(opts, :url),
+      headers: Keyword.fetch!(opts, :headers),
+      default_path: Keyword.fetch!(opts, :default_path)
+    }
+  end
+
+  defp observer, do: Application.fetch_env!(:agent_link, :connect_observer)
+end
+
+defmodule AgentLink.ApplicationTest.ObservedStdio do
+  @moduledoc """
+  `AgentLink.Stdio` for connect boot tests. Calls go to `AgentLink.FakeStdio`.
+
+  `open/1` sends `{:connect_stdio, pid}` to the `:connect_observer` pid.
+  """
+
+  @behaviour AgentLink.Stdio
+
+  @impl true
+  def open(owner) when is_pid(owner) do
+    case AgentLink.FakeStdio.open(owner) do
+      {:ok, pid} = ok ->
+        send(observer(), {:connect_stdio, pid})
+        ok
+
+      other ->
+        other
+    end
+  end
+
+  @impl true
+  def write(term, data), do: AgentLink.FakeStdio.write(term, data)
+
+  @impl true
+  def close(term), do: AgentLink.FakeStdio.close(term)
+
+  defp observer, do: Application.fetch_env!(:agent_link, :connect_observer)
+end
+
 defmodule AgentLink.ApplicationTest do
   use ExUnit.Case, async: false
 
@@ -32,6 +122,7 @@ defmodule AgentLink.ApplicationTest do
       :config_env,
       :connect_transport,
       :connect_stdio,
+      :connect_observer,
       :halt_listener,
       :connect_watcher
     ]
@@ -115,7 +206,7 @@ defmodule AgentLink.ApplicationTest do
 
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
 
-    assert [{AgentLink.Relay.Client, client, :worker, [AgentLink.Relay.Client]}] =
+    assert [{AgentLink.Relay.Client, _client, :worker, [AgentLink.Relay.Client]}] =
              Supervisor.which_children(sup)
 
     refute Process.whereis(AgentLink.Plane)
@@ -125,14 +216,13 @@ defmodule AgentLink.ApplicationTest do
     refute Process.whereis(AgentLink.Relay.Agent.Supervisor)
     refute Process.whereis(AgentLink.Registry)
 
-    transport = :sys.get_state(:sys.get_state(client).transport_pid)
-    assert transport.url == "ws://from-file/acp"
-    assert transport.default_path == "/acp"
-    assert transport.headers == [{"authorization", "Bearer from-file"}]
+    {transport, dial} = connect_dial!()
+    assert dial.url == "ws://from-file/acp"
+    assert dial.default_path == "/acp"
+    assert dial.headers == [{"authorization", "Bearer from-file"}]
 
-    deliver_runtimes(client, ["from-file"])
-    :sys.get_state(client)
-    assert List.last(sent(client))["params"] == %{"name" => "from-file"}
+    deliver_runtimes(transport, ["from-file"])
+    assert_runtime_select("from-file")
   end
 
   test "connect mode prefers a flag over the environment and the environment over the file" do
@@ -153,14 +243,12 @@ defmodule AgentLink.ApplicationTest do
     )
 
     assert {:ok, _sup} = AgentLink.Application.start(:normal, [])
-    client = connect_client!()
-    transport = :sys.get_state(:sys.get_state(client).transport_pid)
-    assert transport.url == "ws://from-flag/acp"
-    assert transport.headers == [{"authorization", "Bearer from-env"}]
+    {transport, dial} = connect_dial!()
+    assert dial.url == "ws://from-flag/acp"
+    assert dial.headers == [{"authorization", "Bearer from-env"}]
 
-    deliver_runtimes(client, ["from-file", "from-env"])
-    :sys.get_state(client)
-    assert List.last(sent(client))["params"] == %{"name" => "from-env"}
+    deliver_runtimes(transport, ["from-file", "from-env"])
+    assert_runtime_select("from-env")
   end
 
   test "connect mode exits when the plane URL or the token is missing" do
@@ -207,10 +295,11 @@ defmodule AgentLink.ApplicationTest do
 
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
     assert_receive {:connect_watching, _watcher}
+    {transport, _dial} = connect_dial!()
     client = connect_client!(sup)
     ref = Process.monitor(client)
 
-    deliver_runtimes(client, ["lab"])
+    deliver_runtimes(transport, ["lab"])
 
     assert_receive {:DOWN, ^ref, :process, ^client,
                     {:shutdown,
@@ -243,8 +332,8 @@ defmodule AgentLink.ApplicationTest do
 
     assert {:ok, _sup} = AgentLink.Application.start(:normal, [])
     assert_receive {:connect_watching, _watcher}
-    client = connect_client!()
-    :ok = AgentLink.FakeStdio.eof(:sys.get_state(client).stdio_term)
+    stdio = connect_stdio!()
+    :ok = AgentLink.FakeStdio.eof(stdio)
 
     assert_receive {:connect_exit, 0}
     refute_received {:connect_exit, 1}
@@ -257,6 +346,7 @@ defmodule AgentLink.ApplicationTest do
 
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
     assert_receive {:connect_watching, _watcher}
+    {_transport, _dial} = connect_dial!()
     client = connect_client!(sup)
     ref = Process.monitor(client)
     Process.exit(client, :kill)
@@ -264,12 +354,30 @@ defmodule AgentLink.ApplicationTest do
 
     assert_receive {:connect_watching, _watcher}
     refute_received {:connect_exit, _}
+    {transport, _dial} = connect_dial!()
     new_client = connect_client!(sup)
     assert is_pid(new_client)
     assert new_client != client
 
-    deliver_runtimes(new_client, ["lab"])
+    deliver_runtimes(transport, ["lab"])
     assert_receive {:connect_exit, 1}
+  end
+
+  test "AgentLink.Supervisor dying exits 1" do
+    root = connect_root()
+    Application.put_env(:agent_link, :halt_listener, self())
+    put_connect(root, %{}, "ws://plane/acp", "lab", "sekret")
+
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert_receive {:connect_watching, _watcher}
+    assert_receive {:connect_supervisor, ^sup}
+    refute_received {:connect_exit, _}
+
+    ref = Process.monitor(sup)
+    Process.exit(sup, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^sup, :killed}
+    assert_receive {:connect_exit, 1}
+    refute_received {:connect_exit, 0}
   end
 
   test "an agent relay crash loop leaves the plane up" do
@@ -373,8 +481,15 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :connect_plane, plane)
     Application.put_env(:agent_link, :connect_target, target)
     Application.put_env(:agent_link, :connect_token, token)
-    Application.put_env(:agent_link, :connect_transport, AgentLink.FakeTransport)
-    Application.put_env(:agent_link, :connect_stdio, AgentLink.FakeStdio)
+
+    Application.put_env(
+      :agent_link,
+      :connect_transport,
+      AgentLink.ApplicationTest.ObservedTransport
+    )
+
+    Application.put_env(:agent_link, :connect_stdio, AgentLink.ApplicationTest.ObservedStdio)
+    Application.put_env(:agent_link, :connect_observer, self())
 
     Application.put_env(
       :agent_link,
@@ -383,14 +498,29 @@ defmodule AgentLink.ApplicationTest do
     )
   end
 
-  defp connect_client!(sup \\ AgentLink.Supervisor) do
+  defp connect_client!(sup) do
     [{AgentLink.Relay.Client, client, :worker, [AgentLink.Relay.Client]}] =
       Supervisor.which_children(sup)
 
     client
   end
 
-  defp deliver_runtimes(client, names) do
+  defp connect_dial! do
+    assert_receive {:connect_dial, transport, dial}
+    {transport, dial}
+  end
+
+  defp connect_stdio! do
+    assert_receive {:connect_stdio, stdio}
+    stdio
+  end
+
+  defp assert_runtime_select(name) do
+    assert_receive {:connect_plane,
+                    %{"id" => "agentlink:runtime/select", "params" => %{"name" => ^name}}}
+  end
+
+  defp deliver_runtimes(transport, names) do
     rows = Enum.map(names, &%{"name" => &1, "label" => &1, "program" => "opencode"})
 
     message = %{
@@ -399,12 +529,7 @@ defmodule AgentLink.ApplicationTest do
       "result" => %{"runtimes" => rows}
     }
 
-    assert :ok = AgentLink.FakeTransport.deliver(:sys.get_state(client).transport_pid, message)
-    :ok
-  end
-
-  defp sent(client) do
-    AgentLink.FakeTransport.sent(:sys.get_state(client).transport_pid)
+    assert :ok = AgentLink.FakeTransport.deliver(transport, message)
   end
 
   defp write_link do
