@@ -26,14 +26,6 @@ defmodule AgentLink.Paths do
   @doc "Workspace path before the application config overrides it."
   def default_workdir, do: Path.join(root(), "workspace")
 
-  @doc "OpenCode executable before the application config overrides it."
-  def default_opencode_bin do
-    System.find_executable("opencode") || Path.join(System.user_home!(), ".local/bin/opencode")
-  end
-
   @doc "Workspace the agent relay opens the agent in."
   def workdir, do: Application.get_env(:agent_link, :workdir) || default_workdir()
-
-  @doc "OpenCode executable. `AgentLink.OpenCode` runs it."
-  def opencode_bin, do: Application.get_env(:agent_link, :opencode_bin) || default_opencode_bin()
 end

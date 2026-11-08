@@ -5,9 +5,9 @@ defmodule AgentLink.CLI do
   `connect` starts `AgentLink.Relay.Client`.
   """
 
-  defstruct mode: :all, port: nil, token: nil, opencode_bin: nil, plane: nil, target: nil
+  defstruct mode: :all, port: nil, token: nil, plane: nil, target: nil
 
-  @doc "Read the command and store the mode, port, token, and OpenCode executable."
+  @doc "Read the command and store the mode, the port, and the token."
   def apply(argv \\ nil) do
     argv = argv || argv_from_launch()
 
@@ -60,29 +60,26 @@ defmodule AgentLink.CLI do
   @doc "The commands this binary accepts."
   def usage do
     """
-    agentlink [--port PORT] [--token TOKEN] [--opencode-bin PATH]
+    agentlink [--port PORT] [--token TOKEN]
     agentlink plane [--port PORT] [--token TOKEN]
-    agentlink relay --token TOKEN [--opencode-bin PATH]
+    agentlink relay --token TOKEN
     agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
     """
   end
 
   defp listen(rest, mode) do
     with {:ok, opts} <- options(rest),
-         :ok <- plane_bin(mode, opts),
          {:ok, port} <- optional_port(opts[:port]),
-         {:ok, token} <- optional_token(opts[:token]),
-         {:ok, bin} <- optional_bin(opts[:opencode_bin]) do
-      {:ok, %__MODULE__{mode: mode, port: port, token: token, opencode_bin: bin}}
+         {:ok, token} <- optional_token(opts[:token]) do
+      {:ok, %__MODULE__{mode: mode, port: port, token: token}}
     end
   end
 
   defp relay(rest) do
     with {:ok, opts} <- options(rest),
          :ok <- no_port(opts),
-         {:ok, token} <- required_token(opts[:token]),
-         {:ok, bin} <- optional_bin(opts[:opencode_bin]) do
-      {:ok, %__MODULE__{mode: :relay, token: token, opencode_bin: bin}}
+         {:ok, token} <- required_token(opts[:token]) do
+      {:ok, %__MODULE__{mode: :relay, token: token}}
     end
   end
 
@@ -96,7 +93,7 @@ defmodule AgentLink.CLI do
   end
 
   defp options(rest) do
-    strict_options(rest, port: :integer, token: :string, opencode_bin: :string)
+    strict_options(rest, port: :integer, token: :string)
   end
 
   defp connect_options(rest) do
@@ -109,14 +106,6 @@ defmodule AgentLink.CLI do
       _ -> {:error, usage()}
     end
   end
-
-  defp plane_bin(:plane, opts) do
-    if Keyword.has_key?(opts, :opencode_bin),
-      do: {:error, "agentlink plane does not run opencode.\n" <> usage()},
-      else: :ok
-  end
-
-  defp plane_bin(_mode, _opts), do: :ok
 
   defp no_port(opts) do
     if Keyword.has_key?(opts, :port),
@@ -139,17 +128,6 @@ defmodule AgentLink.CLI do
 
   defp optional_port(_port), do: {:error, "port must be from 1 to 65535.\n" <> usage()}
 
-  defp optional_bin(nil), do: {:ok, nil}
-  defp optional_bin(""), do: {:error, usage()}
-
-  defp optional_bin(path) when is_binary(path) do
-    expanded = Path.expand(path)
-
-    if File.exists?(expanded),
-      do: {:ok, expanded},
-      else: {:error, "opencode bin not found: #{expanded}\n" <> usage()}
-  end
-
   defp store(%__MODULE__{mode: :connect, plane: plane, target: target, token: token}) do
     Application.put_env(:agent_link, :mode, :connect)
     Application.put_env(:agent_link, :connect_plane, plane)
@@ -158,7 +136,7 @@ defmodule AgentLink.CLI do
     :ok
   end
 
-  defp store(%__MODULE__{mode: mode, port: port, token: token, opencode_bin: opencode_bin}) do
+  defp store(%__MODULE__{mode: mode, port: port, token: token}) do
     Application.put_env(:agent_link, :mode, mode)
 
     if port do
@@ -167,7 +145,6 @@ defmodule AgentLink.CLI do
     end
 
     if token, do: Application.put_env(:agent_link, :master_token, token)
-    if opencode_bin, do: Application.put_env(:agent_link, :opencode_bin, opencode_bin)
     :ok
   end
 end

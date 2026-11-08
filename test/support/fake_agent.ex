@@ -6,11 +6,11 @@ defmodule AgentLink.FakeAgent do
   defstruct [:owner, refuse: false]
 
   @impl true
-  def open(owner, cwd) do
+  def open(owner, launch, cwd) do
     {:ok, pid} = GenServer.start_link(__MODULE__, owner)
 
     if listener = Application.get_env(:agent_link, :agent_listener),
-      do: send(listener, {:agent_opened, pid, cwd})
+      do: send(listener, {:agent_opened, pid, launch, cwd})
 
     {:ok, pid}
   end

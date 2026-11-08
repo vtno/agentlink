@@ -93,7 +93,9 @@ defmodule AgentLink.Link do
       "name": "opencode",
       "label": "this machine",
       "program": "opencode",
-      "plane_url": "#{AgentLink.Paths.plane_url()}"
+      "plane_url": "#{AgentLink.Paths.plane_url()}",
+      "command": "opencode",
+      "args": ["acp"]
     }
     """
   end

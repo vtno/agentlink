@@ -105,18 +105,16 @@ defmodule AgentLink.OpenCodeLiveTest do
     File.mkdir_p!(Path.dirname(link))
     File.mkdir_p!(page_dir)
     File.write!(Path.join(page_dir, "opencode.json"), model_config())
-    File.write!(link, link_json())
-
-    opencode = System.get_env("OPENCODE_BIN") || AgentLink.Paths.default_opencode_bin()
-    unless File.exists?(opencode), do: flunk("opencode not found: #{opencode}")
+    opencode = System.get_env("OPENCODE_BIN") || System.find_executable("opencode")
+    unless is_binary(opencode) and File.exists?(opencode), do: flunk("opencode not found")
+    File.write!(link, link_json(opencode))
 
     port =
       Port.open({:spawn_executable, bin}, [
         :binary,
         :exit_status,
         :stderr_to_stdout,
-        {:args,
-         ["--port", Integer.to_string(@port), "--token", "live-token", "--opencode-bin", opencode]},
+        {:args, ["--port", Integer.to_string(@port), "--token", "live-token"]},
         {:env, binary_env(home)}
       ])
 
@@ -134,8 +132,15 @@ defmodule AgentLink.OpenCodeLiveTest do
     ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"})
   end
 
-  defp link_json do
-    ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"})
+  defp link_json(opencode) do
+    Jason.encode!(%{
+      "name" => "opencode",
+      "label" => "this machine",
+      "program" => "opencode",
+      "plane_url" => "ws://127.0.0.1:#{@port}/agent",
+      "command" => opencode,
+      "args" => ["acp"]
+    })
   end
 
   defp binary_env(home) do

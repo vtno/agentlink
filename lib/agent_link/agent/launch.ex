@@ -3,9 +3,9 @@ defmodule AgentLink.Agent.Launch do
   Raw `command` and `args` from the link file.
 
   `load/1` reads that file once. It returns the `AgentLink.Link` built from
-  the decoded object and an `AgentLink.Agent.Launch`. Production startup
-  calls `AgentLink.Link.read/1` and does not call `load/1`. The relay still
-  opens `AgentLink.OpenCode`.
+  the decoded object and an `AgentLink.Agent.Launch`. `AgentLink.Relay.Agent`
+  calls `load/1` once in each `init/1`. The link is the uplink's initial
+  snapshot. The launch is the command and the args.
 
   `load/1` does not look up an executable and does not start a process.
   """
