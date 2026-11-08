@@ -155,14 +155,8 @@ defmodule AgentLink.OpenCodeLiveTest do
   end
 
   defp stop_wrapper(port) when is_port(port) do
-    case Port.info(port, :os_pid) do
-      {:os_pid, pid} -> System.cmd("kill", ["-TERM", Integer.to_string(pid)])
-      _ -> :ok
-    end
-
-    Port.close(port)
-  catch
-    _, _ -> :ok
+    AgentLink.OwnedStop.stop_port(port)
+    :ok
   end
 
   defp stop_wrapper(_), do: :ok
