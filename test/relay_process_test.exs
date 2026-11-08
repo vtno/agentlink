@@ -156,10 +156,29 @@ defmodule AgentLink.Relay.ProcessTest do
     assert os_alive?(os_pid)
     assert length(hellos()) == 1
 
+    assert :closed =
+             FakeTransport.deliver(transport(), %{
+               "method" => "session/prompt",
+               "params" => %{"text" => "while-down"}
+             })
+
+    :ok = FakeTransport.complete_dial(transport())
+    :sys.get_state(transport())
+    assert length(hellos()) == 2
+    assert :sys.get_state(transport()).url == "ws://127.0.0.1:1/agent"
+    assert port_os_pid() == os_pid
+    assert os_alive?(os_pid)
+
+    resumed = %{"method" => "session/prompt", "params" => %{"text" => "after-reconnect"}}
+    deliver!(resumed)
+    assert resumed in await_sent(fn messages -> resumed in messages end)
+    refute Enum.any?(sent(), &(get_in(&1, ["params", "text"]) == "while-down"))
+    assert port_os_pid() == os_pid
+
     write_link!(link, exe, beam_dir, @plain, %{"plane_url" => "ws://127.0.0.1:9/agent"})
     watch!(uplink)
     assert :sys.get_state(transport()).url == "ws://127.0.0.1:9/agent"
-    assert length(hellos()) == 2
+    assert length(hellos()) == 3
     assert port_os_pid() == os_pid
     again = await_probe!()
     assert again["os_pid"] == first["os_pid"]
@@ -167,7 +186,7 @@ defmodule AgentLink.Relay.ProcessTest do
 
     write_link!(link, exe, beam_dir, @replaced, %{"plane_url" => "ws://127.0.0.1:9/agent"})
     watch!(uplink)
-    assert length(hellos()) == 2
+    assert length(hellos()) == 3
     assert :sys.get_state(transport()).url == "ws://127.0.0.1:9/agent"
     assert port_os_pid() == os_pid
     held = await_probe!()

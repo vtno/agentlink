@@ -236,6 +236,8 @@ defmodule AgentLink.Relay.AgentTest do
       spawn(fn ->
         # `File.read/1` blocks in the file server until this writer closes.
         # `:prim_file` writes without that server, so the read can finish.
+        # The second open waits until that read has returned. Opening it
+        # earlier can append `second` onto the bytes of the first read.
         serve = fn body ->
           {:ok, fd} = :prim_file.open(String.to_charlist(fifo), [:write, :binary])
           :ok = :prim_file.write(fd, body)
@@ -243,7 +245,10 @@ defmodule AgentLink.Relay.AgentTest do
         end
 
         serve.(snapshot_body("first"))
-        serve.(snapshot_body("second"))
+
+        receive do
+          :second -> serve.(snapshot_body("second"))
+        end
       end)
 
     on_exit(fn ->
@@ -275,7 +280,8 @@ defmodule AgentLink.Relay.AgentTest do
     assert hello["params"]["name"] == "first"
     assert hello["params"]["label"] == "first"
     assert hello["params"]["program"] == "metadata"
-    assert Process.alive?(writer)
+    send(writer, :second)
+    assert :ok = await_blocked_open!(writer)
   end
 
   test "an uplink start failure closes the agent and returns that reason" do
@@ -361,6 +367,24 @@ defmodule AgentLink.Relay.AgentTest do
   defp uplink_outbox do
     %{transport_pid: pid} = :sys.get_state(AgentLink.Uplink)
     :sys.get_state(pid).outbox
+  end
+
+  defp await_blocked_open!(writer) do
+    receive do
+    after
+      0 ->
+        case Process.info(writer, :current_stacktrace) do
+          {:current_stacktrace, stack} ->
+            if Enum.any?(stack, &match?({:prim_file, :open, 2, _}, &1)) do
+              :ok
+            else
+              await_blocked_open!(writer)
+            end
+
+          nil ->
+            flunk("the second link read consumed the next payload")
+        end
+    end
   end
 
   defp stop(name) do

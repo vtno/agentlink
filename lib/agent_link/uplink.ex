@@ -42,9 +42,9 @@ defmodule AgentLink.Uplink do
   `:owner`, `:url`, `:default_path`, and `:preface`. `:watch_interval` is
   milliseconds between reads of the link file, default 1_000. `nil` does not
   schedule those reads. `:link` is an `AgentLink.Link` from the caller. When
-  `:link` is set, `init/1` does not read the link file. When `:link` is
-  omitted, `init/1` calls `AgentLink.Link.read/1`. A watch and a non-parking
-  close still call `AgentLink.Link.read/1`.
+  `:link` is set, this process uses that link as its first snapshot. When
+  `:link` is omitted, this process calls `AgentLink.Link.read/1` at startup.
+  A watch and a non-parking close still call `AgentLink.Link.read/1`.
   """
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

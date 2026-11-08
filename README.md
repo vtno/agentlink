@@ -183,7 +183,9 @@ The plane returns status 401 and the body `unauthorized` when it rejects the tok
 
 `AgentLink.Link` reads `$HOME/.agentlink/agent.link.json`. The relay starts when that file exists, is a JSON object, and includes `command` and `args`. `agentlink plane` does not read the file.
 
-If the file is deleted after startup, the uplink stops. The relay supervisor restarts the relay. The relay supervisor stops after 5 restarts in 20 seconds. A changed `command` or `args` is read on that next start. A launch that `init/1` cannot open counts toward the same 5 restarts. In `all` mode the relay supervisor is transient, so the plane keeps running. In `relay` mode `AgentLink.Relay.Agent` is a child of the application supervisor. When that supervisor stops, the node stops.
+When the file is present and only `command` or `args` change, the running child and the current uplink stay as they are. The next start of the relay reads the new `command` and `args`. An automatic restart is one of those starts.
+
+When the file is missing, the uplink stops. The relay supervisor starts the relay again. That start fails because the file is missing. The supervisor stops after 5 restarts in 20 seconds. A start that cannot open the `command` counts toward those 5 restarts. In `all` mode the relay supervisor is transient, so the plane keeps running. In `relay` mode `AgentLink.Relay.Agent` is a child of the application supervisor. When that supervisor stops, the node stops.
 
 The object holds `name`, `label`, `program`, `plane_url`, `command`, and `args`. `AgentLink.Link` keeps `name`, `label`, `program`, and `plane_url`. `AgentLink.Agent.Launch` keeps `command` and `args`.
 

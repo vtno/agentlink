@@ -4,10 +4,10 @@ defmodule AgentLink.Relay.Agent do
 
   Stdout is ACP JSONL. `AgentLink.Frame` splits it. The agent is linked to
   this process: when it exits, this process stops and its supervisor starts
-  another one. Each `init/1` creates the workspace, then calls
+  another one. Each start creates the workspace, then calls
   `AgentLink.Agent.Launch.load/1` once. That call returns the link and the
   launch. The link is the uplink's initial snapshot. The launch is passed
-  to `open/3`. A later `init/1` reads the file again. The launch is not a
+  to `open/3`. The next start reads the file again. The launch is not a
   supervisor child argument. The module comes from `:agent_link,
   :agent_module`. The default is `AgentLink.Agent.Process`.
 
@@ -33,8 +33,8 @@ defmodule AgentLink.Relay.Agent do
 
   `:transport` defaults to `AgentLink.Transport.WebSocket`. `:transport_opts`
   defaults to `[]`. `:watch_interval` defaults to `1_000`. `nil` does not
-  schedule link-file reads. The launch comes from `AgentLink.Agent.Launch.load/1`
-  inside `init/1`, not from these options.
+  schedule link-file reads. This process reads the launch with
+  `AgentLink.Agent.Launch.load/1` when it starts. These options are not the launch.
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
