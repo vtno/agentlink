@@ -1,22 +1,136 @@
 defmodule AgentLink.OwnedStopTest do
   use ExUnit.Case, async: false
 
-  test "SIGTERM to a launcher pid leaves the child it started" do
-    assert {:unix, :linux} = :os.type()
+  @moduledoc """
+  Linux tests read `/proc` and spawn processes. They are skipped when
+  `:os.type/0` is not `{:unix, :linux}`. That skip is not a claim that
+  `AgentLink.OwnedStop` stops a process tree on macOS or Windows.
+  """
+
+  @linux_skip if(match?({:unix, :linux}, :os.type()),
+                do: false,
+                else: "OwnedStop reads /proc starttime. It was run on Linux only."
+              )
+
+  @tag skip: @linux_skip
+  test "SIGTERM leaves the recorded child, and stop kills that child" do
     fixture = start_fixture!()
+    unrelated = start_unrelated!()
 
     System.cmd("kill", ["-TERM", Integer.to_string(fixture.parent)], stderr_to_stdout: true)
     await_dead!(fixture.parent)
     assert AgentLink.OwnedStop.descendants(fixture.parent) == []
     assert running?(fixture.child)
 
-    System.cmd("kill", ["-KILL", Integer.to_string(fixture.child)], stderr_to_stdout: true)
-    await_dead!(fixture.child)
+    signaled = AgentLink.OwnedStop.stop(fixture.owned)
+    assert Enum.any?(signaled, &(&1.pid == fixture.child))
+    refute Enum.any?(signaled, &(&1.pid == unrelated.pid))
+    refute running?(fixture.child)
+    assert AgentLink.OwnedStop.stop(fixture.owned) == []
+    assert running?(unrelated.pid)
   end
 
-  test "stop_os_pid kills the child after its port owner exits" do
-    assert {:unix, :linux} = :os.type()
+  @tag skip: @linux_skip
+  test "stop kills the child after its port owner exits" do
     unrelated = start_unrelated!()
+    fixture = start_owner!()
+
+    send(fixture.owner, :exit)
+    await_exit!(fixture.owner)
+
+    assert Port.info(fixture.port, :os_pid) == nil
+    assert running?(fixture.child)
+
+    signaled = AgentLink.OwnedStop.stop(fixture.owned)
+    assert Enum.any?(signaled, &(&1.pid == fixture.launcher))
+    assert Enum.any?(signaled, &(&1.pid == fixture.child))
+    refute Enum.any?(signaled, &(&1.pid == unrelated.pid))
+    refute running?(fixture.launcher)
+    refute running?(fixture.child)
+    assert AgentLink.OwnedStop.stop(fixture.owned) == []
+    assert running?(unrelated.pid)
+  end
+
+  @tag skip: @linux_skip
+  test "release stops the owner and the child when the body never signals the owner" do
+    unrelated = start_unrelated!()
+    fixture = start_owner!()
+
+    assert Process.alive?(fixture.owner)
+    assert running?(fixture.child)
+
+    release(fixture)
+    refute Process.alive?(fixture.owner)
+    refute running?(fixture.child)
+    assert AgentLink.OwnedStop.stop(fixture.owned) == []
+    assert running?(unrelated.pid)
+  end
+
+  test "parse_stat reads starttime from field 22" do
+    fields = [
+      "S",
+      "1",
+      "10",
+      "10",
+      "0",
+      "-1",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "20",
+      "0",
+      "1",
+      "0",
+      "0",
+      "555"
+    ]
+
+    assert Enum.at(fields, 19) == "555"
+    stat = "10 (a) b) " <> Enum.join(fields, " ")
+
+    assert {:ok, %{pid: 10, ppid: 1, state: "S", starttime: 555}} =
+             AgentLink.OwnedStop.parse_stat(stat)
+  end
+
+  test "select ignores a reused pid and keeps a reparented child" do
+    captured = [
+      %{pid: 10, starttime: 100},
+      %{pid: 11, starttime: 200}
+    ]
+
+    reused = %{
+      10 => %{pid: 10, starttime: 999, ppid: 1, state: "S"},
+      12 => %{pid: 12, starttime: 1000, ppid: 10, state: "S"},
+      11 => %{pid: 11, starttime: 200, ppid: 1, state: "S"}
+    }
+
+    assert [%{pid: 11, starttime: 200}] = AgentLink.OwnedStop.select(captured, reused)
+
+    living = %{
+      10 => %{pid: 10, starttime: 100, ppid: 1, state: "S"},
+      12 => %{pid: 12, starttime: 300, ppid: 10, state: "S"}
+    }
+
+    assert MapSet.new([
+             %{pid: 10, starttime: 100},
+             %{pid: 12, starttime: 300}
+           ]) == MapSet.new(AgentLink.OwnedStop.select([%{pid: 10, starttime: 100}], living))
+  end
+
+  test "confirm_gone raises when the recorded process is still present" do
+    target = %{pid: 10, starttime: 100}
+
+    assert_raise RuntimeError, ~r/pid=10 recorded_starttime=100/, fn ->
+      AgentLink.OwnedStop.confirm_gone([target], 2, fn ^target -> true end)
+    end
+  end
+
+  defp start_fixture! do
     dir = Path.join(System.tmp_dir!(), "agentlink-owned-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     script = Path.join(dir, "launcher.py")
@@ -24,6 +138,37 @@ defmodule AgentLink.OwnedStopTest do
     child_file = Path.join(dir, "child")
     File.write!(script, launcher_script())
 
+    port =
+      Port.open({:spawn_executable, System.find_executable("python3")}, [
+        :binary,
+        :exit_status,
+        {:args, [script, parent_file, child_file]}
+      ])
+
+    parent = read_pid!(parent_file)
+    child = read_pid!(child_file)
+
+    owned =
+      case AgentLink.OwnedStop.capture(parent) do
+        {:ok, owned} -> owned
+        :error -> flunk("could not read /proc starttime for #{parent}")
+      end
+
+    on_exit(fn ->
+      AgentLink.OwnedStop.stop(owned)
+      File.rm_rf(dir)
+    end)
+
+    %{port: port, parent: parent, child: child, owned: owned, dir: dir}
+  end
+
+  defp start_owner! do
+    dir = Path.join(System.tmp_dir!(), "agentlink-owned-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    script = Path.join(dir, "launcher.py")
+    parent_file = Path.join(dir, "parent")
+    child_file = Path.join(dir, "child")
+    File.write!(script, launcher_script())
     parent = self()
 
     owner =
@@ -43,72 +188,27 @@ defmodule AgentLink.OwnedStopTest do
         end
       end)
 
+    on_exit(fn -> send(owner, :exit) end)
     {port, launcher} = await_started!()
     child = read_pid!(child_file)
-    send(owner, :exit)
-    await_exit!(owner)
 
-    assert Port.info(port, :os_pid) == nil
-    assert running?(child)
-
-    pids = AgentLink.OwnedStop.stop_os_pid(launcher)
-    assert launcher in pids
-    assert child in pids
-    refute unrelated.pid in pids
-    refute running?(launcher)
-    refute running?(child)
-    assert running?(unrelated.pid)
-
-    System.cmd("kill", ["-KILL", Integer.to_string(unrelated.pid)], stderr_to_stdout: true)
-    await_dead!(unrelated.pid)
-    File.rm_rf(dir)
-  end
-
-  test "stop_port kills that child and leaves an unrelated process" do
-    assert {:unix, :linux} = :os.type()
-    fixture = start_fixture!()
-    unrelated = start_unrelated!()
-
-    pids = AgentLink.OwnedStop.stop_port(fixture.port)
-
-    assert fixture.parent in pids
-    assert fixture.child in pids
-    refute unrelated.pid in pids
-    refute running?(fixture.parent)
-    refute running?(fixture.child)
-    assert running?(unrelated.pid)
-
-    System.cmd("kill", ["-KILL", Integer.to_string(unrelated.pid)], stderr_to_stdout: true)
-    await_dead!(unrelated.pid)
-  end
-
-  defp start_fixture! do
-    dir = Path.join(System.tmp_dir!(), "agentlink-owned-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    script = Path.join(dir, "launcher.py")
-    parent_file = Path.join(dir, "parent")
-    child_file = Path.join(dir, "child")
-    File.write!(script, launcher_script())
-
-    port =
-      Port.open({:spawn_executable, System.find_executable("python3")}, [
-        :binary,
-        :exit_status,
-        {:args, [script, parent_file, child_file]}
-      ])
-
-    on_exit(fn ->
-      for path <- [parent_file, child_file],
-          pid <- List.wrap(read_pid(path)) do
-        AgentLink.OwnedStop.stop_os_pid(pid)
+    owned =
+      case AgentLink.OwnedStop.capture(launcher) do
+        {:ok, owned} -> owned
+        :error -> flunk("could not read /proc starttime for #{launcher}")
       end
 
-      File.rm_rf(dir)
+    on_exit(fn ->
+      release(%{owner: owner, owned: owned, dir: dir})
     end)
 
-    parent = read_pid!(parent_file)
-    child = read_pid!(child_file)
-    %{port: port, parent: parent, child: child, dir: dir}
+    %{port: port, owner: owner, launcher: launcher, child: child, owned: owned, dir: dir}
+  end
+
+  defp release(fixture) do
+    if is_pid(fixture.owner) and Process.alive?(fixture.owner), do: send(fixture.owner, :exit)
+    AgentLink.OwnedStop.stop(fixture.owned)
+    File.rm_rf(fixture.dir)
   end
 
   defp start_unrelated! do
@@ -125,16 +225,21 @@ defmodule AgentLink.OwnedStopTest do
         {:args, [script, pid_file]}
       ])
 
-    on_exit(fn ->
-      if pid = read_pid(pid_file) do
-        System.cmd("kill", ["-KILL", Integer.to_string(pid)], stderr_to_stdout: true)
+    pid = read_pid!(pid_file)
+
+    owned =
+      case AgentLink.OwnedStop.capture(pid) do
+        {:ok, owned} -> owned
+        :error -> flunk("could not read /proc starttime for #{pid}")
       end
 
+    on_exit(fn ->
+      AgentLink.OwnedStop.stop(owned)
       if Port.info(port), do: Port.close(port)
       File.rm_rf(dir)
     end)
 
-    %{port: port, pid: read_pid!(pid_file)}
+    %{port: port, pid: pid, owned: owned}
   end
 
   defp launcher_script do
@@ -228,14 +333,10 @@ defmodule AgentLink.OwnedStopTest do
   defp running?(pid) do
     case File.read("/proc/#{pid}/stat") do
       {:ok, stat} ->
-        case :binary.matches(stat, ") ") do
-          [] ->
-            true
-
-          matches ->
-            {pos, _} = List.last(matches)
-            rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
-            not String.starts_with?(rest, "Z ")
+        case AgentLink.OwnedStop.parse_stat(stat) do
+          {:ok, %{state: "Z"}} -> false
+          {:ok, _} -> true
+          :error -> true
         end
 
       _ ->

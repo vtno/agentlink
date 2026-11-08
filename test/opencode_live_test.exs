@@ -10,16 +10,30 @@ defmodule AgentLink.OpenCodeLiveTest do
     {port, page_dir} = start_binary(System.fetch_env!("AGENTLINK_BIN"), dir)
     {:os_pid, os_pid} = Port.info(port, :os_pid)
 
-    on_exit(fn ->
-      AgentLink.OwnedStop.stop_os_pid(os_pid)
-      File.rm_rf(dir)
-    end)
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    owned =
+      case AgentLink.OwnedStop.capture(os_pid) do
+        {:ok, owned} ->
+          owned
+
+        :error ->
+          flunk("could not read /proc starttime for launcher pid #{os_pid}")
+      end
+
+    on_exit(fn -> AgentLink.OwnedStop.stop(owned) end)
 
     try do
       assert :ok = wait_runtime()
       request_page(page_dir)
     after
-      stop_wrapper(port)
+      AgentLink.OwnedStop.stop(owned)
+
+      try do
+        Port.close(port)
+      catch
+        _, _ -> :ok
+      end
     end
   end
 
@@ -156,13 +170,6 @@ defmodule AgentLink.OpenCodeLiveTest do
     |> Map.put_new("XDG_STATE_HOME", Path.join(real_home, ".local/state"))
     |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)
   end
-
-  defp stop_wrapper(port) when is_port(port) do
-    AgentLink.OwnedStop.stop_port(port)
-    :ok
-  end
-
-  defp stop_wrapper(_), do: :ok
 
   defp find_html(dir) do
     case Path.wildcard(Path.join(dir, "**/*.html")) do
