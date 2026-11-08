@@ -2,6 +2,7 @@ defmodule AgentLink.OpenCodeLiveTest do
   use ExUnit.Case, async: false
 
   @port 18_099
+  @model "xai/grok-4.20-0309-non-reasoning"
 
   @tag :wrapped
   @tag timeout: 240_000
@@ -66,12 +67,15 @@ defmodule AgentLink.OpenCodeLiveTest do
                "mcpServers" => []
              })
 
-    _ =
-      AgentLink.LiveClient.request(client, "session/set_config_option", %{
-        "sessionId" => session_id,
-        "configId" => "model",
-        "value" => "xai/grok-4.20-0309-non-reasoning"
-      })
+    assert {:ok, %{"result" => %{"configOptions" => options}}} =
+             AgentLink.LiveClient.request(client, "session/set_config_option", %{
+               "sessionId" => session_id,
+               "configId" => "model",
+               "value" => @model
+             })
+
+    assert %{"id" => "model", "currentValue" => @model} =
+             Enum.find(options, &(&1["id"] == "model"))
 
     assert {:ok, %{"result" => %{"stopReason" => "end_turn"}}} =
              AgentLink.LiveClient.request(
@@ -146,7 +150,7 @@ defmodule AgentLink.OpenCodeLiveTest do
   end
 
   defp model_config do
-    ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"})
+    Jason.encode!(%{"$schema" => "https://opencode.ai/config.json", "model" => @model})
   end
 
   defp link_json(opencode) do
@@ -165,9 +169,9 @@ defmodule AgentLink.OpenCodeLiveTest do
 
     System.get_env()
     |> Map.put("HOME", home)
-    |> Map.put_new("XDG_DATA_HOME", Path.join(real_home, ".local/share"))
-    |> Map.put_new("XDG_CONFIG_HOME", Path.join(real_home, ".config"))
-    |> Map.put_new("XDG_STATE_HOME", Path.join(real_home, ".local/state"))
+    |> Map.put("XDG_DATA_HOME", Path.join(real_home, ".local/share"))
+    |> Map.put("XDG_CONFIG_HOME", Path.join(real_home, ".config"))
+    |> Map.put("XDG_STATE_HOME", Path.join(real_home, ".local/state"))
     |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)
   end
 
