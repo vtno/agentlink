@@ -14,6 +14,56 @@ defmodule AgentLink.OwnedStopTest do
     await_dead!(fixture.child)
   end
 
+  test "stop_os_pid kills the child after its port owner exits" do
+    assert {:unix, :linux} = :os.type()
+    unrelated = start_unrelated!()
+    dir = Path.join(System.tmp_dir!(), "agentlink-owned-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    script = Path.join(dir, "launcher.py")
+    parent_file = Path.join(dir, "parent")
+    child_file = Path.join(dir, "child")
+    File.write!(script, launcher_script())
+
+    parent = self()
+
+    owner =
+      spawn(fn ->
+        port =
+          Port.open({:spawn_executable, System.find_executable("python3")}, [
+            :binary,
+            :exit_status,
+            {:args, [script, parent_file, child_file]}
+          ])
+
+        {:os_pid, pid} = Port.info(port, :os_pid)
+        send(parent, {:started, port, pid})
+
+        receive do
+          :exit -> :ok
+        end
+      end)
+
+    {port, launcher} = await_started!()
+    child = read_pid!(child_file)
+    send(owner, :exit)
+    await_exit!(owner)
+
+    assert Port.info(port, :os_pid) == nil
+    assert running?(child)
+
+    pids = AgentLink.OwnedStop.stop_os_pid(launcher)
+    assert launcher in pids
+    assert child in pids
+    refute unrelated.pid in pids
+    refute running?(launcher)
+    refute running?(child)
+    assert running?(unrelated.pid)
+
+    System.cmd("kill", ["-KILL", Integer.to_string(unrelated.pid)], stderr_to_stdout: true)
+    await_dead!(unrelated.pid)
+    File.rm_rf(dir)
+  end
+
   test "stop_port kills that child and leaves an unrelated process" do
     assert {:unix, :linux} = :os.type()
     fixture = start_fixture!()
@@ -48,7 +98,11 @@ defmodule AgentLink.OwnedStopTest do
       ])
 
     on_exit(fn ->
-      if Port.info(port), do: AgentLink.OwnedStop.stop_port(port)
+      for path <- [parent_file, child_file],
+          pid <- List.wrap(read_pid(path)) do
+        AgentLink.OwnedStop.stop_os_pid(pid)
+      end
+
       File.rm_rf(dir)
     end)
 
@@ -144,6 +198,22 @@ defmodule AgentLink.OwnedStopTest do
 
       _ ->
         nil
+    end
+  end
+
+  defp await_started! do
+    receive do
+      {:started, port, pid} -> {port, pid}
+    after
+      0 -> await_started!()
+    end
+  end
+
+  defp await_exit!(pid) do
+    receive do
+    after
+      0 ->
+        if Process.alive?(pid), do: await_exit!(pid), else: :ok
     end
   end
 

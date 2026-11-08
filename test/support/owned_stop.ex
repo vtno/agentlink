@@ -5,22 +5,21 @@ defmodule AgentLink.OwnedStop do
 
   A Burrito launcher exits on `SIGTERM` and leaves its VM running. The
   launcher is also the VM's stdout pipe, so a later `SIGTERM` to that VM
-  does not finish. `stop_port/1` sends `SIGKILL` to the launcher pid and to
-  every process whose parent chain starts at that pid.
+  does not finish. Closing the test port does not signal the launcher
+  either. ExUnit runs `on_exit` after the test process has exited, and
+  `Port.info/1` on that closed port is empty, so the pid has to be captured
+  while the port is open.
 
-  The parent chain comes from `/proc` on Linux. macOS and Windows were not run.
+  `stop_os_pid/1` sends `SIGKILL` to that pid and to every process whose
+  parent chain starts there. The parent chain comes from `/proc` on Linux.
+  macOS and Windows were not run.
   """
 
   def stop_port(port) when is_port(port) do
     pids =
       case Port.info(port, :os_pid) do
-        {:os_pid, pid} ->
-          owned = [pid | descendants(pid)]
-          Enum.each(owned, &sigkill/1)
-          owned
-
-        _ ->
-          []
+        {:os_pid, pid} -> stop_os_pid(pid)
+        _ -> []
       end
 
     try do
@@ -29,8 +28,14 @@ defmodule AgentLink.OwnedStop do
       _, _ -> :ok
     end
 
-    await_gone(pids)
     pids
+  end
+
+  def stop_os_pid(pid) when is_integer(pid) and pid > 0 do
+    owned = [pid | descendants(pid)]
+    Enum.each(owned, &sigkill/1)
+    await_gone(owned)
+    owned
   end
 
   def descendants(root) when is_integer(root) do

@@ -7,16 +7,20 @@ defmodule AgentLink.OpenCodeLiveTest do
   @tag timeout: 240_000
   test "the wrapped binary asks the agent for a landing page" do
     dir = tmp_dir()
-    {:ok, wrapper} = Agent.start(fn -> nil end)
+    {port, page_dir} = start_binary(System.fetch_env!("AGENTLINK_BIN"), dir)
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
 
     on_exit(fn ->
-      stop_wrapper(Agent.get(wrapper, & &1))
+      AgentLink.OwnedStop.stop_os_pid(os_pid)
       File.rm_rf(dir)
     end)
 
-    page_dir = start_binary(System.fetch_env!("AGENTLINK_BIN"), dir, wrapper)
-    assert :ok = wait_runtime()
-    request_page(page_dir)
+    try do
+      assert :ok = wait_runtime()
+      request_page(page_dir)
+    after
+      stop_wrapper(port)
+    end
   end
 
   defp request_page(page_dir) do
@@ -98,7 +102,7 @@ defmodule AgentLink.OpenCodeLiveTest do
      under_home(AgentLink.Paths.default_workdir(), root, home)}
   end
 
-  defp start_binary(bin, dir, wrapper) do
+  defp start_binary(bin, dir) do
     home = Path.join(dir, "home")
     File.mkdir_p!(home)
     {link, page_dir} = paths_under(home)
@@ -118,8 +122,7 @@ defmodule AgentLink.OpenCodeLiveTest do
         {:env, binary_env(home)}
       ])
 
-    Agent.update(wrapper, fn _ -> port end)
-    page_dir
+    {port, page_dir}
   end
 
   defp under_home(path, root, home) do
