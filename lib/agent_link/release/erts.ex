@@ -13,7 +13,9 @@ defmodule AgentLink.Release.ERTS do
   so Burrito still fetches the musl runtime. The value is a URL or a local
   `.tar.gz`. A directory is refused. It is not the host ERTS. The archive's
   OTP version must be the OTP version Mix compiled with. A version that can
-  be read from the URL or the filename and does not match is logged.
+  be read from the URL or the filename and does not match is logged. The
+  archive's NIFs then replace this release's NIFs, which can break at runtime.
+  A name without an OTP version token is not checked.
   """
 
   @doc """
@@ -124,7 +126,8 @@ defmodule AgentLink.Release.ERTS do
       version ->
         "agentlink: AGENTLINK_CUSTOM_ERTS is OTP #{version}. " <>
           "This release was compiled with OTP #{host}. " <>
-          "The archive must match that version, or this release's NIFs are not replaced."
+          "A mismatched archive's NIFs replace this release's NIFs, which can break at runtime. " <>
+          "A name without an OTP version token is not checked."
     end
   end
 

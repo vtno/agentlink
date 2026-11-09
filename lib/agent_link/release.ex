@@ -1,3 +1,8 @@
+defmodule AgentLink.Release.Wrapper do
+  @moduledoc false
+  defstruct [:suffix, :target, :source, :kind]
+end
+
 defmodule AgentLink.Release do
   @moduledoc """
   Mix release steps.
@@ -237,19 +242,19 @@ defmodule AgentLink.Release do
 
   defp wrappers do
     [
-      %{
+      %AgentLink.Release.Wrapper{
         suffix: "_linux",
         target: "x86_64-linux-gnu",
         source: "c_src/agentlink_launch.c",
         kind: :posix
       },
-      %{
+      %AgentLink.Release.Wrapper{
         suffix: "_macos",
         target: "aarch64-macos",
         source: "c_src/agentlink_launch.c",
         kind: :posix
       },
-      %{
+      %AgentLink.Release.Wrapper{
         suffix: "_windows.exe",
         target: "x86_64-windows-gnu",
         source: "c_src/agentlink_launch_win.c",

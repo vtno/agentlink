@@ -3,8 +3,8 @@ defmodule AgentLink.Agent.Process do
   Open an `AgentLink.Agent.Launch` from the caller.
 
   `open/3`, `write/2`, and `close/1` run in the caller. This module does not
-  start a GenServer. `open/3` is the `AgentLink.Agent` callback. The relay
-  calls it. The handle is the port. `open/3` does not read the link file,
+  start a GenServer.   `open/3` is the `AgentLink.Agent` callback. The relay
+  calls `open/5` and passes `:agent_open_listener`. The handle is the port. `open/3` does not read the link file,
   does not call `AgentLink.Agent.Launch.load/1`, and does not read application
   config. `close/1` reads `:agent_stop_timeout`. `open/4` takes a finder and
   is not a callback.

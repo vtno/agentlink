@@ -6,10 +6,19 @@ defmodule AgentLink.Agent.Reaper do
   a restart of this process inside one VM. Its name is
   `agent-reaper-<pid>-<starttime>.bin`, using this VM's OS pid and the start
   time from `/proc/<pid>/stat`. The directory is `:reaper_dir` when that is
-  set, otherwise `RELEASE_TMP`, otherwise `~/.agentlink/run`. Two VMs that
-  share the directory do not read or signal each other's pairs. A file whose
-  owning VM is gone is removed. This VM's file is removed on a clean shutdown.
+  set, otherwise `RELEASE_TMP`, otherwise `~/.agentlink/run`.   Two VMs that
+  share the directory do not read or signal each other's pairs. Another VM's
+  file is removed only when its pid does not exist, or when that pid exists
+  and its readable start time differs from the real start time in the name.
+  A stored start time of `0`, or a start time that cannot be read, is left in
+  place. That includes a machine without `/proc`. `init/1` removes this VM's
+  `.bad-*` and `.tmp` files. This VM's record is removed on a clean shutdown.
   Each write uses its own temporary name and mode `0600`.
+
+  Every load, modify, and save of this VM's file runs inside `:global.trans/3`
+  on `{:agentlink_reaper, owner}`, limited to `[node()]`. A `retain/1` that
+  starts while `init/1` is between its load and its save still leaves its
+  pairs in the file.
 
   The term is `{:agentlink_reaper, 1, pairs}`. A short, undecodable, non-list,
   or other-version file is not trusted: it is logged, renamed beside the
@@ -55,11 +64,18 @@ defmodule AgentLink.Agent.Reaper do
   @impl true
   def init(opts) do
     owner = owner_opt(opts)
+    reader = starttime_opt(opts)
     dir = directory()
     File.mkdir_p!(dir)
-    sweep_stale(dir, owner)
-    records = load(record_path(owner))
-    save(owner, records)
+
+    records =
+      trans(owner, fn ->
+        sweep_stale(dir, owner, reader)
+        records = load(record_path(owner))
+        after_load()
+        save(owner, records)
+      end)
+
     {:ok, %__MODULE__{owner: owner, records: records}}
   end
 
@@ -92,27 +108,26 @@ defmodule AgentLink.Agent.Reaper do
 
   @impl true
   def handle_call({:retain, identities}, _from, %__MODULE__{} = state) do
-    records = state.records |> merge(identities) |> verify()
-    save(state.owner, records)
+    records =
+      trans(state.owner, fn ->
+        state.owner
+        |> record_path()
+        |> load()
+        |> merge(state.records)
+        |> merge(identities)
+        |> verify()
+        |> then(&save(state.owner, &1))
+      end)
+
     {:reply, :ok, %{state | records: records}}
   end
 
   def handle_call(:reap, _from, %__MODULE__{} = state) do
-    records =
-      state.owner
-      |> record_path()
-      |> load()
-      |> merge(state.records)
-      |> verify()
+    case trans(state.owner, fn -> reap_locked(state) end) do
+      {:ok, records} ->
+        {:reply, :ok, %{state | records: records}}
 
-    case AgentLink.Agent.Process.force(records) do
-      :ok ->
-        save(state.owner, [])
-        {:reply, :ok, %{state | records: []}}
-
-      {:error, reason} ->
-        records = verify(records)
-        save(state.owner, records)
+      {{:error, reason}, records} ->
         {:reply, {:error, reason}, %{state | records: records}}
     end
   end
@@ -180,11 +195,71 @@ defmodule AgentLink.Agent.Reaper do
   defp absent_retain(identities) do
     if pair?(identities) do
       owner = vm_owner()
-      records = owner |> record_path() |> load() |> merge(identities) |> verify()
-      save(owner, records)
+
+      trans(owner, fn ->
+        records = owner |> record_path() |> load() |> merge(identities) |> verify()
+        save(owner, records)
+      end)
     end
 
     {:error, :noproc}
+  end
+
+  defp trans(owner, fun) when is_function(fun, 0) do
+    :global.trans({:agentlink_reaper, owner}, fun, [node()])
+  end
+
+  defp after_load do
+    case Application.get_env(:agent_link, :reaper_after_load) do
+      fun when is_function(fun, 0) -> fun.()
+      _ -> :ok
+    end
+  end
+
+  defp starttime_opt(opts) do
+    case Keyword.get(opts, :starttime, &default_starttime/1) do
+      reader when is_function(reader, 1) ->
+        reader
+
+      other ->
+        raise ArgumentError, "reaper starttime reader must be a function, got: #{inspect(other)}"
+    end
+  end
+
+  defp default_starttime(pid) when is_integer(pid) and pid > 0 do
+    cond do
+      not File.dir?("/proc") ->
+        :unknown
+
+      not File.dir?("/proc/#{pid}") ->
+        :gone
+
+      true ->
+        case AgentLink.Agent.Process.starttime(pid) do
+          start when is_binary(start) and start != "0" -> {:ok, start}
+          _ -> :unknown
+        end
+    end
+  end
+
+  defp reap_locked(state) do
+    records =
+      state.owner
+      |> record_path()
+      |> load()
+      |> merge(state.records)
+      |> verify()
+
+    case AgentLink.Agent.Process.force(records) do
+      :ok ->
+        save(state.owner, [])
+        {:ok, []}
+
+      {:error, reason} ->
+        records = verify(records)
+        save(state.owner, records)
+        {{:error, reason}, records}
+    end
   end
 
   defp pair?(identities) do
@@ -205,13 +280,13 @@ defmodule AgentLink.Agent.Reaper do
       Path.join(AgentLink.Paths.root(), "run")
   end
 
-  defp sweep_stale(dir, owner) do
+  defp sweep_stale(dir, owner, reader) do
     case File.ls(dir) do
       {:ok, names} ->
         Enum.each(names, fn name ->
           case owner_from_name(name) do
-            ^owner -> :ok
-            {pid, _start} = other when is_integer(pid) -> maybe_drop(dir, name, other)
+            ^owner -> drop_own_extra(dir, name)
+            {_pid, _start} = other -> maybe_drop(dir, name, other, reader)
             _ -> :ok
           end
         end)
@@ -221,9 +296,26 @@ defmodule AgentLink.Agent.Reaper do
     end
   end
 
-  defp maybe_drop(dir, name, {pid, start}) do
-    unless AgentLink.Agent.Process.same_start?(pid, start) do
-      File.rm(Path.join(dir, name))
+  defp drop_own_extra(dir, name) do
+    if extra?(name), do: File.rm(Path.join(dir, name))
+  end
+
+  defp extra?(name) do
+    String.contains?(name, ".bin.bad-") or String.ends_with?(name, ".tmp")
+  end
+
+  defp maybe_drop(_dir, _name, {_pid, "0"}, _reader), do: :ok
+
+  defp maybe_drop(dir, name, {pid, start}, reader) do
+    case reader.(pid) do
+      :gone ->
+        File.rm(Path.join(dir, name))
+
+      {:ok, current} when is_binary(current) and current != "0" and current != start ->
+        File.rm(Path.join(dir, name))
+
+      _ ->
+        :ok
     end
   end
 

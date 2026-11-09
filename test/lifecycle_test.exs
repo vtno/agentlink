@@ -481,6 +481,164 @@ defmodule AgentLink.LifecycleTest do
     Port.close(port)
   end
 
+  test "a sweep without a start time leaves other files and drops this VM's extras" do
+    vm = AgentLink.Agent.Reaper.vm_owner()
+    {pid, start} = vm
+    dir = Application.fetch_env!(:agent_link, :reaper_dir)
+    payload = :erlang.term_to_binary({:agentlink_reaper, 1, []})
+
+    other_bin = Path.join(dir, "agent-reaper-2000000001-4242.bin")
+    other_bad = other_bin <> ".bad-1"
+    other_tmp = Path.join(dir, "agent-reaper-2000000001-4242-9.tmp")
+    zero_bin = Path.join(dir, "agent-reaper-2000000002-0.bin")
+    own_bad = Path.join(dir, "agent-reaper-#{pid}-#{start}.bin.bad-4")
+    own_tmp = Path.join(dir, "agent-reaper-#{pid}-#{start}-8.tmp")
+
+    for path <- [other_bin, other_bad, other_tmp, zero_bin, own_bad, own_tmp] do
+      File.write!(path, payload)
+    end
+
+    assert {:ok, reaper} =
+             AgentLink.Agent.Reaper.start_link(
+               name: false,
+               owner: vm,
+               starttime: fn _pid ->
+                 :unknown
+               end
+             )
+
+    on_exit(fn ->
+      if Process.alive?(reaper), do: GenServer.stop(reaper)
+    end)
+
+    assert File.regular?(other_bin)
+    assert File.regular?(other_bad)
+    assert File.regular?(other_tmp)
+    assert File.regular?(zero_bin)
+    refute File.regular?(own_bad)
+    refute File.regular?(own_tmp)
+    assert File.regular?(AgentLink.Agent.Reaper.record_path(vm))
+  end
+
+  test "a sweep leaves a stored start time of 0 and drops a confirmed dead owner" do
+    vm = AgentLink.Agent.Reaper.vm_owner()
+    dir = Application.fetch_env!(:agent_link, :reaper_dir)
+    payload = :erlang.term_to_binary({:agentlink_reaper, 1, []})
+    live = System.pid() |> String.to_integer()
+    live_zero = Path.join(dir, "agent-reaper-#{live}-0.bin")
+    dead_real = Path.join(dir, "agent-reaper-2000000004-99.bin")
+    same_start = Path.join(dir, "agent-reaper-2000000005-999.bin")
+    other_start = Path.join(dir, "agent-reaper-2000000006-111.bin")
+
+    for path <- [live_zero, dead_real, same_start, other_start] do
+      File.write!(path, payload)
+    end
+
+    reader = fn
+      2_000_000_004 -> :gone
+      _pid -> {:ok, "999"}
+    end
+
+    assert {:ok, reaper} =
+             AgentLink.Agent.Reaper.start_link(name: false, owner: vm, starttime: reader)
+
+    on_exit(fn ->
+      if Process.alive?(reaper), do: GenServer.stop(reaper)
+    end)
+
+    assert File.regular?(live_zero)
+    assert File.regular?(same_start)
+    refute File.regular?(dead_real)
+    refute File.regular?(other_start)
+  end
+
+  test "an absent retain during init still blocks the next open" do
+    python = System.find_executable("python3")
+
+    port =
+      Port.open({:spawn_executable, python}, [
+        :binary,
+        :exit_status,
+        {:args, ["-c", pause_script()]}
+      ])
+
+    {:os_pid, other} = Port.info(port, :os_pid)
+    other_started = starttime!(other)
+    other_field = AgentLink.Agent.Process.starttime(other)
+    kill = System.find_executable("kill")
+    path = System.get_env("PATH")
+    parent = self()
+
+    Application.put_env(:agent_link, :reaper_after_load, fn ->
+      send(parent, {:between, self()})
+
+      receive do
+        :resume -> :ok
+      end
+    end)
+
+    starter =
+      spawn(fn ->
+        send(parent, {:reaper_started, AgentLink.Agent.Reaper.start_link(name: false)})
+
+        receive do
+          :finish -> :ok
+        end
+      end)
+
+    on_exit(fn ->
+      Application.delete_env(:agent_link, :reaper_after_load)
+      if is_binary(path), do: System.put_env("PATH", path)
+      if Process.alive?(starter), do: Process.exit(starter, :kill)
+      stop_named(AgentLink.Relay.Agent)
+      stop_named(AgentLink.Uplink)
+      stop_named(AgentLink.Agent.Reaper)
+
+      if is_binary(kill) and os_alive?(other, other_started) and
+           Integer.to_string(other) != System.pid() do
+        System.cmd(kill, ["-s", "KILL", "--", Integer.to_string(other)], stderr_to_stdout: true)
+      end
+    end)
+
+    assert_receive {:between, paused}, 5_000
+    on_exit(fn -> Process.exit(paused, :kill) end)
+
+    retain =
+      Task.async(fn -> AgentLink.Agent.Reaper.retain([{other, other_field}]) end)
+
+    send(paused, :resume)
+    assert_receive {:reaper_started, {:ok, reaper}}, 5_000
+    assert {:error, :noproc} = Task.await(retain, 5_000)
+    assert {other, other_field} in AgentLink.Agent.Reaper.read_pairs()
+    ref = Process.monitor(reaper)
+    Process.exit(reaper, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^reaper, :killed}, 5_000
+    send(starter, :finish)
+    Application.delete_env(:agent_link, :reaper_after_load)
+
+    Application.put_env(:agent_link, :agent_module, AgentLink.LifecycleTest.Sticky)
+    Application.put_env(:agent_link, :sticky_listener, self())
+    sticky_link!()
+    assert {:ok, _reaper} = AgentLink.Agent.Reaper.start_link()
+
+    empty =
+      Path.join(System.tmp_dir!(), "agentlink-no-kill-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(empty)
+    System.put_env("PATH", empty)
+
+    assert {:error, {:reap, :no_kill}} =
+             AgentLink.Relay.Agent.start_link(
+               transport: AgentLink.FakeTransport,
+               transport_opts: [backoff: 60_000],
+               watch_interval: nil
+             )
+
+    refute_received {:sticky_opened, _}
+    assert os_alive?(other, other_started)
+    Port.close(port)
+  end
+
   test "a corrupt record is moved aside and the reaper starts" do
     path = AgentLink.Agent.Reaper.record_path()
     File.mkdir_p!(Path.dirname(path))
@@ -491,10 +649,9 @@ defmodule AgentLink.LifecycleTest do
       assert {:ok, _} = AgentLink.Agent.Reaper.start_link()
       assert AgentLink.Agent.Reaper.read_pairs() == []
       assert :ok = AgentLink.Agent.Reaper.reap()
+      names = File.ls!(Path.dirname(path))
+      assert Enum.count(names, &String.contains?(&1, ".bin.bad-")) == 1
     end
-
-    names = File.ls!(Path.dirname(path))
-    assert Enum.count(names, &String.contains?(&1, ".bin.bad-")) >= 3
   end
 
   test "all mode stop reaps the agent process group and closes the listener" do
