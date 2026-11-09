@@ -42,7 +42,9 @@ defmodule AgentLink.Application do
   Any other `{:shutdown, message}` exits with status 1. The
   supervisor starts the client relay again after a crash because
   `AgentLink.Relay.Client.child_spec/1` sets `restart: :transient`. The
-  supervisor's own stop exits with status 1. In the test environment,
+  supervisor's own stop exits with status 1. `Logger.flush/0` runs before
+  that halt, so a `SIGTERM` notice already queued by the VM is written.
+  In the test environment,
   `:halt_listener` receives `{:connect_watching, pid}` after the watcher
   monitors the client relay, `{:connect_supervisor, pid}` after the watcher
   monitors `AgentLink.Supervisor`, and `{:connect_exit, code}` instead of
@@ -348,6 +350,7 @@ defmodule AgentLink.Application do
 
   defp connect_exit(listener, code) when code in [0, 1] do
     if @halt_boot_error do
+      Logger.flush()
       System.halt(code)
     else
       if is_pid(listener), do: send(listener, {:connect_exit, code})

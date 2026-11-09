@@ -1,11 +1,14 @@
 defmodule AgentLink.LaunchTest do
   @moduledoc """
-  The Linux wrapper `AgentLink.Release.forward_signals/1` compiles.
+  `AgentLink.Release.forward_signals/1` compiles a wrapper with `zig cc`.
 
   The inner program is Python standing in for the Burrito launcher. It forks
-  a child, ignores `SIGTERM`, and exits with that child's status. The test
-  waits until the child has written its pid, then signals the wrapper. The
-  wrapper's exit status is the assertion. A timer is not.
+  a child, ignores `SIGTERM` and `SIGINT`, and exits with that child's status.
+  The child forks a helper that ignores those signals, the way `beam.smp`
+  keeps `erl_child_setup`. The child exits `17` after one signal and `18`
+  after another, and `SIGKILL`s the helper. The test waits until the child
+  has written its pid, then signals the wrapper. The wrapper's exit status
+  is the assertion. A timer is not.
   """
 
   use ExUnit.Case, async: false
@@ -23,8 +26,14 @@ defmodule AgentLink.LaunchTest do
     assert script =~ "shift\n    start \"elixir\" --no-halt -- \"$@\""
     assert script =~ "start_iex)\n    start \"iex\" --werl"
     bat = File.read!(Path.join(bin, name <> ".bat"))
-    assert bat =~ "for /f \"tokens=1*\" %%a in (\"!AGENTLINK_START_ARGS!\")"
-    assert bat =~ "--vm-args \"!RELEASE_VM_ARGS!\" -- !AGENTLINK_START_ARGS!"
+    refute bat =~ "for /f"
+    refute bat =~ "tokens=1*"
+    assert bat =~ "if not \"!REL_EXTRA!\" == \"--no-halt\" goto start_plain"
+    assert bat =~ "set AGENTLINK_START_TAIL=%*"
+    assert bat =~ "set AGENTLINK_START_TAIL=!AGENTLINK_START_TAIL:*%1 =!"
+    assert bat =~ "set AGENTLINK_START_TAIL=-- !AGENTLINK_START_TAIL!"
+    assert bat =~ ":start_plain\nset AGENTLINK_START_TAIL="
+    assert bat =~ "--vm-args \"!RELEASE_VM_ARGS!\" !AGENTLINK_START_TAIL!"
 
     assert_raise RuntimeError, ~r/could not patch/, fn ->
       AgentLink.Release.forward_start_args(release)
@@ -69,6 +78,55 @@ defmodule AgentLink.LaunchTest do
     await_gone!(burrito, burrito_started)
     await_gone!(beam, beam_started)
     await_gone!(os_pid, wrapper_started)
+  end
+
+  test "a process-group SIGTERM reaches the stand-in VM once" do
+    {port, os_pid, wrapper_started, pidfile} = wrapped_beam!("group")
+    assert read_ready!(port) == "ready\n"
+    assert pgrp!(os_pid) == os_pid
+    {burrito, beam} = read_pids!(pidfile)
+    burrito_started = starttime!(burrito)
+    beam_started = starttime!(beam)
+    assert pgrp!(burrito) != os_pid
+    assert pgrp!(beam) != os_pid
+    track!(burrito, burrito_started)
+    track!(beam, beam_started)
+    signal_group!(os_pid, "TERM")
+    assert await_status!(port) == 17
+    await_gone!(burrito, burrito_started)
+    await_gone!(beam, beam_started)
+    await_gone!(os_pid, wrapper_started)
+  end
+
+  test "SIGINT reaches the stand-in VM once" do
+    {port, os_pid, wrapper_started, pidfile} = wrapped_beam!("int")
+    assert read_ready!(port) == "ready\n"
+    {burrito, beam} = read_pids!(pidfile)
+    burrito_started = starttime!(burrito)
+    beam_started = starttime!(beam)
+    track!(burrito, burrito_started)
+    track!(beam, beam_started)
+    signal_if_same(os_pid, wrapper_started, "-INT")
+    assert await_status!(port) == 17
+    await_gone!(burrito, burrito_started)
+    await_gone!(beam, beam_started)
+    await_gone!(os_pid, wrapper_started)
+  end
+
+  test "zig cc builds a wrapper for every shipped Burrito target" do
+    dir = unique_dir("targets")
+
+    for name <- ["agentlink_linux", "agentlink_macos", "agentlink_windows.exe"] do
+      File.write!(Path.join(dir, name), "unwrapped")
+    end
+
+    assert AgentLink.Release.forward_signals(%{name: :agentlink, burrito_out: dir})
+    assert File.read!(Path.join(dir, "agentlink_linux.burrito")) == "unwrapped"
+    assert File.read!(Path.join(dir, "agentlink_macos.burrito")) == "unwrapped"
+    assert File.read!(Path.join(dir, "agentlink_windows.burrito.exe")) == "unwrapped"
+    assert file_brief!(Path.join(dir, "agentlink_linux")) =~ "ELF"
+    assert file_brief!(Path.join(dir, "agentlink_macos")) =~ "Mach-O"
+    assert file_brief!(Path.join(dir, "agentlink_windows.exe")) =~ "PE32+"
   end
 
   test "the linux wrapper passes arguments and a clean exit code" do
@@ -133,14 +191,35 @@ defmodule AgentLink.LaunchTest do
 
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    ready_read, ready_write = os.pipe()
     pid = os.fork()
     if pid == 0:
+        os.close(ready_read)
+        helper = os.fork()
+        if helper == 0:
+            os.close(ready_write)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            while True:
+                signal.pause()
+        count = {"n": 0}
         def stop(_signum, _frame):
-            raise SystemExit(17)
+            count["n"] += 1
+            os.kill(helper, signal.SIGKILL)
         signal.signal(signal.SIGTERM, stop)
-        signal.pause()
-        raise SystemExit(0)
+        signal.signal(signal.SIGINT, stop)
+        os.write(ready_write, b"1")
+        os.close(ready_write)
+        while count["n"] == 0:
+            signal.pause()
+        pending = signal.sigpending()
+        if count["n"] != 1 or signal.SIGTERM in pending or signal.SIGINT in pending:
+            raise SystemExit(18)
+        raise SystemExit(17)
 
+    os.close(ready_write)
+    os.read(ready_read, 1)
+    os.close(ready_read)
     with open(sys.argv[2], "w", encoding="utf-8") as handle:
         handle.write(f"{os.getpid()} {pid}\n")
     sys.stdout.write("ready\n")
@@ -148,6 +227,57 @@ defmodule AgentLink.LaunchTest do
     _wpid, status = os.waitpid(pid, 0)
     raise SystemExit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1)
     """
+  end
+
+  defp wrapped_beam!(name) do
+    dir = unique_dir(name)
+    script = Path.join(dir, "inner.py")
+    File.write!(script, inner_script())
+    File.chmod!(script, 0o755)
+    wrapped = Path.join(dir, "agentlink_linux")
+    File.cp!(script, wrapped)
+    assert AgentLink.Release.forward_signals(%{name: :agentlink, burrito_out: dir})
+    pidfile = Path.join(dir, "pids")
+
+    port =
+      Port.open({:spawn_executable, wrapped}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        {:args, ["beam", pidfile]}
+      ])
+
+    os_pid = port_os_pid(port)
+    wrapper_started = starttime!(os_pid)
+    track!(os_pid, wrapper_started)
+    {port, os_pid, wrapper_started, pidfile}
+  end
+
+  defp track!(pid, starttime) do
+    on_exit(fn -> signal_if_same(pid, starttime, "-KILL") end)
+  end
+
+  defp signal_group!(pgid, name) do
+    if pgid > 1 and Integer.to_string(pgid) != System.pid() do
+      System.cmd("kill", ["-s", name, "--", Integer.to_string(-pgid)], stderr_to_stdout: true)
+    end
+
+    :ok
+  end
+
+  defp pgrp!(pid) do
+    {:ok, stat} = File.read("/proc/#{pid}/stat")
+    {pos, _} = List.last(:binary.matches(stat, ")"))
+    rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
+    fields = String.split(rest, " ", trim: true)
+    {pgrp, ""} = Integer.parse(Enum.at(fields, 2))
+    pgrp
+  end
+
+  defp file_brief!(path) do
+    {output, status} = System.cmd("file", ["--brief", path], stderr_to_stdout: true)
+    assert status == 0, output
+    output
   end
 
   defp unique_dir(name) do

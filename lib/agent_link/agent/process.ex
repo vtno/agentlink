@@ -14,6 +14,12 @@ defmodule AgentLink.Agent.Process do
 
   alias AgentLink.Agent.Launch
 
+  require Logger
+
+  # One `kill` invocation and the `/proc` scan that precedes it.
+  # `AgentLink.Relay.Agent` reserves the same amount, twice, in the shutdown.
+  @stop_step_ms 1_000
+
   defmodule Record do
     @moduledoc false
     defstruct [:os_pid, :starttime, :group]
@@ -21,7 +27,12 @@ defmodule AgentLink.Agent.Process do
 
   defmodule Identity do
     @moduledoc false
-    defstruct [:pgrp, :starttime]
+    defstruct [:pgrp, :ppid, :starttime]
+  end
+
+  defmodule Owned do
+    @moduledoc false
+    defstruct [:pid, :starttime, :pgrp, :root, :group]
   end
 
   @doc """
@@ -65,11 +76,11 @@ defmodule AgentLink.Agent.Process do
   The OS decides that reason.
 
   On Linux the VM's port spawn makes the command a session leader. That pid
-  is the process group leader. Descendants stay in that group until one of
-  them starts its own session. `close/1` signals the group when
-  `/proc/<pid>/stat` still has the same start time and the process group id
-  is still that pid. On macOS and Windows, `close/1` closes stdin and does
-  not signal a process group. It does not create a Windows Job Object.
+  is the process group leader. On Linux, `close/1` also records each
+  descendant, including one that called `setsid`. On macOS, `close/1` closes
+  stdin and does not signal a process group, does not walk descendants, and
+  does not create a Job Object. On Windows, `close/1` closes stdin and does
+  not signal a process group and does not create a Job Object.
   """
   @impl true
   @spec open(pid, Launch.t(), String.t()) :: {:ok, port} | {:error, String.t()}
@@ -113,45 +124,63 @@ defmodule AgentLink.Agent.Process do
   @doc """
   Stop the process `open/3` started and close `port`.
 
-  Returns `:ok`. A second call also returns `:ok`.
+  Returns `:ok` when every recorded process is gone. A second call, with no
+  record left, also returns `:ok`. Returns `{:error, :timeout}` when a
+  recorded process is still present after `SIGKILL`. Returns
+  `{:error, :no_kill}` when `kill` is not on `PATH`.
 
-  When `open/3` recorded an OS pid, `close/1` signals that process only when
-  `/proc/<pid>/stat` still has the same start time. On Linux, a process group
-  leader is signaled with the group id, which is the negative pid. Any other
-  recorded pid is signaled alone. The signal is `SIGTERM`. `close/1` then
-  closes the port, which closes the child's stdin, and waits until the start
-  time no longer matches.
+  On Linux, when `open/3` recorded an OS pid, `close/1` reads `/proc` and
+  records that pid and each descendant, including a descendant that called
+  `setsid`. It signals a pid only when `/proc/<pid>/stat` still has the
+  recorded start time. A process group leader is signaled with the group id,
+  which is the negative pid. A descendant whose process group is not that
+  pid is signaled by its own pid. The first signal is `SIGTERM`. `close/1`
+  then closes the port, which closes the child's stdin, and waits until
+  every recorded start time no longer matches.
 
-  The wait is `:agent_stop_timeout` milliseconds. `Application.get_env/3`
-  reads `:agent_link, :agent_stop_timeout`. The default is `5000`. When the
-  start time still matches at the deadline, `close/1` signals `SIGKILL` the
-  same way and waits again for the same number of milliseconds.
-  `AgentLink.Relay.Agent` gives this call that long, twice, plus one second,
-  before the supervisor kills the relay.
+  The `SIGTERM` wait is `:agent_stop_timeout` milliseconds.
+  `Application.get_env/3` reads `:agent_link, :agent_stop_timeout`. The
+  default is `5000`. When a recorded start time still matches at that
+  deadline, `close/1` signals `SIGKILL` the same way and waits again. That
+  confirmation wait is `:agent_stop_timeout`, or `1000` milliseconds when
+  that value is shorter, so a timeout of `0` still observes the reap.
+  `close/1` does not return `:ok` while a recorded process remains.
+  `AgentLink.Relay.Agent` sizes its shutdown to hold both waits and both
+  `kill` commands.
 
   A pid whose start time changed is left alone. `close/1` does not signal
-  the VM's own OS pid. On macOS and Windows, `close/1` closes stdin and does
-  not signal a process group. It does not create a Windows Job Object.
+  the VM's own OS pid. On macOS, `close/1` closes stdin and does not signal
+  a process group, does not walk descendants, and does not create a Job
+  Object. On Windows, `close/1` closes stdin and does not signal a process
+  group and does not create a Job Object.
   """
   @impl true
-  @spec close(term) :: :ok
+  @spec close(term) :: :ok | {:error, :timeout} | {:error, :no_kill}
   def close(port) do
     case take_record(port) do
       nil ->
         close_port(port)
 
       record ->
-        signal(record, :term)
+        owned = snapshot(record)
+        term = signal_owned(owned, :term)
         close_port(port)
         timeout = stop_timeout()
 
-        if wait_gone(record, timeout) == :timeout do
-          signal(record, :kill)
-          wait_gone(record, timeout)
+        case wait_gone(owned, timeout) do
+          :gone ->
+            signal_error(term)
+
+          :timeout ->
+            owned = rescan(record, owned)
+            kill = signal_owned(owned, :kill)
+
+            case wait_gone(owned, confirm_timeout(timeout)) do
+              :gone -> signal_error(first_error([term, kill]))
+              :timeout -> {:error, :timeout}
+            end
         end
     end
-
-    :ok
   end
 
   defp open_command(command, args, cwd, finder) do
@@ -276,14 +305,131 @@ defmodule AgentLink.Agent.Process do
     Application.get_env(:agent_link, :agent_stop_timeout, 5_000)
   end
 
-  defp signal(%Record{os_pid: pid, starttime: starttime, group: group?}, name) do
-    with true <- is_integer(pid) and pid > 1,
-         true <- Integer.to_string(pid) != System.pid(),
-         {:ok, %Identity{starttime: ^starttime} = identity} <- read_identity(pid) do
-      target = if group? and identity.pgrp == pid, do: -pid, else: pid
-      run_kill(name, target)
-    else
-      _ -> :ok
+  defp confirm_timeout(timeout), do: max(timeout, @stop_step_ms)
+
+  defp signal_error(:ok), do: :ok
+  defp signal_error({:error, reason}), do: {:error, reason}
+
+  defp first_error(results) do
+    Enum.find(results, :ok, &match?({:error, _}, &1))
+  end
+
+  defp snapshot(%Record{os_pid: pid, starttime: starttime, group: group?}) do
+    case read_identity(pid) do
+      {:ok, %Identity{starttime: ^starttime, pgrp: pgrp}} ->
+        root = %Owned{pid: pid, starttime: starttime, pgrp: pgrp, root: true, group: group?}
+        [root | descendants(pid)]
+
+      _ ->
+        []
+    end
+  end
+
+  defp rescan(record, owned) do
+    known = MapSet.new(owned, & &1.pid)
+    owned ++ Enum.reject(snapshot(record), &MapSet.member?(known, &1.pid))
+  end
+
+  defp descendants(root_pid) do
+    table = proc_table()
+
+    walk(
+      fn pid ->
+        Enum.flat_map(table, fn {child, %Identity{ppid: ppid} = identity} ->
+          if ppid == pid, do: [{child, identity}], else: []
+        end)
+      end,
+      [root_pid],
+      MapSet.new([root_pid]),
+      []
+    )
+  end
+
+  defp walk(_children, [], _seen, acc), do: acc
+
+  defp walk(children, [pid | rest], seen, acc) do
+    found =
+      pid
+      |> children.()
+      |> Enum.reject(fn {child, _identity} -> MapSet.member?(seen, child) or child <= 1 end)
+
+    seen = Enum.reduce(found, seen, fn {child, _identity}, set -> MapSet.put(set, child) end)
+
+    owned =
+      Enum.map(found, fn {child, identity} ->
+        %Owned{
+          pid: child,
+          starttime: identity.starttime,
+          pgrp: identity.pgrp,
+          root: false,
+          group: false
+        }
+      end)
+
+    walk(children, rest ++ Enum.map(found, &elem(&1, 0)), seen, acc ++ owned)
+  end
+
+  defp proc_table do
+    case File.ls("/proc") do
+      {:ok, names} ->
+        Enum.reduce(names, %{}, fn name, acc ->
+          case Integer.parse(name) do
+            {pid, ""} ->
+              case read_identity(pid) do
+                {:ok, identity} -> Map.put(acc, pid, identity)
+                :error -> acc
+              end
+
+            _ ->
+              acc
+          end
+        end)
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp signal_owned(owned, name) do
+    root = Enum.find(owned, & &1.root)
+    group? = group_signal?(root)
+
+    results =
+      if group? do
+        [run_kill(name, -root.pid)]
+      else
+        []
+      end
+
+    results =
+      results ++
+        Enum.map(owned, fn proc ->
+          cond do
+            group? and in_group?(proc, root) -> :ok
+            signalable?(proc) -> run_kill(name, proc.pid)
+            true -> :ok
+          end
+        end)
+
+    first_error(results)
+  end
+
+  defp group_signal?(%Owned{root: true, group: true, pid: pid, pgrp: pgrp} = proc) do
+    pgrp == pid and signalable?(proc)
+  end
+
+  defp group_signal?(_proc), do: false
+
+  defp in_group?(%Owned{pgrp: pgrp}, %Owned{pid: root_pid}), do: pgrp == root_pid
+
+  defp signalable?(%Owned{pid: pid, starttime: starttime}) do
+    pid > 1 and Integer.to_string(pid) != System.pid() and matching?(pid, starttime)
+  end
+
+  defp matching?(pid, starttime) do
+    case read_identity(pid) do
+      {:ok, %Identity{starttime: ^starttime}} -> true
+      _ -> false
     end
   end
 
@@ -295,7 +441,8 @@ defmodule AgentLink.Agent.Process do
 
     case System.find_executable("kill") do
       nil ->
-        :ok
+        Logger.error("agent stop could not find kill")
+        {:error, :no_kill}
 
       kill ->
         System.cmd(kill, ["-s", signal, "--", Integer.to_string(target)], stderr_to_stdout: true)
@@ -303,13 +450,13 @@ defmodule AgentLink.Agent.Process do
     end
   end
 
-  defp wait_gone(record, timeout) do
-    poll_gone(record, System.monotonic_time(:millisecond), timeout)
+  defp wait_gone(owned, timeout) do
+    poll_gone(owned, System.monotonic_time(:millisecond), timeout)
   end
 
-  defp poll_gone(record, started, timeout) do
+  defp poll_gone(owned, started, timeout) do
     cond do
-      gone?(record) ->
+      Enum.all?(owned, &gone?/1) ->
         :gone
 
       System.monotonic_time(:millisecond) - started >= timeout ->
@@ -321,15 +468,12 @@ defmodule AgentLink.Agent.Process do
           10 -> :ok
         end
 
-        poll_gone(record, started, timeout)
+        poll_gone(owned, started, timeout)
     end
   end
 
-  defp gone?(%Record{os_pid: pid, starttime: starttime}) do
-    case read_identity(pid) do
-      {:ok, %Identity{starttime: ^starttime}} -> false
-      _ -> true
-    end
+  defp gone?(%Owned{pid: pid, starttime: starttime}) do
+    not matching?(pid, starttime)
   end
 
   defp read_identity(pid) when is_integer(pid) and pid > 0 do
@@ -343,7 +487,8 @@ defmodule AgentLink.Agent.Process do
 
   # `/proc/<pid>/stat` is `pid (comm) state ppid pgrp ... starttime`.
   # `comm` can contain spaces and parentheses. The last `)` ends it.
-  # `pgrp` is the third field after that. `starttime` is the twentieth.
+  # `ppid` is the second field after that. `pgrp` is the third.
+  # `starttime` is the twentieth.
   defp parse_stat(stat) do
     case :binary.matches(stat, ")") do
       [] ->
@@ -354,10 +499,12 @@ defmodule AgentLink.Agent.Process do
         rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
         fields = String.split(rest, " ", trim: true)
 
-        with pgrp when is_binary(pgrp) <- Enum.at(fields, 2),
+        with ppid when is_binary(ppid) <- Enum.at(fields, 1),
+             pgrp when is_binary(pgrp) <- Enum.at(fields, 2),
              starttime when is_binary(starttime) <- Enum.at(fields, 19),
+             {ppid, ""} <- Integer.parse(ppid),
              {pgrp, ""} <- Integer.parse(pgrp) do
-          {:ok, %Identity{pgrp: pgrp, starttime: starttime}}
+          {:ok, %Identity{ppid: ppid, pgrp: pgrp, starttime: starttime}}
         else
           _ -> :error
         end

@@ -156,7 +156,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
   end
 
   test "SIGTERM during connect exits 1", %{bin: bin, dir: dir} do
-    sys = write_sys!(dir, connect_config())
+    sys = write_sys!(dir, connect_config(), :notice)
     env = env(dir, "lifeconnect1", sys)
 
     {port, os_pid, started} =
@@ -168,7 +168,9 @@ defmodule AgentLink.ReleaseLifecycleTest do
 
     log = await_running!(bin, env, port, os_pid, "")
     signal_if_same!(os_pid, started, "-TERM")
-    assert await_status!(port, log) == 1
+    {status, logged} = await_exit!(port, log)
+    assert status == 1
+    assert shown(logged) =~ "SIGTERM received"
     await_gone!(os_pid, started)
   end
 
@@ -226,12 +228,12 @@ defmodule AgentLink.ReleaseLifecycleTest do
       "{cli,true},{agent_stop_timeout,0}"
   end
 
-  defp write_sys!(dir, pairs) do
+  defp write_sys!(dir, pairs, level \\ :warning) do
     path = Path.join(dir, "sys")
 
     File.write!(
       path <> ".config",
-      "%% coding: utf-8\n%% RUNTIME_CONFIG=false\n[{agent_link,[#{pairs}]},{logger,[{level,warning}]}].\n"
+      "%% coding: utf-8\n%% RUNTIME_CONFIG=false\n[{agent_link,[#{pairs}]},{logger,[{level,#{level}}]}].\n"
     )
 
     path
@@ -273,16 +275,33 @@ defmodule AgentLink.ReleaseLifecycleTest do
     path
   end
 
+  @listen_deadline_ms 30_000
+
   defp await_listen!(port, port_num, log) do
+    await_listen!(port, port_num, log, System.monotonic_time(:millisecond))
+  end
+
+  defp await_listen!(port, port_num, log, started) do
     receive do
       {^port, {:data, data}} ->
-        await_listen!(port, port_num, log <> data)
+        await_listen!(port, port_num, log <> data, started)
 
       {^port, {:exit_status, status}} ->
         flunk("release exited #{status} before listening\n#{shown(log)}")
     after
       0 ->
-        if accept?(port_num), do: log, else: await_listen!(port, port_num, log)
+        cond do
+          accept?(port_num) ->
+            log
+
+          System.monotonic_time(:millisecond) - started >= @listen_deadline_ms ->
+            flunk(
+              "127.0.0.1:#{port_num} did not accept within #{@listen_deadline_ms}ms\n#{shown(log)}"
+            )
+
+          true ->
+            await_listen!(port, port_num, log, started)
+        end
     end
   end
 

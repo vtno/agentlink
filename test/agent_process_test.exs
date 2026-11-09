@@ -291,8 +291,49 @@ defmodule AgentLink.Agent.ProcessTest do
     assert ready_parent == os_pid
     child_started = proc_starttime!(child)
     assert AgentProcess.close(port) == :ok
-    await_gone!(os_pid, parent)
-    await_gone!(child, child_started)
+    refute same_process?(os_pid, parent)
+    refute same_process?(child, child_started)
+  end
+
+  test "close stops a setsid grandchild that ignores SIGTERM" do
+    previous = Application.get_env(:agent_link, :agent_stop_timeout)
+    Application.put_env(:agent_link, :agent_stop_timeout, 0)
+    on_exit(fn -> AgentLink.TestHelpers.restore(:agent_stop_timeout, previous) end)
+
+    python = System.find_executable("python3")
+    assert is_binary(python)
+    script = Path.expand("fixtures/agentlink_setsid_fixture.py", __DIR__)
+    File.chmod!(script, 0o755)
+    dir = make_dir()
+
+    assert {:ok, port} =
+             AgentProcess.open(
+               self(),
+               %Launch{command: python, args: [script]},
+               dir,
+               fn _command -> flunk("finder must not be called") end
+             )
+
+    os_pid = os_pid!(port)
+    parent = proc_starttime!(os_pid)
+    {ready_parent, grandchild} = ready_pids!(port)
+    assert ready_parent == os_pid
+    grandchild_started = proc_starttime!(grandchild)
+    assert pgrp!(grandchild) == grandchild
+    assert pgrp!(grandchild) != os_pid
+    [intermediate] = children!(os_pid)
+    intermediate_started = proc_starttime!(intermediate)
+
+    on_exit(fn ->
+      kill_if_same!(grandchild, grandchild_started)
+      kill_if_same!(intermediate, intermediate_started)
+      kill_if_same!(os_pid, parent)
+    end)
+
+    assert AgentProcess.close(port) == :ok
+    refute same_process?(os_pid, parent)
+    refute same_process?(intermediate, intermediate_started)
+    refute same_process?(grandchild, grandchild_started)
   end
 
   test "a deleted executable path fails the next open", %{beam_dir: beam_dir, exe: exe} do
@@ -444,6 +485,46 @@ defmodule AgentLink.Agent.ProcessTest do
     {:ok, stat} = File.read("/proc/#{os_pid}/stat")
     {:ok, %{starttime: starttime}} = AgentLink.OwnedStop.parse_stat(stat)
     starttime
+  end
+
+  defp pgrp!(os_pid) do
+    {:ok, stat} = File.read("/proc/#{os_pid}/stat")
+    {pos, _} = List.last(:binary.matches(stat, ")"))
+    rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
+    fields = String.split(rest, " ", trim: true)
+    {pgrp, ""} = Integer.parse(Enum.at(fields, 2))
+    pgrp
+  end
+
+  defp children!(parent) do
+    {:ok, names} = File.ls("/proc")
+
+    Enum.flat_map(names, fn name ->
+      case Integer.parse(name) do
+        {pid, ""} ->
+          case File.read("/proc/#{pid}/stat") do
+            {:ok, stat} ->
+              case AgentLink.OwnedStop.parse_stat(stat) do
+                {:ok, %{ppid: ^parent}} -> [pid]
+                _ -> []
+              end
+
+            _ ->
+              []
+          end
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp kill_if_same!(pid, starttime) do
+    if same_process?(pid, starttime) and pid > 1 and Integer.to_string(pid) != System.pid() do
+      System.cmd("kill", ["-s", "KILL", "--", Integer.to_string(pid)], stderr_to_stdout: true)
+    end
+
+    :ok
   end
 
   defp same_process?(os_pid, starttime) do

@@ -42,7 +42,7 @@ defmodule AgentLink.Relay.AgentTest do
         else: Application.delete_env(:agent_link, :agent_stop_timeout)
     end)
 
-    assert AgentLink.Relay.Agent.child_spec([]).shutdown == 1_080
+    assert AgentLink.Relay.Agent.child_spec([]).shutdown == 3_040
   end
 
   test "send_message is down when the agent relay is not running" do

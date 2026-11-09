@@ -7,8 +7,9 @@ defmodule AgentLink.LifecycleTest do
   same signal `application_master` sends. Assertions run before `on_exit`.
   The hold fixture ignores `SIGTERM` and stdin EOF. `:agent_stop_timeout`
   is `0` in that test, so `close/1` signals `SIGKILL` without waiting out
-  the default `5000`. The test then waits until the recorded start times
-  no longer match.
+  the default `5000`, then waits until the recorded processes are gone.
+  The replacement test checks those processes before it looks up the new
+  relay. `await_accept!/1` gives up after `5000` milliseconds.
   """
 
   use ExUnit.Case, async: false
@@ -176,6 +177,40 @@ defmodule AgentLink.LifecycleTest do
     await_gone!(child2, child2_started)
   end
 
+  test "the replacement agent does not start while the old one is still alive" do
+    Application.put_env(:agent_link, :agent_module, AgentLink.Agent.Process)
+    Application.put_env(:agent_link, :agent_stop_timeout, 0)
+    pidfile = hold_link!()
+    sup = start!(:relay)
+    agent = Process.whereis(AgentLink.Relay.Agent)
+    {parent, child} = await_hold!(pidfile, agent)
+    parent_started = starttime!(parent)
+    child_started = starttime!(child)
+    File.rm!(pidfile)
+
+    test_pid = self()
+
+    watcher =
+      spawn(fn ->
+        watch_replacement(test_pid, agent, parent, parent_started, child, child_started)
+      end)
+
+    assert :ok = GenServer.stop(agent, :shutdown)
+    refute os_alive?(parent, parent_started)
+    refute os_alive?(child, child_started)
+    send(watcher, :stop)
+    assert_receive {:overlap, :clear}
+    new_agent = await_named(AgentLink.Relay.Agent, agent)
+    {parent2, child2} = await_hold!(pidfile, new_agent)
+    assert parent2 != parent
+    assert child2 != child
+    parent2_started = starttime!(parent2)
+    child2_started = starttime!(child2)
+    stop!(sup)
+    await_gone!(parent2, parent2_started)
+    await_gone!(child2, child2_started)
+  end
+
   test "all mode stop reaps the agent process group and closes the listener" do
     port = 18_424
     Application.put_env(:agent_link, :agent_module, AgentLink.Agent.Process)
@@ -292,14 +327,25 @@ defmodule AgentLink.LifecycleTest do
     missing_link()
   end
 
+  @accept_deadline_ms 5_000
+
   defp await_accept!(port) do
-    if accept?(port) do
-      :ok
-    else
-      receive do
-      after
-        0 -> await_accept!(port)
-      end
+    await_accept!(port, System.monotonic_time(:millisecond))
+  end
+
+  defp await_accept!(port, started) do
+    cond do
+      accept?(port) ->
+        :ok
+
+      System.monotonic_time(:millisecond) - started >= @accept_deadline_ms ->
+        flunk("127.0.0.1:#{port} did not accept within #{@accept_deadline_ms}ms")
+
+      true ->
+        receive do
+        after
+          0 -> await_accept!(port, started)
+        end
     end
   end
 
@@ -364,6 +410,40 @@ defmodule AgentLink.LifecycleTest do
     {:ok, stat} = File.read("/proc/#{pid}/stat")
     {:ok, %{starttime: starttime}} = AgentLink.OwnedStop.parse_stat(stat)
     starttime
+  end
+
+  defp watch_replacement(dest, old, parent, parent_started, child, child_started) do
+    receive do
+      :stop ->
+        send(dest, {:overlap, :clear})
+    after
+      0 ->
+        case Process.whereis(AgentLink.Relay.Agent) do
+          pid when is_pid(pid) and pid != old ->
+            outcome =
+              if os_alive?(parent, parent_started) or os_alive?(child, child_started),
+                do: :alive,
+                else: :clear
+
+            send(dest, {:overlap, outcome})
+
+          _ ->
+            watch_replacement(dest, old, parent, parent_started, child, child_started)
+        end
+    end
+  end
+
+  defp os_alive?(pid, starttime) do
+    case File.read("/proc/#{pid}/stat") do
+      {:ok, stat} ->
+        case AgentLink.OwnedStop.parse_stat(stat) do
+          {:ok, %{starttime: ^starttime}} -> true
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
   end
 
   defp await_gone!(pid, starttime) do

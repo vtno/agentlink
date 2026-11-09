@@ -19,11 +19,12 @@ defmodule AgentLink.Relay.Agent do
   in params is filled with `AgentLink.Paths.workdir()` before the message is
   written to the agent. An explicit `cwd` passes through unchanged.
 
-  The child shutdown is `2 * :agent_stop_timeout + 1000` milliseconds, read
-  when the child spec is built. The default `:agent_stop_timeout` is `5000`,
-  so the shutdown is `11000`. `terminate/2` calls `close/1`, which may wait
-  that timeout twice. The extra second is so the supervisor does not kill
-  this process before `SIGKILL`.
+  The child shutdown is the `SIGTERM` wait, the confirmation wait, and two
+  allowances of `1000` milliseconds for the `kill` commands, read when the
+  child spec is built. The `SIGTERM` wait is `:agent_stop_timeout`. The
+  confirmation wait is `:agent_stop_timeout`, or `1000` when that is shorter.
+  The default `:agent_stop_timeout` is `5000`, so the shutdown is `12000`.
+  `terminate/2` calls `close/1` and does not return until that call returns.
   """
 
   use GenServer
@@ -33,6 +34,25 @@ defmodule AgentLink.Relay.Agent do
 
   # A dropped stdout line can be huge, or not valid UTF-8. Log a prefix.
   @dropped_bytes 80
+
+  # Matches `AgentLink.Agent.Process` `@stop_step_ms`. One allowance per
+  # `kill` command. The confirmation wait uses the same floor.
+  @stop_step_ms 1_000
+
+  @doc false
+  def child_spec(opts) do
+    timeout = Application.get_env(:agent_link, :agent_stop_timeout, 5_000)
+
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      shutdown: shutdown_ms(timeout)
+    }
+  end
+
+  defp shutdown_ms(timeout) do
+    timeout + max(timeout, @stop_step_ms) + @stop_step_ms * 2
+  end
 
   @doc """
   Own the agent. If it dies, the supervisor starts this process again.
@@ -44,17 +64,6 @@ defmodule AgentLink.Relay.Agent do
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
-
-  @doc false
-  def child_spec(opts) do
-    timeout = Application.get_env(:agent_link, :agent_stop_timeout, 5_000)
-
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      shutdown: timeout * 2 + 1_000
-    }
   end
 
   @impl true
@@ -144,8 +153,15 @@ defmodule AgentLink.Relay.Agent do
   @impl true
   def terminate(reason, %__MODULE__{agent: agent, agent_module: agent_module}) do
     Logger.info("agent relay stopping #{inspect(reason)}")
-    agent_module.close(agent)
-    :ok
+
+    case agent_module.close(agent) do
+      :ok ->
+        :ok
+
+      {:error, stop_reason} ->
+        Logger.error("agent stop failed: #{inspect(stop_reason)}")
+        :ok
+    end
   end
 
   defp uplink_opts(opts) do
