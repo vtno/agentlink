@@ -15,7 +15,7 @@ defmodule AgentLink.Release.ERTS do
   OTP version must be the OTP version Mix compiled with. A version that can
   be read from the URL or the filename and does not match is logged. The
   archive's NIFs then replace this release's NIFs, which can break at runtime.
-  A name without an OTP version token is not checked.
+  A name without an OTP version token logs that the archive was not checked.
   """
 
   @doc """
@@ -121,13 +121,13 @@ defmodule AgentLink.Release.ERTS do
         nil
 
       nil ->
-        nil
+        "agentlink: AGENTLINK_CUSTOM_ERTS has no OTP version token, so the archive was not checked. " <>
+          "It must be OTP #{host}, or its NIFs replace this release's NIFs and can break at runtime."
 
       version ->
         "agentlink: AGENTLINK_CUSTOM_ERTS is OTP #{version}. " <>
           "This release was compiled with OTP #{host}. " <>
-          "A mismatched archive's NIFs replace this release's NIFs, which can break at runtime. " <>
-          "A name without an OTP version token is not checked."
+          "A mismatched archive's NIFs replace this release's NIFs, which can break at runtime."
     end
   end
 

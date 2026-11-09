@@ -163,7 +163,7 @@ defmodule AgentLink.Agent.Process do
   `AgentLink.Agent.Reaper.retain/1`. When that process is not running,
   `retain/1` writes the pairs into this VM's record file and returns
   `{:error, :noproc}`. `close/1` returns that error. The next `reap/0`
-  reads the file before `open/3`. `AgentLink.Relay.Agent`
+  reads the file before `open/5`. `AgentLink.Relay.Agent`
   sizes its shutdown to hold both waits and both `kill` commands.
 
   A pid whose start time changed is left alone. `close/1` does not signal

@@ -441,10 +441,10 @@ defmodule AgentLink.LifecycleTest do
       end
     end)
 
-    assert {:ok, left} = AgentLink.Agent.Reaper.start_link(name: false, owner: vm)
+    assert {:ok, left} = AgentLink.Agent.Reaper.start_link(name: false, vm: vm)
 
     assert {:ok, right} =
-             AgentLink.Agent.Reaper.start_link(name: false, owner: {other, other_field})
+             AgentLink.Agent.Reaper.start_link(name: false, vm: {other, other_field})
 
     on_exit(fn ->
       for pid <- [left, right] do
@@ -472,7 +472,7 @@ defmodule AgentLink.LifecycleTest do
     assert :ok = GenServer.stop(left)
     refute File.regular?(left_path)
     assert File.read!(right_path) == right_bytes
-    assert {:ok, again} = AgentLink.Agent.Reaper.start_link(name: false, owner: vm)
+    assert {:ok, again} = AgentLink.Agent.Reaper.start_link(name: false, vm: vm)
     refute File.regular?(dead)
     assert File.read!(right_path) == right_bytes
     assert :ok = GenServer.stop(again)
@@ -501,7 +501,7 @@ defmodule AgentLink.LifecycleTest do
     assert {:ok, reaper} =
              AgentLink.Agent.Reaper.start_link(
                name: false,
-               owner: vm,
+               vm: vm,
                starttime: fn _pid ->
                  :unknown
                end
@@ -540,7 +540,7 @@ defmodule AgentLink.LifecycleTest do
     end
 
     assert {:ok, reaper} =
-             AgentLink.Agent.Reaper.start_link(name: false, owner: vm, starttime: reader)
+             AgentLink.Agent.Reaper.start_link(name: false, vm: vm, starttime: reader)
 
     on_exit(fn ->
       if Process.alive?(reaper), do: GenServer.stop(reaper)
@@ -588,6 +588,7 @@ defmodule AgentLink.LifecycleTest do
 
     on_exit(fn ->
       Application.delete_env(:agent_link, :reaper_after_load)
+      Application.delete_env(:agent_link, :reaper_before_lock)
       if is_binary(path), do: System.put_env("PATH", path)
       if Process.alive?(starter), do: Process.exit(starter, :kill)
       stop_named(AgentLink.Relay.Agent)
@@ -603,18 +604,30 @@ defmodule AgentLink.LifecycleTest do
     assert_receive {:between, paused}, 5_000
     on_exit(fn -> Process.exit(paused, :kill) end)
 
-    retain =
-      Task.async(fn -> AgentLink.Agent.Reaper.retain([{other, other_field}]) end)
+    Application.put_env(:agent_link, :reaper_before_lock, fn ->
+      send(parent, {:locking, self()})
+    end)
 
-    send(paused, :resume)
+    retain = Task.async(fn -> AgentLink.Agent.Reaper.retain([{other, other_field}]) end)
+    assert_receive {:locking, locker}, 5_000
+
+    case await_retain!(locker, retain, System.monotonic_time(:millisecond) + 5_000) do
+      :waiting ->
+        send(paused, :resume)
+        assert {:error, :noproc} = Task.await(retain, 5_000)
+
+      {:done, {:error, :noproc}} ->
+        send(paused, :resume)
+    end
+
     assert_receive {:reaper_started, {:ok, reaper}}, 5_000
-    assert {:error, :noproc} = Task.await(retain, 5_000)
     assert {other, other_field} in AgentLink.Agent.Reaper.read_pairs()
     ref = Process.monitor(reaper)
     Process.exit(reaper, :kill)
     assert_receive {:DOWN, ^ref, :process, ^reaper, :killed}, 5_000
     send(starter, :finish)
     Application.delete_env(:agent_link, :reaper_after_load)
+    Application.delete_env(:agent_link, :reaper_before_lock)
 
     Application.put_env(:agent_link, :agent_module, AgentLink.LifecycleTest.Sticky)
     Application.put_env(:agent_link, :sticky_listener, self())
@@ -853,6 +866,29 @@ defmodule AgentLink.LifecycleTest do
     {:ok, stat} = File.read("/proc/#{pid}/stat")
     {:ok, %{starttime: starttime}} = AgentLink.OwnedStop.parse_stat(stat)
     starttime
+  end
+
+  defp await_retain!(pid, task, deadline) do
+    case Task.yield(task, 0) do
+      {:ok, result} ->
+        {:done, result}
+
+      nil ->
+        case Process.info(pid, :current_function) do
+          {:current_function, {:global, :random_sleep, _}} ->
+            :waiting
+
+          _ ->
+            if System.monotonic_time(:millisecond) > deadline do
+              flunk("retain did not reach the reaper lock")
+            else
+              receive do
+              after
+                0 -> await_retain!(pid, task, deadline)
+              end
+            end
+        end
+    end
   end
 
   defp pause_script do

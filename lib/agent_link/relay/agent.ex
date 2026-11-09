@@ -7,7 +7,8 @@ defmodule AgentLink.Relay.Agent do
   another one. Each start creates the workspace, then calls
   `AgentLink.Agent.Launch.load/1` once. That call returns the link and the
   launch. The link is the uplink's initial snapshot. The launch is passed
-  to `open/3`. The next start reads the file again. The launch is not a
+  to `open/5` for `AgentLink.Agent.Process` and to `open/3` for any other
+  module. The next start reads the file again. The launch is not a
   supervisor child argument. The module comes from `:agent_link,
   :agent_module`. The default is `AgentLink.Agent.Process`.
 
@@ -26,7 +27,8 @@ defmodule AgentLink.Relay.Agent do
   `:agent_stop_timeout`, or `1000` when that is shorter. The default
   `:agent_stop_timeout` is `5000`, so the shutdown is `12000`.
   `terminate/2` calls `close/1` and does not return until that call returns.
-  `init/1` calls `AgentLink.Agent.Reaper.reap/0` before `open/3`. A failed
+  `init/1` calls `AgentLink.Agent.Reaper.reap/0` before `open/5` for
+  `AgentLink.Agent.Process`. A failed
   reap stops this start, so no replacement agent is spawned while a retained
   start time is still alive.
   """

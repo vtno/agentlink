@@ -24,7 +24,7 @@ Config. `AgentLink.Config` holds the plane URL, the optional target, and the tok
 
 Uplink. `AgentLink.Uplink` is the process that dials. `AgentLink.Registry.Uplink` is the row recorded after that dial says hello. The first live hello for a name keeps the socket. The hello carries that relay's instance id, and "same relay" means the same id: a later hello with it releases the previous socket. A hello from another relay is rejected with close code 4001, and that relay parks until the `name` or `plane_url` in the link file changes, then it dials again. When the holder disconnects, the name is free. The plane accepts an instance id of at most 128 bytes. A longer id is rejected with close code 4002, and that relay does not redial: the id is not in the link file, so a changed `name` or `plane_url` would dial with the same id.
 
-Agent. The stdio behaviour. `open/3` takes the owner, an `AgentLink.Agent.Launch`, and the workspace. `write/2` and `close/1` stay as they are. `AgentLink.Agent.Process` implements it and runs `command` and `args`. The relay calls `AgentLink.Agent.Launch.load/1` once in each `init/1`, then calls `open/3`. `program` does not choose the module.
+Agent. The stdio behaviour. `open/3` takes the owner, an `AgentLink.Agent.Launch`, and the workspace. `write/2` and `close/1` stay as they are. `AgentLink.Agent.Process` implements it and runs `command` and `args`. The relay calls `AgentLink.Agent.Launch.load/1` once in each `init/1`, then calls `open/5` for `AgentLink.Agent.Process`. `program` does not choose the module.
 
 Client. One app already connected to the plane. Not `AgentLink.Relay.Client`, and not `AgentLink.ClientSocket`. Its capabilities are the `clientCapabilities` from that app's own `initialize`.
 

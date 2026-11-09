@@ -6,7 +6,7 @@ defmodule AgentLink.Agent.Reaper do
   a restart of this process inside one VM. Its name is
   `agent-reaper-<pid>-<starttime>.bin`, using this VM's OS pid and the start
   time from `/proc/<pid>/stat`. The directory is `:reaper_dir` when that is
-  set, otherwise `RELEASE_TMP`, otherwise `~/.agentlink/run`.   Two VMs that
+  set, otherwise `RELEASE_TMP`, otherwise `~/.agentlink/run`. Two VMs that
   share the directory do not read or signal each other's pairs. Another VM's
   file is removed only when its pid does not exist, or when that pid exists
   and its readable start time differs from the real start time in the name.
@@ -15,10 +15,13 @@ defmodule AgentLink.Agent.Reaper do
   `.bad-*` and `.tmp` files. This VM's record is removed on a clean shutdown.
   Each write uses its own temporary name and mode `0600`.
 
-  Every load, modify, and save of this VM's file runs inside `:global.trans/3`
-  on `{:agentlink_reaper, owner}`, limited to `[node()]`. A `retain/1` that
-  starts while `init/1` is between its load and its save still leaves its
-  pairs in the file.
+  Every load, modify, and save of this VM's file, including a clean
+  shutdown's delete, runs inside `:global.trans/3` on
+  `{{:agentlink_reaper, vm}, self()}`, limited to `[node()]`. The resource is
+  this VM and the requester is the calling process, so two processes cannot
+  hold it together. `init/1` verifies the pairs it loaded before it saves
+  them. A `retain/1` that starts while `init/1` is between its load and its
+  save waits, then writes its pairs after that save.
 
   The term is `{:agentlink_reaper, 1, pairs}`. A short, undecodable, non-list,
   or other-version file is not trusted: it is logged, renamed beside the
@@ -35,7 +38,8 @@ defmodule AgentLink.Agent.Reaper do
   one still matches. `{:error, :no_kill}` means `kill` is not on `PATH` and a
   retained process is still alive. `{:error, :kill_failed}` means `kill`
   exited non-zero and that start time still matches. The next relay calls
-  `reap/0` before `open/3` and does not open an agent when the result is an error.
+  `reap/0` before `open/5` for `AgentLink.Agent.Process` and does not open an
+  agent when the result is an error.
   """
 
   use GenServer
@@ -43,9 +47,9 @@ defmodule AgentLink.Agent.Reaper do
   require Logger
 
   @version 1
-  @type owner :: {integer(), String.t()}
+  @type vm :: {integer(), String.t()}
 
-  defstruct [:owner, records: []]
+  defstruct [:vm, records: []]
 
   @doc false
   def child_spec(opts) do
@@ -63,20 +67,20 @@ defmodule AgentLink.Agent.Reaper do
 
   @impl true
   def init(opts) do
-    owner = owner_opt(opts)
+    vm = vm_opt(opts)
     reader = starttime_opt(opts)
     dir = directory()
     File.mkdir_p!(dir)
 
     records =
-      trans(owner, fn ->
-        sweep_stale(dir, owner, reader)
-        records = load(record_path(owner))
+      trans(vm, fn ->
+        sweep_stale(dir, vm, reader)
+        records = vm |> record_path() |> load() |> verify()
         after_load()
-        save(owner, records)
+        save(vm, records)
       end)
 
-    {:ok, %__MODULE__{owner: owner, records: records}}
+    {:ok, %__MODULE__{vm: vm, records: records}}
   end
 
   @doc """
@@ -109,21 +113,21 @@ defmodule AgentLink.Agent.Reaper do
   @impl true
   def handle_call({:retain, identities}, _from, %__MODULE__{} = state) do
     records =
-      trans(state.owner, fn ->
-        state.owner
+      trans(state.vm, fn ->
+        state.vm
         |> record_path()
         |> load()
         |> merge(state.records)
         |> merge(identities)
         |> verify()
-        |> then(&save(state.owner, &1))
+        |> then(&save(state.vm, &1))
       end)
 
     {:reply, :ok, %{state | records: records}}
   end
 
   def handle_call(:reap, _from, %__MODULE__{} = state) do
-    case trans(state.owner, fn -> reap_locked(state) end) do
+    case trans(state.vm, fn -> reap_locked(state) end) do
       {:ok, records} ->
         {:reply, :ok, %{state | records: records}}
 
@@ -133,8 +137,8 @@ defmodule AgentLink.Agent.Reaper do
   end
 
   @impl true
-  def terminate(reason, %__MODULE__{owner: owner}) do
-    if clean?(reason), do: File.rm(record_path(owner))
+  def terminate(reason, %__MODULE__{vm: vm}) do
+    if clean?(reason), do: trans(vm, fn -> File.rm(record_path(vm)) end)
     :ok
   end
 
@@ -158,7 +162,8 @@ defmodule AgentLink.Agent.Reaper do
 
   @doc false
   def install_pairs(pairs) when is_list(pairs) do
-    save(vm_owner(), pairs)
+    vm = vm_owner()
+    trans(vm, fn -> save(vm, pairs) end)
   end
 
   @doc false
@@ -182,31 +187,39 @@ defmodule AgentLink.Agent.Reaper do
     end
   end
 
-  defp owner_opt(opts) do
-    case Keyword.get(opts, :owner, vm_owner()) do
+  defp vm_opt(opts) do
+    case Keyword.get(opts, :vm, vm_owner()) do
       {pid, start} when is_integer(pid) and pid > 0 and is_binary(start) ->
         {pid, start}
 
       other ->
-        raise ArgumentError, "reaper owner must be {pid, starttime}, got: #{inspect(other)}"
+        raise ArgumentError, "reaper vm must be {pid, starttime}, got: #{inspect(other)}"
     end
   end
 
   defp absent_retain(identities) do
     if pair?(identities) do
-      owner = vm_owner()
+      vm = vm_owner()
 
-      trans(owner, fn ->
-        records = owner |> record_path() |> load() |> merge(identities) |> verify()
-        save(owner, records)
+      trans(vm, fn ->
+        records = vm |> record_path() |> load() |> merge(identities) |> verify()
+        save(vm, records)
       end)
     end
 
     {:error, :noproc}
   end
 
-  defp trans(owner, fun) when is_function(fun, 0) do
-    :global.trans({:agentlink_reaper, owner}, fun, [node()])
+  defp trans(vm, fun) when is_function(fun, 0) do
+    before_lock()
+    :global.trans({{:agentlink_reaper, vm}, self()}, fun, [node()])
+  end
+
+  defp before_lock do
+    case Application.get_env(:agent_link, :reaper_before_lock) do
+      fun when is_function(fun, 0) -> fun.()
+      _ -> :ok
+    end
   end
 
   defp after_load do
@@ -244,7 +257,7 @@ defmodule AgentLink.Agent.Reaper do
 
   defp reap_locked(state) do
     records =
-      state.owner
+      state.vm
       |> record_path()
       |> load()
       |> merge(state.records)
@@ -252,12 +265,12 @@ defmodule AgentLink.Agent.Reaper do
 
     case AgentLink.Agent.Process.force(records) do
       :ok ->
-        save(state.owner, [])
+        save(state.vm, [])
         {:ok, []}
 
       {:error, reason} ->
         records = verify(records)
-        save(state.owner, records)
+        save(state.vm, records)
         {{:error, reason}, records}
     end
   end
@@ -280,12 +293,12 @@ defmodule AgentLink.Agent.Reaper do
       Path.join(AgentLink.Paths.root(), "run")
   end
 
-  defp sweep_stale(dir, owner, reader) do
+  defp sweep_stale(dir, vm, reader) do
     case File.ls(dir) do
       {:ok, names} ->
         Enum.each(names, fn name ->
           case owner_from_name(name) do
-            ^owner -> drop_own_extra(dir, name)
+            ^vm -> drop_own_extra(dir, name)
             {_pid, _start} = other -> maybe_drop(dir, name, other, reader)
             _ -> :ok
           end
@@ -389,10 +402,10 @@ defmodule AgentLink.Agent.Reaper do
     end
   end
 
-  defp save(owner, records) do
-    path = record_path(owner)
+  defp save(vm, records) do
+    path = record_path(vm)
     File.mkdir_p!(Path.dirname(path))
-    tmp = tmp_path(owner)
+    tmp = tmp_path(vm)
     data = :erlang.term_to_binary({:agentlink_reaper, @version, records})
     {:ok, fd} = :file.open(to_charlist(tmp), [:write, :binary, {:mode, 0o600}])
 

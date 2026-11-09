@@ -81,12 +81,15 @@ defmodule AgentLink.Release.ERTSTest do
     assert message =~ "OTP 27.3.4.19"
     assert message =~ "NIFs replace this release's NIFs"
     assert message =~ "can break at runtime"
-    assert message =~ "without an OTP version token is not checked"
+    refute message =~ "version token"
 
     assert AgentLink.Release.ERTS.archive_warning("otp_27.3.4.19_linux.tar.gz", "27.3.4.19") ==
              nil
 
-    assert AgentLink.Release.ERTS.archive_warning("/tmp/erts.tar.gz", "27.3.4.19") == nil
+    unchecked = AgentLink.Release.ERTS.archive_warning("/tmp/erts.tar.gz", "27.3.4.19")
+    assert unchecked =~ "no OTP version token"
+    assert unchecked =~ "not checked"
+    assert unchecked =~ "OTP 27.3.4.19"
   end
 
   test "a pinned linux archive is kept when the host OTP is a 404" do
