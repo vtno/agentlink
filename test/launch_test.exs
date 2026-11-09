@@ -34,6 +34,7 @@ defmodule AgentLink.LaunchTest do
     refute bat =~ "AGENTLINK_START_TAIL"
     assert bat =~ "if not \"!REL_EXTRA!\" == \"--no-halt\" goto start_plain"
     assert bat =~ "setlocal DisableDelayedExpansion"
+    assert bat =~ "set AGENTLINK_WINDOWS_START=1"
     assert bat =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
     assert bat =~ ":start_plain\n"
     assert bat =~ "--vm-args \"!RELEASE_VM_ARGS!\""

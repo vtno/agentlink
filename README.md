@@ -57,15 +57,17 @@ The build machine needs Elixir 1.17 or a later 1.x release, Zig 0.16.0, and `xz`
 2. Run `MIX_ENV=prod mix release`.
 3. Put the binary for your machine on `PATH` as `agentlink`.
 
-With no `BURRITO_TARGET`, step 2 writes three binaries.
+With no `BURRITO_TARGET`, step 2 writes a wrapped binary for each target whose published OTP returns HTTP 200. The names are:
 
-- `burrito_out/agentlink_linux` is the Linux x86_64 binary.
-- `burrito_out/agentlink_macos` is the macOS binary for Apple Silicon (aarch64).
-- `burrito_out/agentlink_windows.exe` is the Windows x86_64 binary.
+- `burrito_out/agentlink_linux`, the Linux x86_64 binary, when Burrito has a musl OTP for this OTP version.
+- `burrito_out/agentlink_macos`, the macOS binary for Apple Silicon (aarch64), when that OTP tarball is published.
+- `burrito_out/agentlink_windows.exe`, the Windows x86_64 binary, when that OTP archive is published and `7z` or `7zz` is on `PATH`.
 
-Burrito prints `Output Path:` and the file it wrote.
+A target whose published OTP returns HTTP 404 is skipped. The message names the target and the OTP version. The plain release under `_build/prod/rel/agentlink` still succeeds. The host ERTS is not written out as `agentlink_linux`. When no target remains, `mix release` skips the Burrito wrap and writes no file under `burrito_out`. Burrito prints `Output Path:` and the file it wrote for each target it built.
 
-To build one binary, set `BURRITO_TARGET` to `linux`, `macos`, or `windows`.
+To build one binary, set `BURRITO_TARGET` to `linux`, `macos`, or `windows`. That target is skipped the same way when its OTP is missing.
+
+To pin a published OTP for Linux, set `AGENTLINK_CUSTOM_ERTS` to a URL or a local `.tar.gz` of a musl OTP. Burrito still fetches the musl runtime. A directory is refused, so the host ERTS is not substituted. `custom_erts` on a target in `mix.exs` is Burrito's pin for that one target.
 
 ```sh
 agentlink
@@ -270,7 +272,7 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. On Linux, `close/1` signals `SIGTERM` to that group, and to any descendant that left the group, when the recorded start time still matches. It closes stdin and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way and returns `:ok` only when those processes are gone. A start time that remains is kept by `AgentLink.Agent.Reaper`. That process starts before the relay. The next relay signals `SIGKILL` and opens a replacement only after every retained start time is gone. `AgentLink.Relay.Agent` waits `12000` milliseconds at that default before the supervisor kills the relay. On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object.
+`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. On Linux, `close/1` signals `SIGTERM` to that group, and to any descendant that left the group, when the recorded start time still matches. It closes stdin and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way and returns `:ok` only when those processes are gone. A start time that remains is kept by `AgentLink.Agent.Reaper` in `agent-reaper.bin`. That process starts before the relay. `init/1` reloads the file and drops a pid whose start time no longer matches, so a Reaper restart still blocks the next open. `reap/0` and `retain/1` fail when the Reaper is not running. The next relay signals `SIGKILL` and opens a replacement only after every retained start time is gone. `AgentLink.Relay.Agent` waits `12000` milliseconds at that default before the supervisor kills the relay. On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object.
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 
@@ -278,7 +280,7 @@ The relay reads one JSON object per line from the agent's standard output. The r
 
 `mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped` and `:release`.
 
-`mix test --only release` builds a plain Mix release with `AGENTLINK_BURRITO=0` and checks `bin/agentlink start` for each mode, plus `SIGTERM`. It does not build a Burrito binary. `AgentLink.Release.forward_signals/1` compiles wrappers with `zig cc` for the Linux `x86_64`, macOS `aarch64`, and Windows `x86_64` targets in `mix.exs`. The Windows `start` script passes `%*` with delayed expansion off. The suite checks that script as text and does not run it on Windows. When Burrito has no published OTP for this host version, the wrap uses the local ERTS at the running VM's root. A cross target whose published OTP returns 404 is skipped. A Windows target is skipped when `7z` is not on `PATH`. The plain release still succeeds.
+`mix test --only release` builds a plain Mix release with `AGENTLINK_BURRITO=0` and checks `bin/agentlink start` for each mode, plus `SIGTERM`. It does not build a Burrito binary. `AgentLink.Release.forward_signals/1` compiles wrappers with `zig cc` for the Linux `x86_64`, macOS `aarch64`, and Windows `x86_64` targets in `mix.exs`. The Windows `start` script passes `%*` with delayed expansion off and sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. `argv_from_launch/1` drops one leading `start` only when that variable is `1`. `start start` is a usage error. A target whose published OTP returns 404 is skipped, including Linux. A Windows target is skipped when `7z` is not on `PATH`. The plain release still succeeds. The host ERTS is not packaged as `agentlink_linux`.
 
 Set `AGENTLINK_BIN` to the wrapped binary. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 

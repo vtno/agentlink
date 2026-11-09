@@ -170,12 +170,31 @@ defmodule AgentLink.CLITest do
     assert release_mode(["-extra", "--no-halt", "--", "relay", "--token", "sekret"]) == "relay"
   end
 
-  test "a leading start is the release script word" do
-    assert {:ok, %AgentLink.CLI{mode: :plane}} = AgentLink.CLI.parse(["start", "plane"])
-    assert {:ok, %AgentLink.CLI{mode: :all}} = AgentLink.CLI.parse(["start"])
+  test "a leading start is a usage error" do
+    assert {:error, message} = AgentLink.CLI.parse(["start"])
+    assert message =~ "agentlink relay"
+    assert {:error, _} = AgentLink.CLI.parse(["start", "start"])
+    assert {:error, _} = AgentLink.CLI.parse(["start", "plane"])
+    assert {:error, _} = AgentLink.CLI.parse(["start", "relay", "--token", "sekret"])
+  end
 
-    assert {:ok, %AgentLink.CLI{mode: :relay}} =
-             AgentLink.CLI.parse(["start", "relay", "--token", "sekret"])
+  test "the Windows start script drops one leading start" do
+    System.delete_env("__BURRITO")
+    System.put_env("AGENTLINK_WINDOWS_START", "1")
+
+    on_exit(fn -> System.delete_env("AGENTLINK_WINDOWS_START") end)
+
+    assert AgentLink.CLI.argv_from_launch(["start", "plane", "--port", "9"]) == [
+             "plane",
+             "--port",
+             "9"
+           ]
+
+    assert AgentLink.CLI.argv_from_launch(["start", "start"]) == ["start"]
+    assert AgentLink.CLI.argv_from_launch(["start"]) == []
+    assert AgentLink.CLI.argv_from_launch(["plane"]) == ["plane"]
+    System.delete_env("AGENTLINK_WINDOWS_START")
+    assert AgentLink.CLI.argv_from_launch(["start", "plane"]) == ["start", "plane"]
   end
 
   test "a release boot with no words leaves the configured mode" do

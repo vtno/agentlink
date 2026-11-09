@@ -33,8 +33,16 @@ defmodule AgentLink.LifecycleTest do
       connect_observer: Application.get_env(:agent_link, :connect_observer),
       config_root: Application.get_env(:agent_link, :config_root),
       halt_listener: Application.get_env(:agent_link, :halt_listener),
-      agent_open_listener: Application.get_env(:agent_link, :agent_open_listener)
+      agent_open_listener: Application.get_env(:agent_link, :agent_open_listener),
+      sticky_listener: Application.get_env(:agent_link, :sticky_listener),
+      reaper_dir: Application.get_env(:agent_link, :reaper_dir)
     }
+
+    reaper_dir =
+      Path.join(System.tmp_dir!(), "agentlink-reaper-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(reaper_dir)
+    Application.put_env(:agent_link, :reaper_dir, reaper_dir)
 
     on_exit(fn ->
       # A timed-out test is already a failure. Kill the names it registered
@@ -44,7 +52,8 @@ defmodule AgentLink.LifecycleTest do
             AgentLink.Relay.Agent.Supervisor,
             AgentLink.Plane.Supervisor,
             AgentLink.Agent.Reaper,
-            AgentLink.Relay.Agent
+            AgentLink.Relay.Agent,
+            AgentLink.Uplink
           ] do
         if pid = Process.whereis(name) do
           ref = Process.monitor(pid)
@@ -177,7 +186,7 @@ defmodule AgentLink.LifecycleTest do
     child_started = starttime!(child)
     File.rm!(pidfile)
     assert :ok = GenServer.stop(agent, :shutdown)
-    assert_receive {:DOWN, ^ref, :process, ^agent, _reason}
+    assert_receive {:DOWN, ^ref, :process, ^agent, _reason}, 5_000
     await_gone!(parent, parent_started)
     await_gone!(child, child_started)
     new_agent = await_named(AgentLink.Relay.Agent, agent)
@@ -201,7 +210,7 @@ defmodule AgentLink.LifecycleTest do
     {parent, child} = await_hold!(pidfile, agent)
     parent_started = starttime!(parent)
     child_started = starttime!(child)
-    assert_receive {:agent_opening, _owner}
+    assert_received {:agent_opening, _owner}
     File.rm!(pidfile)
     assert :ok = GenServer.stop(agent, :shutdown)
     assert_receive {:agent_opening, _owner}, 5_000
@@ -225,7 +234,7 @@ defmodule AgentLink.LifecycleTest do
     Application.put_env(:agent_link, :sticky_listener, self())
     pidfile = sticky_link!()
     sup = start!(:relay)
-    assert_receive {:sticky_opened, os_pid}
+    assert_received {:sticky_opened, os_pid}
     started = starttime!(os_pid)
     kill = System.find_executable("kill")
     path = System.get_env("PATH")
@@ -251,6 +260,108 @@ defmodule AgentLink.LifecycleTest do
     assert os_alive?(os_pid, started)
     refute_received {:sticky_opened, _}
     refute File.exists?(pidfile)
+  end
+
+  test "a reaper restart still blocks the next open" do
+    Application.put_env(:agent_link, :agent_module, AgentLink.LifecycleTest.Sticky)
+    Application.put_env(:agent_link, :sticky_listener, self())
+    sticky_link!()
+    assert {:ok, reaper} = AgentLink.Agent.Reaper.start_link()
+
+    assert {:ok, _relay} =
+             AgentLink.Relay.Agent.start_link(
+               transport: AgentLink.FakeTransport,
+               transport_opts: [backoff: 60_000],
+               watch_interval: nil
+             )
+
+    assert_receive {:sticky_opened, os_pid}, 5_000
+    started = starttime!(os_pid)
+    record = AgentLink.Agent.Reaper.record_path()
+    kill = System.find_executable("kill")
+    path = System.get_env("PATH")
+
+    on_exit(fn ->
+      if is_binary(path), do: System.put_env("PATH", path)
+      stop_named(AgentLink.Relay.Agent)
+      stop_named(AgentLink.Uplink)
+      stop_named(AgentLink.Agent.Reaper)
+
+      if is_binary(kill) and os_alive?(os_pid, started) and
+           Integer.to_string(os_pid) != System.pid() do
+        System.cmd(kill, ["-s", "KILL", "--", Integer.to_string(os_pid)], stderr_to_stdout: true)
+      end
+    end)
+
+    assert :ok = GenServer.stop(AgentLink.Relay.Agent, :shutdown)
+    stop_named(AgentLink.Uplink)
+    ref = Process.monitor(reaper)
+    Process.exit(reaper, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^reaper, :killed}, 5_000
+    assert File.regular?(record)
+    refute Process.whereis(AgentLink.Agent.Reaper)
+    assert {:ok, _reaper} = AgentLink.Agent.Reaper.start_link()
+
+    empty =
+      Path.join(System.tmp_dir!(), "agentlink-no-kill-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(empty)
+    System.put_env("PATH", empty)
+
+    assert {:error, {:reap, :no_kill}} =
+             AgentLink.Relay.Agent.start_link(
+               transport: AgentLink.FakeTransport,
+               transport_opts: [backoff: 60_000],
+               watch_interval: nil
+             )
+
+    refute_received {:sticky_opened, _}
+    assert os_alive?(os_pid, started)
+    assert AgentLink.Agent.Process.same_start?(os_pid, field_starttime!(os_pid))
+  end
+
+  test "reap and retain fail when the reaper is absent" do
+    refute Process.whereis(AgentLink.Agent.Reaper)
+    assert AgentLink.Agent.Reaper.reap() == {:error, :noproc}
+    assert AgentLink.Agent.Reaper.retain([]) == {:error, :noproc}
+  end
+
+  test "init drops a record whose start time does not match" do
+    Application.put_env(:agent_link, :agent_module, AgentLink.LifecycleTest.Sticky)
+    Application.put_env(:agent_link, :sticky_listener, self())
+    sticky_link!()
+    assert {:ok, reaper} = AgentLink.Agent.Reaper.start_link()
+
+    assert {:ok, _relay} =
+             AgentLink.Relay.Agent.start_link(
+               transport: AgentLink.FakeTransport,
+               transport_opts: [backoff: 60_000],
+               watch_interval: nil
+             )
+
+    assert_receive {:sticky_opened, os_pid}, 5_000
+    started = starttime!(os_pid)
+    kill = System.find_executable("kill")
+
+    on_exit(fn ->
+      stop_named(AgentLink.Relay.Agent)
+      stop_named(AgentLink.Uplink)
+      stop_named(AgentLink.Agent.Reaper)
+
+      if is_binary(kill) and os_alive?(os_pid, started) and
+           Integer.to_string(os_pid) != System.pid() do
+        System.cmd(kill, ["-s", "KILL", "--", Integer.to_string(os_pid)], stderr_to_stdout: true)
+      end
+    end)
+
+    assert :ok = GenServer.stop(AgentLink.Relay.Agent, :shutdown)
+    stop_named(AgentLink.Uplink)
+    stop_named(reaper)
+    path = AgentLink.Agent.Reaper.record_path()
+    File.write!(path, :erlang.term_to_binary([{os_pid, "not-the-start-time"}]))
+    assert {:ok, _} = AgentLink.Agent.Reaper.start_link()
+    assert :ok = AgentLink.Agent.Reaper.reap()
+    assert os_alive?(os_pid, started)
   end
 
   test "all mode stop reaps the agent process group and closes the listener" do
@@ -452,6 +563,32 @@ defmodule AgentLink.LifecycleTest do
     {:ok, stat} = File.read("/proc/#{pid}/stat")
     {:ok, %{starttime: starttime}} = AgentLink.OwnedStop.parse_stat(stat)
     starttime
+  end
+
+  defp field_starttime!(pid) do
+    {:ok, stat} = File.read("/proc/#{pid}/stat")
+    {pos, 1} = stat |> :binary.matches(")") |> List.last()
+    rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
+    rest |> String.split(" ", trim: true) |> Enum.at(19)
+  end
+
+  defp stop_named(pid) when is_pid(pid) do
+    if Process.alive?(pid) do
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _} -> :ok
+      after
+        1_000 -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp stop_named(name) do
+    if pid = Process.whereis(name), do: stop_named(pid), else: :ok
   end
 
   defp sticky_link! do

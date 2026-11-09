@@ -6,8 +6,10 @@ defmodule AgentLink.CLI do
   replaces the configured mode, port, and token.
   `plane` is the plane alone. `relay` starts `AgentLink.Relay.Agent`.
   `connect` starts `AgentLink.Relay.Client`.
-  `parse/1` drops a leading `start`. That word is what the Windows release
-  script leaves in `%*`.
+  `parse/1` does not drop `start`. `start` and `start start` are usage errors.
+  The Windows release script sets `AGENTLINK_WINDOWS_START=1` and leaves its
+  own `start` in `%*`. `argv_from_launch/1` drops that one word only when the
+  variable is `1`.
   """
 
   defstruct mode: :all, port: nil, token: nil, plane: nil, target: nil
@@ -49,7 +51,9 @@ defmodule AgentLink.CLI do
   after `--`. A release boot has `RELEASE_ROOT` set. A Burrito boot has
   `__BURRITO` set. Both drop a leading `--no-halt --` pair. An explicit list
   drops that pair only when `__BURRITO` is set. Any other launch uses
-  `System.argv/0` and keeps the list it was given.
+  `System.argv/0` and keeps the list it was given. A Windows `start` script
+  sets `AGENTLINK_WINDOWS_START` to `1`. That boot drops one leading `start`.
+  Any other boot keeps `start`.
   """
   def argv_from_launch(argv \\ nil) do
     {argv, launcher?} =
@@ -64,8 +68,15 @@ defmodule AgentLink.CLI do
           {System.argv(), false}
       end
 
-    if launcher?, do: drop_launcher_prefix(argv), else: argv
+    argv = if launcher?, do: drop_launcher_prefix(argv), else: argv
+    drop_windows_script_start(argv)
   end
+
+  defp drop_windows_script_start(["start" | rest]) do
+    if System.get_env("AGENTLINK_WINDOWS_START") == "1", do: rest, else: ["start" | rest]
+  end
+
+  defp drop_windows_script_start(argv), do: argv
 
   defp launcher_boot? do
     System.get_env("__BURRITO") != nil or System.get_env("RELEASE_ROOT") != nil
@@ -86,7 +97,6 @@ defmodule AgentLink.CLI do
   def parse(["plane" | rest]), do: listen(rest, :plane)
   def parse(["relay" | rest]), do: relay(rest)
   def parse(["connect" | rest]), do: connect(rest)
-  def parse(["start" | rest]), do: parse(rest)
   def parse(["--" <> _ | _] = argv), do: listen(argv, :all)
   def parse(_argv), do: {:error, usage()}
 

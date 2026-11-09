@@ -59,7 +59,7 @@ defmodule AgentLink.MixProject do
         steps: steps,
         burrito: [
           targets: [
-            linux: [os: :linux, cpu: :x86_64],
+            linux: linux_target(),
             macos: [os: :darwin, cpu: :aarch64],
             windows: [os: :windows, cpu: :x86_64]
           ]
@@ -67,4 +67,6 @@ defmodule AgentLink.MixProject do
       ]
     ]
   end
+
+  defp linux_target, do: [os: :linux, cpu: :x86_64]
 end

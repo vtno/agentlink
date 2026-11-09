@@ -1,55 +1,149 @@
 defmodule AgentLink.Release.ERTS do
   @moduledoc """
-  Resolves the Burrito ERTS when the published tarball for this OTP is missing.
+  Chooses which Burrito targets have a published OTP.
 
-  Burrito's default resolver downloads a precompiled OTP that matches the host
-  version and raises when that URL returns 404. `do_resolve/1` tries that
-  download. When the target is this machine's OS and CPU and the error is a
-  404, the Linux wrap uses the unpacked ERTS at `:code.root_dir/0`. That tree
-  is the OTP the VM is already running, so its NIFs stay the ones shipped with
-  that OTP. A 404 for any other target is raised again. `AgentLink.Release.wrap_burrito/1`
-  drops those other targets before the build when their URL returns 404, and
-  the plain Mix release still succeeds.
+  A target is kept when the fetcher reports HTTP 200..299, or when the spec
+  sets `:custom_erts`. HTTP 404 skips that target. Windows is also skipped
+  when `7z` and `7zz` are both missing. A skip does not substitute
+  `:code.root_dir/0`. The plain Mix release still succeeds. Any other fetcher
+  result keeps the target so the build reports that error itself.
+
+  `AGENTLINK_CUSTOM_ERTS`, when set, keeps the Linux target and is the OTP
+  archive `do_resolve/1` downloads. The target stays precompiled until then,
+  so Burrito still fetches the musl runtime. The value is a URL or a local
+  `.tar.gz`. A directory is refused. It is not the host ERTS.
   """
 
-  @behaviour Burrito.Util.ERTSResolver
+  @doc """
+  Split `targets` into the ones to build and the skip messages.
 
-  alias Burrito.Builder.Target
+  `opts` accepts `:fetcher`, `:version`, `:seven_zip?`, and `:pinned_linux`.
+  The fetcher is `fun(os, cpu, version) -> {:ok, status} | {:error, term}`.
+  `:pinned_linux` is `AGENTLINK_CUSTOM_ERTS`. A non-empty value keeps Linux
+  without calling the fetcher.
+  """
+  @spec select([{atom(), keyword()}], keyword()) :: {[{atom(), keyword()}], [String.t()]}
+  def select(targets, opts \\ []) when is_list(targets) and is_list(opts) do
+    fetcher = Keyword.get(opts, :fetcher, default_fetcher())
+    version = Keyword.get(opts, :version, Burrito.Util.get_otp_version())
+    seven_zip? = Keyword.get(opts, :seven_zip?, seven_zip?())
+    pinned_linux = Keyword.get(opts, :pinned_linux)
 
-  @impl true
-  def do_resolve(%Target{} = target) do
-    try do
-      Burrito.Util.DefaultERTSResolver.do_resolve(target)
-    rescue
-      error in RuntimeError ->
-        case decide(target, Exception.message(error)) do
-          {:local, path} ->
-            Burrito.Builder.Log.warning(
-              :step,
-              "No published OTP for #{target.os} #{target.cpu}. Using the local ERTS at #{path}."
-            )
+    {kept, skips} =
+      Enum.reduce(targets, {[], []}, fn {name, spec}, {kept, skips} ->
+        case decide(spec, version, seven_zip?, fetcher, pinned_linux) do
+          :keep -> {[{name, spec} | kept], skips}
+          {:skip, message} -> {kept, [message | skips]}
+        end
+      end)
 
-            %Target{target | erts_source: {:local_unpacked, path: path}}
+    {Enum.reverse(kept), Enum.reverse(skips)}
+  end
 
-          :raise ->
-            reraise error, __STACKTRACE__
+  @doc """
+  Keep one target, or skip it.
+
+  A 404 is a skip. A target with `:custom_erts` is kept without calling `fetcher`.
+  Linux is also kept when `pinned_linux` is a non-empty binary.
+  """
+  @spec decide(keyword(), String.t(), boolean(), (atom(), atom(), String.t() -> term()), term()) ::
+          :keep | {:skip, String.t()}
+  def decide(spec, version, seven_zip?, fetcher, pinned_linux \\ nil)
+      when is_list(spec) and is_binary(version) and is_boolean(seven_zip?) and
+             is_function(fetcher, 3) do
+    cond do
+      custom_erts?(spec) ->
+        :keep
+
+      spec[:os] == :linux and is_binary(pinned_linux) and pinned_linux != "" ->
+        :keep
+
+      spec[:os] == :windows and not seven_zip? ->
+        {:skip, windows_message(spec)}
+
+      true ->
+        case fetcher.(spec[:os], spec[:cpu], version) do
+          {:ok, status} when status in 200..299 -> :keep
+          {:ok, 404} -> {:skip, missing_message(spec, version)}
+          _other -> :keep
         end
     end
   end
 
-  @doc """
-  Choose a local ERTS when `message` is a 404 for this machine's OS and CPU.
+  @behaviour Burrito.Util.ERTSResolver
 
-  Returns `{:local, path}` or `:raise`.
-  """
-  @spec decide(Target.t(), String.t()) :: {:local, String.t()} | :raise
-  def decide(%Target{os: os, cpu: cpu}, message) when is_binary(message) do
-    host? = os == Burrito.Util.get_current_os() and cpu == Burrito.Util.get_current_cpu()
+  @impl Burrito.Util.ERTSResolver
+  def do_resolve(%Burrito.Builder.Target{os: :linux, erts_source: {:precompiled, _}} = target) do
+    case System.get_env("AGENTLINK_CUSTOM_ERTS") do
+      erts when is_binary(erts) and erts != "" ->
+        target
+        |> pinned_source(erts)
+        |> Burrito.Util.DefaultERTSResolver.do_resolve()
 
-    if host? and String.contains?(message, "404") do
-      {:local, to_string(:code.root_dir())}
-    else
-      :raise
+      _ ->
+        Burrito.Util.DefaultERTSResolver.do_resolve(target)
     end
+  end
+
+  def do_resolve(%Burrito.Builder.Target{} = target) do
+    Burrito.Util.DefaultERTSResolver.do_resolve(target)
+  end
+
+  defp pinned_source(target, erts) do
+    cond do
+      File.dir?(erts) ->
+        raise "AGENTLINK_CUSTOM_ERTS must be a URL or a .tar.gz. The host ERTS is not used."
+
+      String.starts_with?(erts, "http://") or String.starts_with?(erts, "https://") ->
+        %Burrito.Builder.Target{target | erts_source: {:url, url: URI.parse(erts)}}
+
+      String.ends_with?(erts, ".tar.gz") or String.ends_with?(erts, ".exe") ->
+        %Burrito.Builder.Target{target | erts_source: {:local, path: erts}}
+
+      true ->
+        raise "AGENTLINK_CUSTOM_ERTS must be a URL or a .tar.gz. The host ERTS is not used."
+    end
+  end
+
+  @doc false
+  def published_status(os, cpu, version) do
+    url =
+      os
+      |> Burrito.Util.ERTSUniversalMachineFetcher.fetch_version(nil, cpu, version)
+      |> URI.to_string()
+
+    case Req.request(method: :head, url: url, retry: false, receive_timeout: 20_000) do
+      {:ok, %{status: status}} -> {:ok, status}
+      other -> {:error, other}
+    end
+  end
+
+  defp default_fetcher do
+    Application.get_env(:agent_link, :erts_fetcher, &published_status/3)
+  end
+
+  defp custom_erts?(spec) do
+    case spec[:custom_erts] do
+      value when is_binary(value) and value != "" -> true
+      _ -> false
+    end
+  end
+
+  defp seven_zip? do
+    System.find_executable("7z") != nil or System.find_executable("7zz") != nil
+  end
+
+  defp windows_message(spec) do
+    "agentlink: skipping Burrito target windows #{spec[:cpu]}. " <>
+      "7z is not on PATH, so the Windows OTP archive cannot be unpacked. " <>
+      "The plain release is unchanged."
+  end
+
+  defp missing_message(spec, version) do
+    "agentlink: skipping Burrito target #{spec[:os]} #{spec[:cpu]}. " <>
+      "No published OTP #{version} (HTTP 404). The plain release is unchanged. " <>
+      "This build does not substitute the host ERTS. " <>
+      "To build this target, set custom_erts on it in mix.exs to a URL or a local .tar.gz of a published OTP. " <>
+      "AGENTLINK_CUSTOM_ERTS is that archive for Linux and still fetches the musl runtime."
   end
 end

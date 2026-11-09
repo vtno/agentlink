@@ -17,12 +17,26 @@ defmodule AgentLink.Relay.AgentTest do
 
     Application.put_env(:agent_link, :link_path, path)
 
+    reaper_dir =
+      Path.join(System.tmp_dir!(), "agentlink-reaper-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(reaper_dir)
+    previous_reaper = Application.get_env(:agent_link, :reaper_dir)
+    Application.put_env(:agent_link, :reaper_dir, reaper_dir)
+    start_supervised!(AgentLink.Agent.Reaper)
+
     on_exit(fn ->
       Application.delete_env(:agent_link, :agent_listener)
 
       if previous,
         do: Application.put_env(:agent_link, :link_path, previous),
         else: Application.delete_env(:agent_link, :link_path)
+
+      if previous_reaper,
+        do: Application.put_env(:agent_link, :reaper_dir, previous_reaper),
+        else: Application.delete_env(:agent_link, :reaper_dir)
+
+      File.rm_rf(reaper_dir)
 
       File.rm(path)
       stop(AgentLink.Relay.Agent)

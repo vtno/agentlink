@@ -5,29 +5,35 @@ defmodule AgentLink.Release do
   `forward_start_args/1` edits the generated `bin/<name>` and `bin/<name>.bat`
   so `start` passes the words after `start` into the VM. `start plane` is the
   release form of `agentlink plane`. The Unix script uses `shift` and `"$@"`.
-  The Windows `start` path turns delayed expansion off and places `%*` after
-  `--` on the `elixir.bat` line. The tail is not assigned with `set`.
-  `start_iex` leaves that path and passes no user tail. `AgentLink.CLI.parse/1`
-  drops a leading `start`, which `%*` still contains. This suite checks the
-  generated script and does not run it on Windows.
+  The Windows `start` path turns delayed expansion off, sets
+  `AGENTLINK_WINDOWS_START=1`, and places `%*` after `--` on the `elixir.bat`
+  line. The tail is not assigned with `set`. `start_iex` leaves that path and
+  passes no user tail. `AgentLink.CLI.argv_from_launch/1` drops one leading
+  `start` only when that variable is `1`. `parse/1` does not drop `start`.
+  This suite checks the generated script and does not run it on Windows.
 
   | Bytes | What the script does |
   | --- | --- |
   | `a!b!c` | Delayed expansion is off on the `%*` line, so each `!` stays |
   | `^` | The tail is `%*`, so a quoted `^` stays. cmd still treats an unquoted `^` as its escape when it parses that line |
   | `&`, `|`, `<`, `>` | The tail is `%*`. A quoted argument stays one argument |
-  | `start` | `%*` includes that word. `parse/1` drops it |
+  | `start` | The Windows `start` path sets `AGENTLINK_WINDOWS_START=1`. `argv_from_launch/1` drops one leading `start` only when that variable is `1`. `parse/1` does not. `start start` is a usage error |
 
   `elixir.bat` turns delayed expansion off before it passes `%*` to `erl.exe`,
   and it stops walking options at `--`, so the words after `--` are not
   assigned with `set` there either.
 
-  `wrap_burrito/1` registers `AgentLink.Release.ERTS` and calls `Burrito.wrap/1`.
-  When the published OTP for this host returns 404, the Linux build uses the
-  local unpacked ERTS at `:code.root_dir/0`. A cross target whose published
-  OTP returns 404 is skipped. A Windows target is skipped when `7z` and `7zz`
-  are both absent, because Burrito unpacks that OTP with `7z`. The plain Mix
-  release still succeeds.
+  `wrap_burrito/1` calls `Burrito.wrap/1` only for targets
+  `AgentLink.Release.ERTS.select/2` keeps. A published OTP URL that returns
+  404 is skipped, including the host Linux target. That skip does not
+  substitute the host ERTS at `:code.root_dir/0`. A Windows target is skipped
+  when `7z` and `7zz` are both absent, because Burrito unpacks that OTP with
+  `7z`. When no target remains, the step does not call `Burrito.wrap/1`. The
+  plain Mix release still succeeds. `custom_erts` on a target is a URL or a
+  local `.tar.gz` of a published OTP and skips that check.
+  `AGENTLINK_CUSTOM_ERTS` is that archive for Linux. The Linux target stays
+  precompiled until `AgentLink.Release.ERTS.do_resolve/1`, so Burrito still
+  fetches the musl runtime. A directory is refused.
 
   `forward_signals/1` wraps each Burrito binary that `mix.exs` built:
   `burrito_out/<name>_linux`, `burrito_out/<name>_macos`, and
@@ -71,16 +77,35 @@ defmodule AgentLink.Release do
   end
 
   @doc """
-  Build the Burrito binaries, using the local ERTS when the published OTP is missing.
+  Build the Burrito binaries whose published OTP is available.
 
-  Registers `AgentLink.Release.ERTS` first. A target other than this machine
-  whose published OTP URL returns 404 is removed, and the step logs that skip.
-  `BURRITO_TARGET` keeps the requested target and does not probe the others.
-  Returns the release `Burrito.wrap/1` returns.
+  A target whose published OTP URL returns 404 is removed, including this
+  machine's OS, and the step logs that skip. The host ERTS is not substituted.
+  `BURRITO_TARGET` probes only that target. When none remain, `Burrito.wrap/1`
+  is not called and this returns the release unchanged. Otherwise it returns
+  the release `Burrito.wrap/1` returns.
   """
   def wrap_burrito(release) do
-    Burrito.register_erts_resolver(AgentLink.Release.ERTS)
-    Burrito.wrap(keep_published_targets(release))
+    {release, skips} = drop_unpublished(release)
+    Enum.each(skips, &IO.puts(:stderr, &1))
+
+    targets =
+      release.options
+      |> Keyword.get(:burrito, [])
+      |> Keyword.get(:targets, [])
+
+    if targets == [] do
+      IO.puts(
+        :stderr,
+        "agentlink: skipping the Burrito wrap. No wrapped binary was built. " <>
+          "The plain release is unchanged."
+      )
+
+      release
+    else
+      Burrito.register_erts_resolver(AgentLink.Release.ERTS)
+      Burrito.wrap(release)
+    end
   end
 
   @doc """
@@ -156,6 +181,7 @@ defmodule AgentLink.Release do
         "  set RELEASE_DISTRIBUTION_FLAG=--!RELEASE_DISTRIBUTION! \"!RELEASE_NODE!\"#{nl}" <>
         ")#{nl}" <>
         "setlocal DisableDelayedExpansion#{nl}" <>
+        "set AGENTLINK_WINDOWS_START=1#{nl}" <>
         "\"%REL_VSN_DIR%\\%REL_EXEC%.bat\" %REL_EXTRA% ^#{nl}" <>
         "  --cookie \"%RELEASE_COOKIE%\" ^#{nl}" <>
         "  %RELEASE_DISTRIBUTION_FLAG% ^#{nl}" <>
@@ -170,69 +196,26 @@ defmodule AgentLink.Release do
     replace_once(text, start, inserted)
   end
 
-  defp keep_published_targets(%{options: options} = release) do
-    if System.get_env("BURRITO_TARGET") do
-      release
-    else
-      burrito = Keyword.get(options, :burrito, [])
-      targets = Keyword.get(burrito, :targets, [])
-      host_os = Burrito.Util.get_current_os()
+  defp drop_unpublished(%{options: options} = release) do
+    burrito = Keyword.get(options, :burrito, [])
+    targets = Keyword.get(burrito, :targets, [])
 
-      kept =
-        Enum.filter(targets, fn {_name, spec} ->
-          spec[:os] == host_os or published?(spec)
-        end)
-
-      burrito = Keyword.put(burrito, :targets, kept)
-      %{release | options: Keyword.put(options, :burrito, burrito)}
-    end
-  end
-
-  defp published?(spec) do
-    if spec[:os] == :windows and is_nil(System.find_executable("7z")) and
-         is_nil(System.find_executable("7zz")) do
-      IO.puts(
-        :stderr,
-        "agentlink: skipping Burrito target windows #{spec[:cpu]}. " <>
-          "7z is not on PATH, so the Windows OTP archive cannot be unpacked. " <>
-          "The plain release is unchanged."
+    {kept, skips} =
+      AgentLink.Release.ERTS.select(requested(targets),
+        pinned_linux: System.get_env("AGENTLINK_CUSTOM_ERTS")
       )
 
-      false
-    else
-      published_url?(spec)
-    end
+    burrito = Keyword.put(burrito, :targets, kept)
+    {%{release | options: Keyword.put(options, :burrito, burrito)}, skips}
   end
 
-  defp published_url?(spec) do
-    version = Burrito.Util.get_otp_version()
+  defp requested(targets) do
+    case System.get_env("BURRITO_TARGET") do
+      name when is_binary(name) and name != "" ->
+        Enum.filter(targets, fn {target_name, _spec} -> to_string(target_name) == name end)
 
-    url =
-      spec[:os]
-      |> Burrito.Util.ERTSUniversalMachineFetcher.fetch_version(nil, spec[:cpu], version)
-      |> URI.to_string()
-
-    case Req.request(method: :head, url: url, retry: false, receive_timeout: 20_000) do
-      {:ok, %{status: status}} when status in 200..299 ->
-        true
-
-      {:ok, %{status: 404}} ->
-        IO.puts(
-          :stderr,
-          "agentlink: skipping Burrito target #{spec[:os]} #{spec[:cpu]}. " <>
-            "No published OTP #{version} (HTTP 404). The plain release is unchanged."
-        )
-
-        false
-
-      other ->
-        IO.puts(
-          :stderr,
-          "agentlink: could not check published OTP for #{spec[:os]} #{spec[:cpu]} " <>
-            "(#{inspect(other)}). The build will try that target."
-        )
-
-        true
+      _ ->
+        targets
     end
   end
 

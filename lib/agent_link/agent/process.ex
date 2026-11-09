@@ -149,11 +149,12 @@ defmodule AgentLink.Agent.Process do
   confirmation wait is `:agent_stop_timeout`, or `1000` milliseconds when
   that value is shorter, so a timeout of `0` still observes the reap.
   `close/1` reads `/proc` again immediately before `SIGKILL` and refreshes
-  each recorded process group. `close/1` does not return `:ok` while a
+  each recorded process group.   `close/1` does not return `:ok` while a
   recorded process remains. A remaining `{pid, starttime}` is passed to
-  `AgentLink.Agent.Reaper.retain/1`. The next relay calls `reap/0` before
-  `open/3`. `AgentLink.Relay.Agent` sizes its shutdown to hold both waits
-  and both `kill` commands.
+  `AgentLink.Agent.Reaper.retain/1`. When that process is not running,
+  `retain/1` returns `{:error, :noproc}` and `close/1` returns that error.
+  The next relay calls `reap/0` before `open/3`. `AgentLink.Relay.Agent`
+  sizes its shutdown to hold both waits and both `kill` commands.
 
   A pid whose start time changed is left alone. `close/1` does not signal
   the VM's own OS pid. On macOS, `close/1` closes stdin and does not signal
@@ -162,7 +163,12 @@ defmodule AgentLink.Agent.Process do
   group and does not create a Job Object.
   """
   @impl true
-  @spec close(term) :: :ok | {:error, :timeout} | {:error, :no_kill} | {:error, :kill_failed}
+  @spec close(term) ::
+          :ok
+          | {:error, :timeout}
+          | {:error, :no_kill}
+          | {:error, :kill_failed}
+          | {:error, :noproc}
   def close(port) do
     case take_record(port) do
       nil ->
@@ -187,8 +193,10 @@ defmodule AgentLink.Agent.Process do
                 signal_error(term)
 
               :timeout ->
-                retain_alive(owned)
-                signal_error(first_error([kill, {:error, :timeout}]))
+                case retain_alive(owned) do
+                  :ok -> signal_error(first_error([kill, {:error, :timeout}]))
+                  {:error, reason} -> {:error, reason}
+                end
             end
         end
     end
@@ -238,6 +246,11 @@ defmodule AgentLink.Agent.Process do
             end
         end
     end
+  end
+
+  @doc false
+  def same_start?(pid, starttime) when is_integer(pid) and is_binary(starttime) do
+    matching?(pid, starttime)
   end
 
   defp open_command(command, args, cwd, finder) do

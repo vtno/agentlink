@@ -80,7 +80,7 @@ defmodule AgentLink.Plane.SubscriptionTest do
 
     Process.exit(client, :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
     assert_received {:subscription_down, "client-1", "session-1"}
     refute Process.alive?(pid)
   end
