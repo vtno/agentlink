@@ -34,39 +34,15 @@ defmodule AgentLink.MixProject do
       {:plug, "~> 1.16"},
       {:mint, "~> 1.6"},
       {:mint_web_socket, "~> 1.0"},
-      {:floki, "~> 0.37", only: :test},
-      # PR #230 (fix/dont-let-elixir-cli-consume-app-args). Not released.
-      # The launcher passes `--no-halt --` so Elixir's CLI does not halt.
-      {:burrito,
-       github: "joshrotenberg/burrito",
-       ref: "f2d437041418abb9073a6d7588d22835a04ee7cb",
-       runtime: false}
+      {:floki, "~> 0.37", only: :test}
     ]
   end
 
   defp releases do
-    steps = [:assemble, &AgentLink.Release.forward_start_args/1]
-
-    steps =
-      if System.get_env("AGENTLINK_BURRITO") == "0" do
-        steps
-      else
-        steps ++ [&AgentLink.Release.wrap_burrito/1, &AgentLink.Release.forward_signals/1]
-      end
-
     [
       agentlink: [
-        steps: steps,
-        burrito: [
-          targets: [
-            linux: linux_target(),
-            macos: [os: :darwin, cpu: :aarch64],
-            windows: [os: :windows, cpu: :x86_64]
-          ]
-        ]
+        steps: [:assemble, &AgentLink.Release.forward_start_args/1]
       ]
     ]
   end
-
-  defp linux_target, do: [os: :linux, cpu: :x86_64]
 end

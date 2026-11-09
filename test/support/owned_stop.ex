@@ -20,13 +20,6 @@ defmodule AgentLink.OwnedStop do
   process-tree stop on macOS or Windows. When `/proc` cannot be read,
   `capture/1` returns `:error` and `stop/1` returns
   `{:error, :proc_unreadable}` without signaling.
-
-  This module does not change the Burrito launcher. `AgentLink.Release.forward_signals/1`
-  wraps the Linux, macOS, and Windows Burrito binaries. The Linux and macOS
-  wrappers forward `SIGTERM` and `SIGINT` to the VM. The launcher in
-  `deps/burrito/src/erlang_launcher.zig` calls `child.kill` when a write to
-  the launcher stdout returns a negative result. The comment there names
-  `EPIPE` as the example.
   """
 
   # proc(5) counts pid as field 1 and comm as field 2. starttime is field 22.

@@ -1,16 +1,16 @@
 defmodule AgentLink.CLITest do
   use ExUnit.Case, async: false
 
-  test "a wrapped binary drops the launcher prefix" do
-    System.put_env("__BURRITO", "1")
-    on_exit(fn -> System.delete_env("__BURRITO") end)
+  test "a release boot drops the launcher prefix" do
+    System.put_env("RELEASE_ROOT", "/tmp")
+    on_exit(fn -> System.delete_env("RELEASE_ROOT") end)
 
     assert AgentLink.CLI.argv_from_launch(["--no-halt", "--", "plane", "--port", "9000"]) ==
              ["plane", "--port", "9000"]
   end
 
   test "a normal launch does not drop the launcher prefix" do
-    System.delete_env("__BURRITO")
+    System.delete_env("RELEASE_ROOT")
 
     assert AgentLink.CLI.argv_from_launch(["--no-halt", "--", "plane"]) ==
              ["--no-halt", "--", "plane"]
@@ -197,7 +197,7 @@ defmodule AgentLink.CLITest do
              "plane"
            ]
 
-    System.delete_env("__BURRITO")
+    System.delete_env("RELEASE_ROOT")
     System.put_env("AGENTLINK_WINDOWS_START", "1")
     on_exit(fn -> System.delete_env("AGENTLINK_WINDOWS_START") end)
 
@@ -249,7 +249,7 @@ defmodule AgentLink.CLITest do
       System.cmd(
         System.find_executable("erl"),
         ["-noshell", "-pa", ebin, "-eval", eval | extra],
-        env: [{"RELEASE_ROOT", "/tmp"}, {"ERL_LIBS", lib}, {"__BURRITO", nil}],
+        env: [{"RELEASE_ROOT", "/tmp"}, {"ERL_LIBS", lib}],
         stderr_to_stdout: true
       )
 

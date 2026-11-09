@@ -1,11 +1,14 @@
 defmodule AgentLink.ReleaseLifecycleTest do
   @moduledoc """
-  A plain Mix release, built with `AGENTLINK_BURRITO=0`.
+  The plain Mix release from `mix release`.
 
   `mix test --only release` runs these tests. The default suite excludes
   `:release`. Each test sets `RELEASE_SYS_CONFIG` and `HOME`. `:cli` is
   `true`. `:agent_stop_timeout` in that config is `0`, so a hold fixture
   that ignores `SIGTERM` is `SIGKILL`ed without the default `5000` wait.
+  The commands are `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`,
+  and `bin/agentlink connect`. A process-group `SIGTERM` is sent only when
+  the release pid is that group and the group is not this VM's group.
   The test waits until the recorded start time no longer matches. Output
   shown on failure has the fixture token replaced with `[token]`.
   """
@@ -21,13 +24,19 @@ defmodule AgentLink.ReleaseLifecycleTest do
     {output, status} =
       System.cmd("mix", ["release", "--overwrite"],
         cd: root,
-        env: [{"MIX_ENV", "prod"}, {"AGENTLINK_BURRITO", "0"}],
+        env: [{"MIX_ENV", "prod"}],
         stderr_to_stdout: true
       )
 
     assert status == 0, output
     bin = Path.join(root, "_build/prod/rel/agentlink/bin/agentlink")
-    assert File.read!(bin) =~ "start \"elixir\" --no-halt -- \"$@\""
+    script = File.read!(bin)
+    assert script =~ "shift\n    start \"elixir\" --no-halt -- \"$@\""
+    assert script =~ "*)\n    start \"elixir\" --no-halt -- \"$@\""
+    bat = File.read!(bin <> ".bat")
+    assert bat =~ ":cli\n"
+    assert bat =~ "setlocal DisableDelayedExpansion"
+    assert bat =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
     %{bin: bin}
   end
 
@@ -39,10 +48,10 @@ defmodule AgentLink.ReleaseLifecycleTest do
     Map.put(context, :dir, dir)
   end
 
-  test "start with no words keeps a sys.config plane", %{bin: bin, dir: dir} do
+  test "no arguments keep a sys.config plane", %{bin: bin, dir: dir} do
     port_num = 18_461
     sys = write_sys!(dir, plane_config(port_num))
-    {port, os_pid, started} = boot!(bin, ["start"], env(dir, "lifeplane", sys))
+    {port, os_pid, started} = boot!(bin, [], env(dir, "lifeplane", sys))
     log = await_listen!(port, port_num, "")
     assert shown(log) =~ "Waiting for the uplink to connect."
     refute shown(log) =~ "The agent relay on this machine is starting."
@@ -57,7 +66,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
     sys = write_sys!(dir, all_config(port_num))
 
     {port, os_pid, started} =
-      boot!(bin, ["start", "plane", "--port", "#{port_num}"], env(dir, "lifeplaneargv", sys))
+      boot!(bin, ["plane", "--port", "#{port_num}"], env(dir, "lifeplaneargv", sys))
 
     log = await_listen!(port, port_num, "")
     assert shown(log) =~ "Waiting for the uplink to connect."
@@ -73,7 +82,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
     sys = write_sys!(dir, plane_config(port_num))
 
     {port, os_pid, started} =
-      boot!(bin, ["start", "relay", "--token", "sekret"], env(dir, "liferelay", sys))
+      boot!(bin, ["relay", "--token", "sekret"], env(dir, "liferelay", sys))
 
     {parent, child, log} = await_hold!(port, pidfile, "")
     parent_started = starttime!(parent)
@@ -90,11 +99,11 @@ defmodule AgentLink.ReleaseLifecycleTest do
     refute accept?(port_num)
   end
 
-  test "start with no words runs all and SIGTERM reaps the hold fixture", %{bin: bin, dir: dir} do
+  test "no arguments run all and SIGTERM reaps the hold fixture", %{bin: bin, dir: dir} do
     port_num = 18_464
     pidfile = hold_link!(dir)
     sys = write_sys!(dir, all_config(port_num))
-    {port, os_pid, started} = boot!(bin, ["start"], env(dir, "lifeall", sys))
+    {port, os_pid, started} = boot!(bin, [], env(dir, "lifeall", sys))
 
     log =
       await_listen!(port, port_num, "", "The agent relay on this machine is starting.")
@@ -116,7 +125,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
     port_num = 18_465
     sys = write_sys!(dir, plane_config(port_num))
     env = env(dir, "lifestop", sys)
-    {port, _os_pid, _started} = boot!(bin, ["start", "plane"], env)
+    {port, _os_pid, _started} = boot!(bin, ["plane"], env)
     log = await_listen!(port, port_num, "")
     {output, status} = System.cmd(bin, ["stop"], env: env, stderr_to_stdout: true)
     assert status == 0, shown(output)
@@ -124,7 +133,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
     await_closed!(port_num)
   end
 
-  test "start connect with stdin closed exits 0", %{bin: bin, dir: dir} do
+  test "connect with stdin closed exits 0", %{bin: bin, dir: dir} do
     port_num = 18_466
     sys = write_sys!(dir, plane_config(port_num))
     closer = write_closer!(dir)
@@ -140,7 +149,6 @@ defmodule AgentLink.ReleaseLifecycleTest do
           "-oL",
           "-eL",
           bin,
-          "start",
           "connect",
           "--plane",
           "ws://127.0.0.1:9/acp",
@@ -166,7 +174,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
       {port, os_pid, started} =
         boot!(
           bin,
-          ["start", "connect", "--plane", "ws://127.0.0.1:9/acp", "--token", "sekret"],
+          ["connect", "--plane", "ws://127.0.0.1:9/acp", "--token", "sekret"],
           env
         )
 
@@ -179,8 +187,199 @@ defmodule AgentLink.ReleaseLifecycleTest do
     end
   end
 
+  test "process-group SIGTERM stops plane, relay, all, and connect", %{bin: bin, dir: dir} do
+    plane_group!(bin, dir)
+    relay_group!(bin, dir)
+    all_group!(bin, dir)
+    connect_group!(bin, dir)
+  end
+
+  defp plane_group!(bin, dir) do
+    port_num = 18_471
+    sys = write_sys!(dir, plane_config(port_num))
+
+    {port, leader, leader_started, child, child_started} =
+      boot_group!(bin, [], env(dir, "lifeplanegrp", sys))
+
+    log = await_listen!(port, port_num, "")
+    signal_group!(child, child_started)
+    assert await_status!(port, log) == 0
+    await_closed!(port_num)
+    await_gone!(child, child_started)
+    await_gone!(leader, leader_started)
+  end
+
+  defp relay_group!(bin, dir) do
+    pidfile = hold_link!(dir)
+    File.rm(pidfile)
+    sys = write_sys!(dir, plane_config(18_472))
+
+    {port, leader, leader_started, child, child_started} =
+      boot_group!(bin, ["relay", "--token", "sekret"], env(dir, "liferelaygrp", sys))
+
+    {parent, held, log} = await_hold!(port, pidfile, "")
+    parent_started = starttime!(parent)
+    held_started = starttime!(held)
+    track!(parent, parent_started)
+    track!(held, held_started)
+    signal_group!(child, child_started)
+    assert await_status!(port, log) == 0
+    await_gone!(parent, parent_started)
+    await_gone!(held, held_started)
+    await_gone!(child, child_started)
+    await_gone!(leader, leader_started)
+  end
+
+  defp all_group!(bin, dir) do
+    port_num = 18_473
+    pidfile = hold_link!(dir)
+    File.rm(pidfile)
+    sys = write_sys!(dir, all_config(port_num))
+
+    {port, leader, leader_started, child, child_started} =
+      boot_group!(bin, [], env(dir, "lifeallgrp", sys))
+
+    log = await_listen!(port, port_num, "", "The agent relay on this machine is starting.")
+    {parent, held, log} = await_hold!(port, pidfile, log)
+    parent_started = starttime!(parent)
+    held_started = starttime!(held)
+    track!(parent, parent_started)
+    track!(held, held_started)
+    signal_group!(child, child_started)
+    assert await_status!(port, log) == 0
+    await_closed!(port_num)
+    await_gone!(parent, parent_started)
+    await_gone!(held, held_started)
+    await_gone!(child, child_started)
+    await_gone!(leader, leader_started)
+  end
+
+  defp connect_group!(bin, dir) do
+    sys = write_sys!(dir, connect_config(), :notice)
+    env = env(dir, "lifeconnectgrp", sys)
+
+    {port, leader, leader_started, child, child_started} =
+      boot_group!(
+        bin,
+        ["connect", "--plane", "ws://127.0.0.1:9/acp", "--token", "sekret"],
+        env
+      )
+
+    log = await_running!(bin, env, port, child, "")
+    signal_group!(child, child_started)
+    {status, logged} = await_exit!(port, log)
+    assert status == 1, shown(logged)
+    assert shown(logged) =~ "SIGTERM received"
+    await_gone!(child, child_started)
+    await_gone!(leader, leader_started)
+  end
+
   defp boot!(bin, args, env) do
     boot_program!(System.find_executable("stdbuf"), ["-oL", "-eL", bin | args], env)
+  end
+
+  defp boot_group!(bin, args, env) do
+    setsid = System.find_executable("setsid")
+    stdbuf = System.find_executable("stdbuf")
+
+    {port, leader, leader_started} =
+      boot_program!(setsid, ["-w", "--", stdbuf, "-oL", "-eL", bin | args], env)
+
+    {child, child_started} =
+      await_child!(leader, leader_started, System.monotonic_time(:millisecond) + 10_000)
+
+    track!(child, child_started)
+    {port, leader, leader_started, child, child_started}
+  end
+
+  defp await_child!(parent, parent_started, deadline) do
+    receive do
+    after
+      0 ->
+        case group_leaders(parent) do
+          [pid] ->
+            {pid, starttime!(pid)}
+
+          [] ->
+            cond do
+              not still?(parent, parent_started) ->
+                flunk("setsid #{parent} exited before the release started")
+
+              System.monotonic_time(:millisecond) > deadline ->
+                flunk("setsid #{parent} did not start a release")
+
+              true ->
+                await_child!(parent, parent_started, deadline)
+            end
+
+          pids ->
+            flunk("setsid #{parent} started more than one group leader: #{inspect(pids)}")
+        end
+    end
+  end
+
+  defp group_leaders(parent) do
+    case File.ls("/proc") do
+      {:ok, names} ->
+        Enum.flat_map(names, fn name ->
+          with {pid, ""} <- Integer.parse(name),
+               {:ok, stat} <- File.read("/proc/#{pid}/stat"),
+               {:ok, %{ppid: ^parent, state: state}} <- AgentLink.OwnedStop.parse_stat(stat),
+               true <- state != "Z",
+               pgid when pgid == pid <- pgrp(pid) do
+            [pid]
+          else
+            _ -> []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp signal_group!(pid, starttime) do
+    pgid = pgrp(pid)
+    mine = pgrp(String.to_integer(System.pid()))
+
+    cond do
+      not still?(pid, starttime) ->
+        flunk("release #{pid} exited before the group signal")
+
+      pgid != pid ->
+        flunk(
+          "release #{pid} is in group #{inspect(pgid)}, so the test will not signal that group"
+        )
+
+      pgid == mine ->
+        flunk("release #{pid} shares this VM's process group")
+
+      true ->
+        System.cmd(
+          System.find_executable("kill"),
+          ["-s", "TERM", "--", Integer.to_string(-pgid)],
+          stderr_to_stdout: true
+        )
+
+        :ok
+    end
+  end
+
+  defp pgrp(pid) do
+    case File.read("/proc/#{pid}/stat") do
+      {:ok, stat} ->
+        {pos, _} = List.last(:binary.matches(stat, ")"))
+        rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
+        fields = String.split(rest, " ", trim: true)
+
+        case Integer.parse(Enum.at(fields, 2)) do
+          {pgid, ""} -> pgid
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp boot_program!(program, args, env) do

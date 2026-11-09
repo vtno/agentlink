@@ -49,25 +49,28 @@ mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 
 A plane with no token creates one for that process and prints it. Look for `AgentLink created a token for this process. Pass the same --token to start again.` AgentLink also prints `agentlink relay --token '…'`. AgentLink does not write the token to disk. Pass the same `--token` the next time you start the plane.
 
-## Build a binary
+## Build a release
 
-The build machine needs Elixir 1.17 or a later 1.x release, Zig 0.16.0, and `xz` on `PATH`. Burrito exits with status 1 when the Zig version is not 0.16.0. Burrito also exits with status 1 when `zig` or `xz` is missing. A Windows build needs `7z` or `7zz` on `PATH`. When `7z` and `7zz` are both missing, the Windows target is skipped and the plain release still succeeds. The machine that runs the binary does not need Elixir.
+The build machine needs Elixir 1.17 or a later 1.x release. The machine that runs the release does not need Elixir. The release includes its own ERTS.
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
-3. Put the binary for your machine on `PATH` as `agentlink`.
+3. Add `_build/prod/rel/agentlink/bin` to `PATH`, or run `bin/agentlink` by that path.
 
-With no `BURRITO_TARGET`, step 2 writes a wrapped binary for each target whose published OTP returns HTTP 200. The names are:
+The release directory looks like this:
 
-- `burrito_out/agentlink_linux`, the Linux x86_64 binary, when Burrito has a musl OTP for this OTP version.
-- `burrito_out/agentlink_macos`, the macOS binary for Apple Silicon (aarch64), when that OTP tarball is published.
-- `burrito_out/agentlink_windows.exe`, the Windows x86_64 binary, when that OTP archive is published and `7z` or `7zz` is on `PATH`.
+```text
+_build/prod/rel/agentlink/
+  bin/agentlink
+  bin/agentlink.bat
+  erts-<version>/
+  lib/
+  releases/
+```
 
-A target whose published OTP returns HTTP 404 is skipped. The message names the target and the OTP version. The plain release under `_build/prod/rel/agentlink` still succeeds. The host ERTS is not written out as `agentlink_linux`. When no target remains, `mix release` skips the Burrito wrap and writes no file under `burrito_out`. Burrito prints `Output Path:` and the file it wrote for each target it built.
+`bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink stop` stops the running node. `bin/agentlink start` also boots the release and passes any words after `start`.
 
-To build one binary, set `BURRITO_TARGET` to `linux`, `macos`, or `windows`. That target is skipped the same way when its OTP is missing.
-
-To pin a published OTP for Linux, set `AGENTLINK_CUSTOM_ERTS` to a URL or a local `.tar.gz` of a musl OTP. Burrito still fetches the musl runtime. A directory is refused, so the host ERTS is not substituted. The archive's OTP version must be the OTP version Mix compiled with. When the version can be read from the URL or the filename and it differs, the build logs that the archive's NIFs replace this release's NIFs and can break at runtime. When the name has no OTP version token, the build logs that the archive was not checked. `custom_erts` on a target in `mix.exs` is Burrito's pin for that one target.
+`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI drops one leading `start`. A direct `plane`, `relay`, or `connect` does not set that variable. This suite checks that script as text. It does not run the `.bat` file, and it does not run the release on macOS or Windows.
 
 ```sh
 agentlink
@@ -280,12 +283,12 @@ The relay reads one JSON object per line from the agent's standard output. The r
 
 `mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped` and `:release`.
 
-`mix test --only release` builds a plain Mix release with `AGENTLINK_BURRITO=0` and checks `bin/agentlink start` for each mode, plus `SIGTERM`. It does not build a Burrito binary. `AgentLink.Release.forward_signals/1` compiles wrappers with `zig cc` for the Linux `x86_64`, macOS `aarch64`, and Windows `x86_64` targets in `mix.exs`. The Windows `start` script passes `%*` with delayed expansion off and sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error. A target whose published OTP returns 404 is skipped, including Linux. A Windows target is skipped when `7z` is not on `PATH`. The plain release still succeeds. The host ERTS is not packaged as `agentlink_linux`.
+`mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
 
-Set `AGENTLINK_BIN` to the wrapped binary. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
+Set `AGENTLINK_BIN` to `bin/agentlink` in the release. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 
 ```sh
-AGENTLINK_BIN=./burrito_out/agentlink_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped
+AGENTLINK_BIN=./_build/prod/rel/agentlink/bin/agentlink OPENCODE_BIN=/path/to/opencode mix test --only wrapped
 ```
 
-The wrapped test starts the binary. The test asks OpenCode to write an HTML page, then checks the page.
+The wrapped test starts that release. The test asks OpenCode to write an HTML page, then checks the page.

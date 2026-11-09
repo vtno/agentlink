@@ -6,7 +6,7 @@ defmodule AgentLink.OpenCodeLiveTest do
 
   @tag :wrapped
   @tag timeout: 240_000
-  test "the wrapped binary asks the agent for a landing page" do
+  test "the release asks the agent for a landing page" do
     dir = tmp_dir()
     {port, page_dir} = start_binary(System.fetch_env!("AGENTLINK_BIN"), dir)
     {:os_pid, os_pid} = Port.info(port, :os_pid)

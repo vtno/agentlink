@@ -1,21 +1,22 @@
-defmodule AgentLink.Release.Wrapper do
-  @moduledoc false
-  defstruct [:suffix, :target, :source, :kind]
-end
-
 defmodule AgentLink.Release do
   @moduledoc """
   Mix release steps.
 
   `forward_start_args/1` edits the generated `bin/<name>` and `bin/<name>.bat`
-  so `start` passes the words after `start` into the VM. `start plane` is the
-  release form of `agentlink plane`. The Unix script uses `shift` and `"$@"`.
-  The Windows `start` path turns delayed expansion off, sets
-  `AGENTLINK_WINDOWS_START=1`, and places `%*` after `--` on the `elixir.bat`
-  line. The tail is not assigned with `set`. `start_iex` leaves that path and
-  passes no user tail. `AgentLink.CLI.argv_from_launch/1` drops one leading
-  `start` only when that variable is `1`. `parse/1` does not drop `start`.
-  This suite checks the generated script and does not run it on Windows.
+  so the CLI words reach the VM. `bin/agentlink`, `bin/agentlink plane`,
+  `bin/agentlink relay`, `bin/agentlink connect`, and a leading flag boot the
+  release. The script places those words after `--`, including when the list
+  is empty. `bin/agentlink start` still boots the release and passes the words
+  after `start`. `AgentLink.CLI` reads
+  `:init.get_plain_arguments/0` when `RELEASE_ROOT` is set.
+
+  The Unix script calls `start` with `"$@"`. The Windows script places `%*`
+  after `--` with delayed expansion off. The tail is not assigned with `set`.
+  `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1` because `%*`
+  still begins with `start`. `argv_from_launch/1` drops that one word only
+  when `:os.type/0` is `{:win32, _}` and the variable is `1`. A direct
+  `plane`, `relay`, or `connect` does not set the variable. This suite checks
+  the generated script and does not run it on Windows.
 
   | Bytes | What the script does |
   | --- | --- |
@@ -27,38 +28,6 @@ defmodule AgentLink.Release do
   `elixir.bat` turns delayed expansion off before it passes `%*` to `erl.exe`,
   and it stops walking options at `--`, so the words after `--` are not
   assigned with `set` there either.
-
-  `wrap_burrito/1` calls `Burrito.wrap/1` only for targets
-  `AgentLink.Release.ERTS.select/2` keeps. A published OTP URL that returns
-  404 is skipped, including the host Linux target. That skip does not
-  substitute the host ERTS at `:code.root_dir/0`. A Windows target is skipped
-  when `7z` and `7zz` are both absent, because Burrito unpacks that OTP with
-  `7z`. When no target remains, the step does not call `Burrito.wrap/1`. The
-  plain Mix release still succeeds. `custom_erts` on a target is a URL or a
-  local `.tar.gz` of a published OTP and skips that check.
-  `AGENTLINK_CUSTOM_ERTS` is that archive for Linux. The Linux target stays
-  precompiled until `AgentLink.Release.ERTS.do_resolve/1`, so Burrito still
-  fetches the musl runtime. A directory is refused.
-
-  `forward_signals/1` wraps each Burrito binary that `mix.exs` built:
-  `burrito_out/<name>_linux`, `burrito_out/<name>_macos`, and
-  `burrito_out/<name>_windows.exe`. `zig cc` compiles the wrapper. The Linux
-  target is `x86_64-linux-gnu` and the macOS target is `aarch64-macos`. Those
-  wrappers install the signal handler before `fork`, put the Burrito process
-  in its own process group, and forward one `SIGTERM` or one `SIGINT` to that
-  process's direct child, which is the VM, when its start time still matches.
-  The wrapper remembers that pid and start time. After the Burrito process
-  exits, it keeps signaling that identity, waits `2000` milliseconds, signals
-  `SIGKILL`, and exits with status 1 if the VM is still alive `2000`
-  milliseconds later. A grandchild such as `erl_child_setup` is not signaled.
-  The Windows target is `x86_64-windows-gnu`. That wrapper runs the Burrito
-  process in a Job Object with `KILL_ON_JOB_CLOSE`, turns Ctrl-C, Ctrl-Break,
-  and console close into one Ctrl-Break for the child process group, waits
-  `2000` milliseconds, and calls `TerminateJobObject` if the child is still
-  running. A forced stop exits with status 1. Set `AGENTLINK_BURRITO=0` to
-  skip `Burrito.wrap/1` and this step. `AGENTLINK_ZIG` is the `zig`
-  executable. When it is unset, `zig` on `PATH` is used, then
-  `/tmp/zig-0.16.0/zig`.
   """
 
   @unix_needle """
@@ -68,71 +37,16 @@ defmodule AgentLink.Release do
   """
 
   @doc """
-  Pass the words after `start` into the release VM.
+  Pass CLI words into the release VM.
 
   Returns the release. Raises if the generated script no longer contains the
-  Elixir 1.17 `start` command this step rewrites.
+  Elixir 1.17 `start` command or the unknown-command clause this step rewrites.
   """
   def forward_start_args(release) do
     root = release_path(release)
     name = release_name(release)
     patch_file!(Path.join([root, "bin", name]), &patch_unix/1)
     patch_file!(Path.join([root, "bin", name <> ".bat"]), &patch_bat/1)
-    release
-  end
-
-  @doc """
-  Build the Burrito binaries whose published OTP is available.
-
-  A target whose published OTP URL returns 404 is removed, including this
-  machine's OS, and the step logs that skip. The host ERTS is not substituted.
-  `BURRITO_TARGET` probes only that target. When none remain, `Burrito.wrap/1`
-  is not called and this returns the release unchanged. Otherwise it returns
-  the release `Burrito.wrap/1` returns.
-  """
-  def wrap_burrito(release) do
-    {release, skips} = drop_unpublished(release)
-    Enum.each(skips, &IO.puts(:stderr, &1))
-
-    targets =
-      release.options
-      |> Keyword.get(:burrito, [])
-      |> Keyword.get(:targets, [])
-
-    if targets == [] do
-      IO.puts(
-        :stderr,
-        "agentlink: skipping the Burrito wrap. No wrapped binary was built. " <>
-          "The plain release is unchanged."
-      )
-
-      release
-    else
-      Burrito.register_erts_resolver(AgentLink.Release.ERTS)
-      Burrito.wrap(release)
-    end
-  end
-
-  @doc """
-  Wrap each Burrito binary that is present so a stop reaches the VM.
-
-  Looks under `burrito_out` in `File.cwd!/0`. A map with `:burrito_out` uses
-  that directory instead. A missing file is left alone, because a release
-  that did not build that target has nothing to wrap. Returns the release.
-  Raises when `zig` is missing or `zig cc` fails.
-  """
-  def forward_signals(release) do
-    root = burrito_root(release)
-    name = release_name(release)
-
-    Enum.each(wrappers(), fn wrapper ->
-      path = Path.join(root, name <> wrapper.suffix)
-
-      if File.regular?(path) do
-        wrap!(path, wrapper)
-      end
-    end)
-
     release
   end
 
@@ -149,10 +63,11 @@ defmodule AgentLink.Release do
   end
 
   defp patch_unix(text) do
-    needle = unix_needle(newline(text))
+    nl = newline(text)
+    needle = unix_needle(nl)
 
     replacement =
-      unix_lines(newline(text), [
+      unix_lines(nl, [
         "  start)",
         "    shift",
         "    start \"elixir\" --no-halt -- \"$@\"",
@@ -160,7 +75,30 @@ defmodule AgentLink.Release do
         ""
       ])
 
-    replace_once(text, needle, replacement)
+    with patched when is_binary(patched) <- replace_once(text, needle, replacement) do
+      replace_catch_all(patched, nl)
+    end
+  end
+
+  defp replace_catch_all(text, nl) do
+    pattern =
+      Regex.compile!(
+        "^  \\*\\)" <> Regex.escape(nl) <> ".*?" <> Regex.escape(nl <> "    ;;" <> nl),
+        "ms"
+      )
+
+    replacement =
+      unix_lines(nl, [
+        "  *)",
+        "    start \"elixir\" --no-halt -- \"$@\"",
+        "    ;;",
+        ""
+      ])
+
+    case Regex.replace(pattern, text, replacement, global: false) do
+      ^text -> :missing
+      patched -> patched
+    end
   end
 
   defp unix_needle(nl) do
@@ -174,6 +112,12 @@ defmodule AgentLink.Release do
   # that places `%*`, and the distribution flag is expanded before that.
   # `start_iex` jumps to `:start_plain` and keeps the original invocation.
   defp patch_bat(text) do
+    with patched when is_binary(patched) <- patch_bat_start(text) do
+      patch_bat_cli(patched)
+    end
+  end
+
+  defp patch_bat_start(text) do
     nl = newline(text)
     start = ":start#{nl}"
 
@@ -201,27 +145,43 @@ defmodule AgentLink.Release do
     replace_once(text, start, inserted)
   end
 
-  defp drop_unpublished(%{options: options} = release) do
-    burrito = Keyword.get(options, :burrito, [])
-    targets = Keyword.get(burrito, :targets, [])
+  defp patch_bat_cli(text) do
+    nl = newline(text)
+    marker = "echo Usage: %~nx0 COMMAND [ARGS]#{nl}"
+    label = "#{nl}:start#{nl}"
 
-    {kept, skips} =
-      AgentLink.Release.ERTS.select(requested(targets),
-        pinned_linux: System.get_env("AGENTLINK_CUSTOM_ERTS")
-      )
+    case :binary.split(text, marker) do
+      [before, rest] ->
+        case :binary.split(rest, label) do
+          [_usage, after_label] ->
+            before <> cli_block(nl) <> label <> after_label
 
-    burrito = Keyword.put(burrito, :targets, kept)
-    {%{release | options: Keyword.put(options, :burrito, burrito)}, skips}
-  end
-
-  defp requested(targets) do
-    case System.get_env("BURRITO_TARGET") do
-      name when is_binary(name) and name != "" ->
-        Enum.filter(targets, fn {target_name, _spec} -> to_string(target_name) == name end)
+          _ ->
+            :missing
+        end
 
       _ ->
-        targets
+        :missing
     end
+  end
+
+  defp cli_block(nl) do
+    ":cli#{nl}" <>
+      "if \"!RELEASE_DISTRIBUTION!\" == \"none\" (#{nl}" <>
+      "  set RELEASE_DISTRIBUTION_FLAG=#{nl}" <>
+      ") else (#{nl}" <>
+      "  set RELEASE_DISTRIBUTION_FLAG=--!RELEASE_DISTRIBUTION! \"!RELEASE_NODE!\"#{nl}" <>
+      ")#{nl}" <>
+      "setlocal DisableDelayedExpansion#{nl}" <>
+      "\"%REL_VSN_DIR%\\elixir.bat\" --no-halt ^#{nl}" <>
+      "  --cookie \"%RELEASE_COOKIE%\" ^#{nl}" <>
+      "  %RELEASE_DISTRIBUTION_FLAG% ^#{nl}" <>
+      "  --erl \"-mode %RELEASE_MODE%\" ^#{nl}" <>
+      "  --erl-config \"%RELEASE_SYS_CONFIG%\" ^#{nl}" <>
+      "  --boot \"%REL_VSN_DIR%\\%RELEASE_BOOT_SCRIPT%\" ^#{nl}" <>
+      "  --boot-var RELEASE_LIB \"%RELEASE_ROOT%\\lib\" ^#{nl}" <>
+      "  --vm-args \"%RELEASE_VM_ARGS%\" -- %*#{nl}" <>
+      "goto end#{nl}"
   end
 
   defp replace_once(text, needle, replacement) do
@@ -238,73 +198,6 @@ defmodule AgentLink.Release do
 
   defp newline(text) do
     if String.contains?(text, "\r\n"), do: "\r\n", else: "\n"
-  end
-
-  defp wrappers do
-    [
-      %AgentLink.Release.Wrapper{
-        suffix: "_linux",
-        target: "x86_64-linux-gnu",
-        source: "c_src/agentlink_launch.c",
-        kind: :posix
-      },
-      %AgentLink.Release.Wrapper{
-        suffix: "_macos",
-        target: "aarch64-macos",
-        source: "c_src/agentlink_launch.c",
-        kind: :posix
-      },
-      %AgentLink.Release.Wrapper{
-        suffix: "_windows.exe",
-        target: "x86_64-windows-gnu",
-        source: "c_src/agentlink_launch_win.c",
-        kind: :windows
-      }
-    ]
-  end
-
-  defp wrap!(path, wrapper) do
-    inner = inner_path(path, wrapper.kind)
-    source = Path.join(File.cwd!(), wrapper.source)
-    File.rename!(path, inner)
-    zig = zig_executable()
-
-    case System.cmd(zig, ["cc", "-target", wrapper.target, "-O2", "-o", path, source],
-           stderr_to_stdout: true
-         ) do
-      {_output, 0} ->
-        File.chmod!(path, 0o755)
-
-      {output, status} ->
-        raise "AgentLink.Release could not compile #{source} for #{wrapper.target}: status #{status}: #{output}"
-    end
-  end
-
-  defp inner_path(path, :posix), do: path <> ".burrito"
-
-  defp inner_path(path, :windows), do: Path.rootname(path, ".exe") <> ".burrito.exe"
-
-  defp zig_executable do
-    cond do
-      path = System.get_env("AGENTLINK_ZIG") ->
-        path
-
-      path = System.find_executable("zig") ->
-        path
-
-      File.regular?("/tmp/zig-0.16.0/zig") ->
-        "/tmp/zig-0.16.0/zig"
-
-      true ->
-        raise "AgentLink.Release could not find zig. Set AGENTLINK_ZIG or unpack Zig 0.16.0."
-    end
-  end
-
-  defp burrito_root(release) do
-    case Map.get(release, :burrito_out) do
-      path when is_binary(path) -> path
-      _ -> Path.join(File.cwd!(), "burrito_out")
-    end
   end
 
   defp release_path(release), do: Map.fetch!(release, :path)
