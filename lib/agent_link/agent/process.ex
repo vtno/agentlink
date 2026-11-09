@@ -50,9 +50,11 @@ defmodule AgentLink.Agent.Process do
 
   A bare name contains neither `/` nor `\\` and is not `.`, `..`, or a
   drive-relative form such as `C:opencode`. A bare name is passed to the
-  finder. `open/3` calls `open/4` with `&System.find_executable/1`.
-  `open/4` takes a finder so a test can pass a function. `nil` from the
-  finder is an error that names the command.
+  finder.   `open/3` calls `open/4` with `&System.find_executable/1`.
+  `open/4` takes a finder so a test can pass a function. `open/5` takes
+  that finder and a listener pid. `open/3` and `open/4` pass `nil`. Neither
+  reads application config. `nil` from the finder is an error that names
+  the command.
 
   A path that is absolute on this host is used unchanged. It is not passed
   to the finder. It is not expanded against `cwd` or the VM cwd. On Unix, a
@@ -74,7 +76,7 @@ defmodule AgentLink.Agent.Process do
 
   The port is `Port.open/2` with `{:spawn_executable, path}` and `:binary`,
   `:exit_status`, `:use_stdio`, `{:args, args}`, and `{:cd, cwd}`. `:env`
-  is omitted, so the port inherits the VM environment. `:stderr_to_stdout`
+  is the VM environment without `AGENTLINK_WINDOWS_START`. `:stderr_to_stdout`
   is omitted. `ErlangError` and `ArgumentError` from `Port.open/2` are
   returned as an error that names the path and the reason from the spawn.
   The OS decides that reason.
@@ -89,20 +91,27 @@ defmodule AgentLink.Agent.Process do
   @impl true
   @spec open(pid, Launch.t(), String.t()) :: {:ok, port} | {:error, String.t()}
   def open(owner, %Launch{} = launch, cwd) when is_pid(owner) do
-    open(owner, launch, cwd, &System.find_executable/1)
+    open(owner, launch, cwd, &System.find_executable/1, nil)
   end
 
   @doc """
   Open `launch` in `cwd` with `finder`. The caller must be `owner`.
 
-  `open/3` is the `AgentLink.Agent` callback. `open/4` is not.
+  `open/3` is the `AgentLink.Agent` callback. `open/4` and `open/5` are not.
+  `listener` receives `{:agent_opening, owner}` before the spawn. `nil` sends nothing.
   """
   @spec open(pid, Launch.t(), String.t(), (String.t() -> String.t() | nil)) ::
           {:ok, port} | {:error, String.t()}
-  def open(owner, %Launch{command: command, args: args}, cwd, finder)
+  def open(owner, %Launch{} = launch, cwd, finder)
+      when is_pid(owner) and is_function(finder, 1) do
+    open(owner, launch, cwd, finder, nil)
+  end
+
+  @doc false
+  def open(owner, %Launch{command: command, args: args}, cwd, finder, listener)
       when is_pid(owner) and is_function(finder, 1) do
     if owner == self() do
-      open_command(command, args, cwd, finder)
+      open_command(command, args, cwd, finder, listener)
     else
       {:error, owner_error(owner, command)}
     end
@@ -149,11 +158,12 @@ defmodule AgentLink.Agent.Process do
   confirmation wait is `:agent_stop_timeout`, or `1000` milliseconds when
   that value is shorter, so a timeout of `0` still observes the reap.
   `close/1` reads `/proc` again immediately before `SIGKILL` and refreshes
-  each recorded process group.   `close/1` does not return `:ok` while a
+  each recorded process group. `close/1` does not return `:ok` while a
   recorded process remains. A remaining `{pid, starttime}` is passed to
   `AgentLink.Agent.Reaper.retain/1`. When that process is not running,
-  `retain/1` returns `{:error, :noproc}` and `close/1` returns that error.
-  The next relay calls `reap/0` before `open/3`. `AgentLink.Relay.Agent`
+  `retain/1` writes the pairs into this VM's record file and returns
+  `{:error, :noproc}`. `close/1` returns that error. The next `reap/0`
+  reads the file before `open/3`. `AgentLink.Relay.Agent`
   sizes its shutdown to hold both waits and both `kill` commands.
 
   A pid whose start time changed is left alone. `close/1` does not signal
@@ -253,10 +263,23 @@ defmodule AgentLink.Agent.Process do
     matching?(pid, starttime)
   end
 
-  defp open_command(command, args, cwd, finder) do
-    if listener = Application.get_env(:agent_link, :agent_open_listener) do
-      send(listener, {:agent_opening, self()})
+  @doc false
+  def starttime(pid) when is_integer(pid) do
+    case read_identity(pid) do
+      {:ok, %Identity{starttime: starttime}} -> starttime
+      _ -> nil
     end
+  end
+
+  @doc false
+  def port_env do
+    System.get_env()
+    |> Map.delete("AGENTLINK_WINDOWS_START")
+    |> Enum.map(fn {key, value} -> {:binary.bin_to_list(key), :binary.bin_to_list(value)} end)
+  end
+
+  defp open_command(command, args, cwd, finder, listener) do
+    if is_pid(listener), do: send(listener, {:agent_opening, self()})
 
     case resolve(command, finder) do
       {:ok, path} -> open_regular(path, args, cwd)
@@ -335,7 +358,8 @@ defmodule AgentLink.Agent.Process do
         :exit_status,
         :use_stdio,
         {:args, program_args},
-        {:cd, cwd}
+        {:cd, cwd},
+        {:env, port_env()}
       ])
 
     store_record(port, group?)

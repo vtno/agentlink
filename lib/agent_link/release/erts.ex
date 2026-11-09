@@ -11,7 +11,9 @@ defmodule AgentLink.Release.ERTS do
   `AGENTLINK_CUSTOM_ERTS`, when set, keeps the Linux target and is the OTP
   archive `do_resolve/1` downloads. The target stays precompiled until then,
   so Burrito still fetches the musl runtime. The value is a URL or a local
-  `.tar.gz`. A directory is refused. It is not the host ERTS.
+  `.tar.gz`. A directory is refused. It is not the host ERTS. The archive's
+  OTP version must be the OTP version Mix compiled with. A version that can
+  be read from the URL or the filename and does not match is logged.
   """
 
   @doc """
@@ -90,6 +92,11 @@ defmodule AgentLink.Release.ERTS do
   end
 
   defp pinned_source(target, erts) do
+    case archive_warning(erts, Burrito.Util.get_otp_version()) do
+      nil -> :ok
+      message -> IO.puts(:stderr, message)
+    end
+
     cond do
       File.dir?(erts) ->
         raise "AGENTLINK_CUSTOM_ERTS must be a URL or a .tar.gz. The host ERTS is not used."
@@ -102,6 +109,29 @@ defmodule AgentLink.Release.ERTS do
 
       true ->
         raise "AGENTLINK_CUSTOM_ERTS must be a URL or a .tar.gz. The host ERTS is not used."
+    end
+  end
+
+  @doc false
+  def archive_warning(erts, host) when is_binary(erts) and is_binary(host) do
+    case archive_version(erts) do
+      ^host ->
+        nil
+
+      nil ->
+        nil
+
+      version ->
+        "agentlink: AGENTLINK_CUSTOM_ERTS is OTP #{version}. " <>
+          "This release was compiled with OTP #{host}. " <>
+          "The archive must match that version, or this release's NIFs are not replaced."
+    end
+  end
+
+  defp archive_version(erts) do
+    case Regex.run(~r/(?:OTP-|otp_)(\d+\.\d+(?:\.\d+)*)/, erts) do
+      [_, version] -> version
+      _ -> nil
     end
   end
 

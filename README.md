@@ -51,7 +51,7 @@ A plane with no token creates one for that process and prints it. Look for `Agen
 
 ## Build a binary
 
-The build machine needs Elixir 1.17 or a later 1.x release, Zig 0.16.0, and `xz` on `PATH`. Burrito exits with status 1 when the Zig version is not 0.16.0. Burrito also exits with status 1 when `zig` or `xz` is missing. A Windows build needs `7z` or `7zz` on `PATH`. When `7z` and `7zz` are both missing, Burrito warns that Windows releases fail. The machine that runs the binary does not need Elixir.
+The build machine needs Elixir 1.17 or a later 1.x release, Zig 0.16.0, and `xz` on `PATH`. Burrito exits with status 1 when the Zig version is not 0.16.0. Burrito also exits with status 1 when `zig` or `xz` is missing. A Windows build needs `7z` or `7zz` on `PATH`. When `7z` and `7zz` are both missing, the Windows target is skipped and the plain release still succeeds. The machine that runs the binary does not need Elixir.
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
@@ -67,7 +67,7 @@ A target whose published OTP returns HTTP 404 is skipped. The message names the 
 
 To build one binary, set `BURRITO_TARGET` to `linux`, `macos`, or `windows`. That target is skipped the same way when its OTP is missing.
 
-To pin a published OTP for Linux, set `AGENTLINK_CUSTOM_ERTS` to a URL or a local `.tar.gz` of a musl OTP. Burrito still fetches the musl runtime. A directory is refused, so the host ERTS is not substituted. `custom_erts` on a target in `mix.exs` is Burrito's pin for that one target.
+To pin a published OTP for Linux, set `AGENTLINK_CUSTOM_ERTS` to a URL or a local `.tar.gz` of a musl OTP. Burrito still fetches the musl runtime. A directory is refused, so the host ERTS is not substituted. The archive's OTP version must be the OTP version Mix compiled with. When the version can be read from the URL or the filename and it differs, the build logs that mismatch. `custom_erts` on a target in `mix.exs` is Burrito's pin for that one target.
 
 ```sh
 agentlink
@@ -272,7 +272,7 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. On Linux, `close/1` signals `SIGTERM` to that group, and to any descendant that left the group, when the recorded start time still matches. It closes stdin and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way and returns `:ok` only when those processes are gone. A start time that remains is kept by `AgentLink.Agent.Reaper` in `agent-reaper.bin`. That process starts before the relay. `init/1` reloads the file and drops a pid whose start time no longer matches, so a Reaper restart still blocks the next open. `reap/0` and `retain/1` fail when the Reaper is not running. The next relay signals `SIGKILL` and opens a replacement only after every retained start time is gone. `AgentLink.Relay.Agent` waits `12000` milliseconds at that default before the supervisor kills the relay. On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object.
+`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. On Linux, `close/1` signals `SIGTERM` to that group, and to any descendant that left the group, when the recorded start time still matches. It closes stdin and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way and returns `:ok` only when those processes are gone. A start time that remains is kept by `AgentLink.Agent.Reaper` in `agent-reaper-<pid>-<starttime>.bin`, named for this VM. That process starts before the relay. `init/1` reloads that file and drops a pid whose start time no longer matches, so a Reaper restart still blocks the next open. Another VM's file is left alone. `retain/1` writes the pairs into that file even when the Reaper is not running, and the call still fails. `reap/0` fails when the Reaper is not running. The next relay signals `SIGKILL` and opens a replacement only after every retained start time is gone. `AgentLink.Relay.Agent` waits `12000` milliseconds at that default before the supervisor kills the relay. On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object.
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 

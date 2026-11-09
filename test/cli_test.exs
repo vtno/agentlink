@@ -179,22 +179,33 @@ defmodule AgentLink.CLITest do
   end
 
   test "the Windows start script drops one leading start" do
-    System.delete_env("__BURRITO")
-    System.put_env("AGENTLINK_WINDOWS_START", "1")
+    assert AgentLink.CLI.drop_windows_script_start(
+             ["start", "plane", "--port", "9"],
+             {:win32, :nt},
+             "1"
+           ) == ["plane", "--port", "9"]
 
-    on_exit(fn -> System.delete_env("AGENTLINK_WINDOWS_START") end)
-
-    assert AgentLink.CLI.argv_from_launch(["start", "plane", "--port", "9"]) == [
-             "plane",
-             "--port",
-             "9"
+    assert AgentLink.CLI.drop_windows_script_start(["start", "start"], {:win32, :nt}, "1") == [
+             "start"
            ]
 
-    assert AgentLink.CLI.argv_from_launch(["start", "start"]) == ["start"]
-    assert AgentLink.CLI.argv_from_launch(["start"]) == []
-    assert AgentLink.CLI.argv_from_launch(["plane"]) == ["plane"]
-    System.delete_env("AGENTLINK_WINDOWS_START")
-    assert AgentLink.CLI.argv_from_launch(["start", "plane"]) == ["start", "plane"]
+    assert AgentLink.CLI.drop_windows_script_start(["start"], {:win32, :nt}, "1") == []
+    assert AgentLink.CLI.drop_windows_script_start(["plane"], {:win32, :nt}, "1") == ["plane"]
+
+    assert AgentLink.CLI.drop_windows_script_start(["start", "plane"], {:unix, :linux}, "1") == [
+             "start",
+             "plane"
+           ]
+
+    System.delete_env("__BURRITO")
+    System.put_env("AGENTLINK_WINDOWS_START", "1")
+    on_exit(fn -> System.delete_env("AGENTLINK_WINDOWS_START") end)
+
+    if match?({:win32, _}, :os.type()) do
+      assert AgentLink.CLI.argv_from_launch(["start", "plane"]) == ["plane"]
+    else
+      assert AgentLink.CLI.argv_from_launch(["start", "plane"]) == ["start", "plane"]
+    end
   end
 
   test "a release boot with no words leaves the configured mode" do

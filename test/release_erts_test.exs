@@ -70,6 +70,22 @@ defmodule AgentLink.Release.ERTSTest do
              )
   end
 
+  test "a pinned archive warns when its OTP version differs" do
+    message =
+      AgentLink.Release.ERTS.archive_warning(
+        "https://example.test/OTP-27.3.4/otp_27.3.4_linux.tar.gz",
+        "27.3.4.19"
+      )
+
+    assert message =~ "OTP 27.3.4"
+    assert message =~ "OTP 27.3.4.19"
+
+    assert AgentLink.Release.ERTS.archive_warning("otp_27.3.4.19_linux.tar.gz", "27.3.4.19") ==
+             nil
+
+    assert AgentLink.Release.ERTS.archive_warning("/tmp/erts.tar.gz", "27.3.4.19") == nil
+  end
+
   test "a pinned linux archive is kept when the host OTP is a 404" do
     fetcher = fn _, _, _ ->
       send(self(), :fetched)

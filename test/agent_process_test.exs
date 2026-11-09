@@ -27,6 +27,15 @@ defmodule AgentLink.Agent.ProcessTest do
   alias AgentLink.Agent.Launch
   alias AgentLink.Agent.Process, as: AgentProcess
 
+  test "the agent environment omits AGENTLINK_WINDOWS_START" do
+    System.put_env("AGENTLINK_WINDOWS_START", "1")
+    on_exit(fn -> System.delete_env("AGENTLINK_WINDOWS_START") end)
+
+    refute Enum.any?(AgentProcess.port_env(), fn {key, _value} ->
+             key == ~c"AGENTLINK_WINDOWS_START"
+           end)
+  end
+
   setup_all do
     beam_dir =
       Path.join(

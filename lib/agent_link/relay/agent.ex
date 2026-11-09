@@ -187,7 +187,7 @@ defmodule AgentLink.Relay.Agent do
   end
 
   defp open_agent(agent_module, launch, cwd, link, uplink) do
-    case agent_module.open(self(), launch, cwd) do
+    case open_launch(agent_module, launch, cwd) do
       {:ok, agent} ->
         dial(agent_module, agent, link, uplink, cwd)
 
@@ -197,6 +197,20 @@ defmodule AgentLink.Relay.Agent do
       {:error, reason} ->
         {:stop, reason}
     end
+  end
+
+  defp open_launch(AgentLink.Agent.Process, launch, cwd) do
+    AgentLink.Agent.Process.open(
+      self(),
+      launch,
+      cwd,
+      &System.find_executable/1,
+      Application.get_env(:agent_link, :agent_open_listener)
+    )
+  end
+
+  defp open_launch(agent_module, launch, cwd) do
+    agent_module.open(self(), launch, cwd)
   end
 
   defp dial(agent_module, agent, link, uplink, cwd) do

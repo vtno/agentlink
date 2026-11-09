@@ -8,8 +8,8 @@ defmodule AgentLink.CLI do
   `connect` starts `AgentLink.Relay.Client`.
   `parse/1` does not drop `start`. `start` and `start start` are usage errors.
   The Windows release script sets `AGENTLINK_WINDOWS_START=1` and leaves its
-  own `start` in `%*`. `argv_from_launch/1` drops that one word only when the
-  variable is `1`.
+  own `start` in `%*`. `argv_from_launch/1` drops that one word only when
+  `:os.type/0` is `{:win32, _}` and the variable is `1`.
   """
 
   defstruct mode: :all, port: nil, token: nil, plane: nil, target: nil
@@ -69,14 +69,12 @@ defmodule AgentLink.CLI do
       end
 
     argv = if launcher?, do: drop_launcher_prefix(argv), else: argv
-    drop_windows_script_start(argv)
+    drop_windows_script_start(argv, :os.type(), System.get_env("AGENTLINK_WINDOWS_START"))
   end
 
-  defp drop_windows_script_start(["start" | rest]) do
-    if System.get_env("AGENTLINK_WINDOWS_START") == "1", do: rest, else: ["start" | rest]
-  end
-
-  defp drop_windows_script_start(argv), do: argv
+  @doc false
+  def drop_windows_script_start(["start" | rest], {:win32, _}, "1"), do: rest
+  def drop_windows_script_start(argv, _os, _flag), do: argv
 
   defp launcher_boot? do
     System.get_env("__BURRITO") != nil or System.get_env("RELEASE_ROOT") != nil
