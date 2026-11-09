@@ -8,7 +8,10 @@ defmodule AgentLink.LaunchTest do
   keeps `erl_child_setup`. The child exits `17` after one signal and `18`
   after another, and `SIGKILL`s the helper. The test waits until the child
   has written its pid, then signals the wrapper. The wrapper's exit status
-  is the assertion. A timer is not.
+  is the assertion. A timer is not. The orphan mode keeps the VM alive
+  after the middle process is killed. The Windows script assertions check
+  the generated text. That script is not run on Windows. The reasoning
+  table is in `AgentLink.Release`'s moduledoc.
   """
 
   use ExUnit.Case, async: false
@@ -28,12 +31,13 @@ defmodule AgentLink.LaunchTest do
     bat = File.read!(Path.join(bin, name <> ".bat"))
     refute bat =~ "for /f"
     refute bat =~ "tokens=1*"
+    refute bat =~ "AGENTLINK_START_TAIL"
     assert bat =~ "if not \"!REL_EXTRA!\" == \"--no-halt\" goto start_plain"
-    assert bat =~ "set AGENTLINK_START_TAIL=%*"
-    assert bat =~ "set AGENTLINK_START_TAIL=!AGENTLINK_START_TAIL:*%1 =!"
-    assert bat =~ "set AGENTLINK_START_TAIL=-- !AGENTLINK_START_TAIL!"
-    assert bat =~ ":start_plain\nset AGENTLINK_START_TAIL="
-    assert bat =~ "--vm-args \"!RELEASE_VM_ARGS!\" !AGENTLINK_START_TAIL!"
+    assert bat =~ "setlocal DisableDelayedExpansion"
+    assert bat =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
+    assert bat =~ ":start_plain\n"
+    assert bat =~ "--vm-args \"!RELEASE_VM_ARGS!\""
+    refute bat =~ "--vm-args \"!RELEASE_VM_ARGS!\" -- %*"
 
     assert_raise RuntimeError, ~r/could not patch/, fn ->
       AgentLink.Release.forward_start_args(release)
@@ -129,6 +133,42 @@ defmodule AgentLink.LaunchTest do
     assert file_brief!(Path.join(dir, "agentlink_windows.exe")) =~ "PE32+"
   end
 
+  test "the wrapper SIGKILLs a VM whose middle process has died" do
+    dir = unique_dir("orphan")
+    script = Path.join(dir, "inner.py")
+    File.write!(script, inner_script())
+    File.chmod!(script, 0o755)
+    wrapped = Path.join(dir, "agentlink_linux")
+    File.cp!(script, wrapped)
+    assert AgentLink.Release.forward_signals(%{name: :agentlink, burrito_out: dir})
+    pidfile = Path.join(dir, "pids")
+
+    port =
+      Port.open({:spawn_executable, wrapped}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        {:args, ["orphan", pidfile]}
+      ])
+
+    os_pid = port_os_pid(port)
+    wrapper_started = starttime!(os_pid)
+    track!(os_pid, wrapper_started)
+    assert read_ready!(port) == "ready\n"
+    {middle, beam} = read_pids!(pidfile)
+    middle_started = starttime!(middle)
+    beam_started = starttime!(beam)
+    track!(middle, middle_started)
+    track!(beam, beam_started)
+    signal_if_same(os_pid, wrapper_started, "-TERM")
+    assert os_alive?(beam, beam_started)
+    signal_if_same(middle, middle_started, "-KILL")
+    assert await_status!(port) == 1
+    await_gone!(middle, middle_started)
+    await_gone!(beam, beam_started)
+    await_gone!(os_pid, wrapper_started)
+  end
+
   test "the linux wrapper passes arguments and a clean exit code" do
     dir = unique_dir("args")
     script = Path.join(dir, "inner.py")
@@ -186,6 +226,29 @@ defmodule AgentLink.LaunchTest do
         with open(sys.argv[2], "w", encoding="utf-8") as handle:
             handle.write("\n".join(sys.argv[1:]))
         raise SystemExit(0)
+    if mode == "orphan":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        ready_read, ready_write = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(ready_read)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            with open(sys.argv[2], "w", encoding="utf-8") as handle:
+                handle.write(f"{os.getppid()} {os.getpid()}\n")
+            os.write(ready_write, b"1")
+            os.close(ready_write)
+            while True:
+                signal.pause()
+        os.close(ready_write)
+        os.read(ready_read, 1)
+        os.close(ready_read)
+        sys.stdout.write("ready\n")
+        sys.stdout.flush()
+        while True:
+            signal.pause()
     if mode != "beam":
         raise SystemExit(2)
 
@@ -334,6 +397,19 @@ defmodule AgentLink.LaunchTest do
   end
 
   defp same?(pid, starttime) do
+    case File.read("/proc/#{pid}/stat") do
+      {:ok, stat} ->
+        case AgentLink.OwnedStop.parse_stat(stat) do
+          {:ok, %{starttime: ^starttime, state: state}} -> state != "Z"
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp os_alive?(pid, starttime) do
     case File.read("/proc/#{pid}/stat") do
       {:ok, stat} ->
         case AgentLink.OwnedStop.parse_stat(stat) do

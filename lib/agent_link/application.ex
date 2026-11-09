@@ -42,8 +42,12 @@ defmodule AgentLink.Application do
   Any other `{:shutdown, message}` exits with status 1. The
   supervisor starts the client relay again after a crash because
   `AgentLink.Relay.Client.child_spec/1` sets `restart: :transient`. The
-  supervisor's own stop exits with status 1. `Logger.flush/0` runs before
-  that halt, so a `SIGTERM` notice already queued by the VM is written.
+  supervisor's own stop exits with status 1. `agentlink connect` replaces
+  `:erl_signal_handler` with `AgentLink.ConnectStop`. That handler logs the
+  `SIGTERM` notice and calls `:init.stop/1`. The watcher does not call
+  `System.halt/1` once `:init.get_status/0` is `:stopping`, so the status
+  stays 1. A stop that is not a signal flushes the log and halts. The test
+  environment does not install the handler.
   In the test environment,
   `:halt_listener` receives `{:connect_watching, pid}` after the watcher
   monitors the client relay, `{:connect_supervisor, pid}` after the watcher
@@ -60,6 +64,7 @@ defmodule AgentLink.Application do
   def start(_type, _args) do
     with :ok <- command(),
          :ok <- prepare(),
+         :ok <- install_connect_stop(),
          {:ok, children} <- children() do
       children
       |> start_supervisor()
@@ -90,7 +95,7 @@ defmodule AgentLink.Application do
   defp children do
     case Application.fetch_env!(:agent_link, :mode) do
       :plane -> {:ok, [AgentLink.Plane.Supervisor]}
-      :relay -> {:ok, [AgentLink.Relay.Agent]}
+      :relay -> {:ok, [AgentLink.Agent.Reaper, AgentLink.Relay.Agent]}
       :all -> {:ok, [AgentLink.Plane.Supervisor, AgentLink.Relay.Agent.Supervisor]}
       :connect -> connect_children()
     end
@@ -348,11 +353,39 @@ defmodule AgentLink.Application do
   defp exit_code({:shutdown, message}) when is_binary(message), do: 1
   defp exit_code(_reason), do: nil
 
-  defp connect_exit(listener, code) when code in [0, 1] do
-    if @halt_boot_error do
-      Logger.flush()
-      System.halt(code)
-    else
+  if @halt_boot_error do
+    defp install_connect_stop do
+      if Application.get_env(:agent_link, :mode) == :connect do
+        case :gen_event.swap_handler(
+               :erl_signal_server,
+               {:erl_signal_handler, []},
+               {AgentLink.ConnectStop, []}
+             ) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            boot_error(
+              "agentlink connect could not install the SIGTERM handler: #{inspect(reason)}\n"
+            )
+        end
+      else
+        :ok
+      end
+    end
+
+    defp connect_exit(_listener, code) when code in [0, 1] do
+      if match?({:stopping, _}, :init.get_status()) do
+        :ok
+      else
+        Logger.flush()
+        System.halt(code)
+      end
+    end
+  else
+    defp install_connect_stop, do: :ok
+
+    defp connect_exit(listener, code) when code in [0, 1] do
       if is_pid(listener), do: send(listener, {:connect_exit, code})
       :ok
     end

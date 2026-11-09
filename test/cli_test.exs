@@ -170,6 +170,14 @@ defmodule AgentLink.CLITest do
     assert release_mode(["-extra", "--no-halt", "--", "relay", "--token", "sekret"]) == "relay"
   end
 
+  test "a leading start is the release script word" do
+    assert {:ok, %AgentLink.CLI{mode: :plane}} = AgentLink.CLI.parse(["start", "plane"])
+    assert {:ok, %AgentLink.CLI{mode: :all}} = AgentLink.CLI.parse(["start"])
+
+    assert {:ok, %AgentLink.CLI{mode: :relay}} =
+             AgentLink.CLI.parse(["start", "relay", "--token", "sekret"])
+  end
+
   test "a release boot with no words leaves the configured mode" do
     assert release_mode([]) == "plane"
   end

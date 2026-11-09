@@ -8,8 +8,10 @@ defmodule AgentLink.LifecycleTest do
   The hold fixture ignores `SIGTERM` and stdin EOF. `:agent_stop_timeout`
   is `0` in that test, so `close/1` signals `SIGKILL` without waiting out
   the default `5000`, then waits until the recorded processes are gone.
-  The replacement test checks those processes before it looks up the new
-  relay. `await_accept!/1` gives up after `5000` milliseconds.
+  The replacement test checks those start times when the new relay calls
+  `open/3`. The sticky test keeps a process alive through `close/1` and
+  hides `kill`, so the next start fails while that start time still matches.
+  `await_accept!/1` gives up after `5000` milliseconds.
   """
 
   use ExUnit.Case, async: false
@@ -30,7 +32,8 @@ defmodule AgentLink.LifecycleTest do
       connect_stdio: Application.get_env(:agent_link, :connect_stdio),
       connect_observer: Application.get_env(:agent_link, :connect_observer),
       config_root: Application.get_env(:agent_link, :config_root),
-      halt_listener: Application.get_env(:agent_link, :halt_listener)
+      halt_listener: Application.get_env(:agent_link, :halt_listener),
+      agent_open_listener: Application.get_env(:agent_link, :agent_open_listener)
     }
 
     on_exit(fn ->
@@ -40,6 +43,7 @@ defmodule AgentLink.LifecycleTest do
             AgentLink.Supervisor,
             AgentLink.Relay.Agent.Supervisor,
             AgentLink.Plane.Supervisor,
+            AgentLink.Agent.Reaper,
             AgentLink.Relay.Agent
           ] do
         if pid = Process.whereis(name) do
@@ -106,7 +110,12 @@ defmodule AgentLink.LifecycleTest do
     sup = start!(:relay)
     assert Process.info(sup, :parent) == {:parent, self()}
     assert linked_to_self?(sup)
-    assert child_ids(sup) == %{AgentLink.Relay.Agent => :worker}
+
+    assert child_ids(sup) == %{
+             AgentLink.Agent.Reaper => :worker,
+             AgentLink.Relay.Agent => :worker
+           }
+
     refute Process.whereis(AgentLink.Plane.Supervisor)
     refute accept?(18_421)
     stop!(sup)
@@ -126,7 +135,12 @@ defmodule AgentLink.LifecycleTest do
            }
 
     relay = Process.whereis(AgentLink.Relay.Agent.Supervisor)
-    assert child_ids(relay) == %{AgentLink.Relay.Agent => :worker}
+
+    assert child_ids(relay) == %{
+             AgentLink.Agent.Reaper => :worker,
+             AgentLink.Relay.Agent => :worker
+           }
+
     await_accept!(port)
     stop!(sup)
     await_closed!(port)
@@ -180,26 +194,20 @@ defmodule AgentLink.LifecycleTest do
   test "the replacement agent does not start while the old one is still alive" do
     Application.put_env(:agent_link, :agent_module, AgentLink.Agent.Process)
     Application.put_env(:agent_link, :agent_stop_timeout, 0)
+    Application.put_env(:agent_link, :agent_open_listener, self())
     pidfile = hold_link!()
     sup = start!(:relay)
     agent = Process.whereis(AgentLink.Relay.Agent)
     {parent, child} = await_hold!(pidfile, agent)
     parent_started = starttime!(parent)
     child_started = starttime!(child)
+    assert_receive {:agent_opening, _owner}
     File.rm!(pidfile)
-
-    test_pid = self()
-
-    watcher =
-      spawn(fn ->
-        watch_replacement(test_pid, agent, parent, parent_started, child, child_started)
-      end)
-
     assert :ok = GenServer.stop(agent, :shutdown)
+    assert_receive {:agent_opening, _owner}, 5_000
     refute os_alive?(parent, parent_started)
     refute os_alive?(child, child_started)
-    send(watcher, :stop)
-    assert_receive {:overlap, :clear}
+    refute File.exists?(pidfile)
     new_agent = await_named(AgentLink.Relay.Agent, agent)
     {parent2, child2} = await_hold!(pidfile, new_agent)
     assert parent2 != parent
@@ -209,6 +217,40 @@ defmodule AgentLink.LifecycleTest do
     stop!(sup)
     await_gone!(parent2, parent2_started)
     await_gone!(child2, child2_started)
+  end
+
+  test "a process that survives close blocks the replacement" do
+    Application.put_env(:agent_link, :agent_module, AgentLink.LifecycleTest.Sticky)
+    Application.put_env(:agent_link, :agent_stop_timeout, 0)
+    Application.put_env(:agent_link, :sticky_listener, self())
+    pidfile = sticky_link!()
+    sup = start!(:relay)
+    assert_receive {:sticky_opened, os_pid}
+    started = starttime!(os_pid)
+    kill = System.find_executable("kill")
+    path = System.get_env("PATH")
+
+    on_exit(fn ->
+      if is_binary(path), do: System.put_env("PATH", path)
+
+      if is_binary(kill) and os_alive?(os_pid, started) and
+           Integer.to_string(os_pid) != System.pid() do
+        System.cmd(kill, ["-s", "KILL", "--", Integer.to_string(os_pid)], stderr_to_stdout: true)
+      end
+    end)
+
+    empty =
+      Path.join(System.tmp_dir!(), "agentlink-no-kill-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(empty)
+    System.put_env("PATH", empty)
+    ref = Process.monitor(sup)
+    assert :ok = GenServer.stop(Process.whereis(AgentLink.Relay.Agent), :shutdown)
+    assert_receive {:DOWN, ^ref, :process, ^sup, _reason}, 5_000
+    refute Process.whereis(AgentLink.Relay.Agent)
+    assert os_alive?(os_pid, started)
+    refute_received {:sticky_opened, _}
+    refute File.exists?(pidfile)
   end
 
   test "all mode stop reaps the agent process group and closes the listener" do
@@ -412,25 +454,41 @@ defmodule AgentLink.LifecycleTest do
     starttime
   end
 
-  defp watch_replacement(dest, old, parent, parent_started, child, child_started) do
-    receive do
-      :stop ->
-        send(dest, {:overlap, :clear})
-    after
-      0 ->
-        case Process.whereis(AgentLink.Relay.Agent) do
-          pid when is_pid(pid) and pid != old ->
-            outcome =
-              if os_alive?(parent, parent_started) or os_alive?(child, child_started),
-                do: :alive,
-                else: :clear
+  defp sticky_link! do
+    dir = Path.join(System.tmp_dir!(), "agentlink-sticky-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    pidfile = Path.join(dir, "pids")
+    script = Path.join(dir, "sticky.py")
 
-            send(dest, {:overlap, outcome})
+    File.write!(script, """
+    #!/usr/bin/env python3
+    import signal
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    while True:
+        signal.pause()
+    """)
 
-          _ ->
-            watch_replacement(dest, old, parent, parent_started, child, child_started)
-        end
-    end
+    File.chmod!(script, 0o755)
+    python = System.find_executable("python3")
+    assert is_binary(python)
+
+    body =
+      Jason.encode!(%{
+        "name" => "fixture",
+        "label" => "lifecycle",
+        "program" => "fixture",
+        "plane_url" => "ws://127.0.0.1:9/agent",
+        "command" => python,
+        "args" => [script]
+      })
+
+    path = Path.join(dir, "agent.link.json")
+    File.write!(path, body)
+    Application.put_env(:agent_link, :link_path, path)
+    pidfile
   end
 
   defp os_alive?(pid, starttime) do
@@ -462,6 +520,72 @@ defmodule AgentLink.LifecycleTest do
 
       _ ->
         :ok
+    end
+  end
+end
+
+defmodule AgentLink.LifecycleTest.Sticky do
+  @moduledoc false
+  @behaviour AgentLink.Agent
+
+  @impl true
+  def open(owner, %AgentLink.Agent.Launch{command: command, args: args}, cwd)
+      when owner == self() do
+    port =
+      Port.open({:spawn_executable, command}, [
+        :binary,
+        :exit_status,
+        :use_stdio,
+        {:args, args},
+        {:cd, cwd}
+      ])
+
+    if listener = Application.get_env(:agent_link, :sticky_listener) do
+      {:os_pid, pid} = Port.info(port, :os_pid)
+      send(listener, {:sticky_opened, pid})
+    end
+
+    {:ok, port}
+  end
+
+  def open(owner, %AgentLink.Agent.Launch{command: command}, _cwd) do
+    {:error, "owner #{inspect(owner)} cannot open #{command}"}
+  end
+
+  @impl true
+  def write(_port, _data), do: :ok
+
+  @impl true
+  def close(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} ->
+        case File.read("/proc/#{pid}/stat") do
+          {:ok, stat} ->
+            case starttime(stat) do
+              field when is_binary(field) -> AgentLink.Agent.Reaper.retain([{pid, field}])
+              _ -> :ok
+            end
+
+          _ ->
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+
+    {:error, :timeout}
+  end
+
+  defp starttime(stat) do
+    case :binary.matches(stat, ")") do
+      [] ->
+        nil
+
+      matches ->
+        {pos, 1} = List.last(matches)
+        rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
+        rest |> String.split(" ", trim: true) |> Enum.at(19)
     end
   end
 end

@@ -6,6 +6,8 @@ defmodule AgentLink.CLI do
   replaces the configured mode, port, and token.
   `plane` is the plane alone. `relay` starts `AgentLink.Relay.Agent`.
   `connect` starts `AgentLink.Relay.Client`.
+  `parse/1` drops a leading `start`. That word is what the Windows release
+  script leaves in `%*`.
   """
 
   defstruct mode: :all, port: nil, token: nil, plane: nil, target: nil
@@ -84,6 +86,7 @@ defmodule AgentLink.CLI do
   def parse(["plane" | rest]), do: listen(rest, :plane)
   def parse(["relay" | rest]), do: relay(rest)
   def parse(["connect" | rest]), do: connect(rest)
+  def parse(["start" | rest]), do: parse(rest)
   def parse(["--" <> _ | _] = argv), do: listen(argv, :all)
   def parse(_argv), do: {:error, usage()}
 

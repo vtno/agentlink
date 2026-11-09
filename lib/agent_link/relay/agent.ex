@@ -21,10 +21,14 @@ defmodule AgentLink.Relay.Agent do
 
   The child shutdown is the `SIGTERM` wait, the confirmation wait, and two
   allowances of `1000` milliseconds for the `kill` commands, read when the
-  child spec is built. The `SIGTERM` wait is `:agent_stop_timeout`. The
-  confirmation wait is `:agent_stop_timeout`, or `1000` when that is shorter.
-  The default `:agent_stop_timeout` is `5000`, so the shutdown is `12000`.
+  child spec is built. The allowance is `AgentLink.Agent.Process.allowance_ms/0`.
+  The `SIGTERM` wait is `:agent_stop_timeout`. The confirmation wait is
+  `:agent_stop_timeout`, or `1000` when that is shorter. The default
+  `:agent_stop_timeout` is `5000`, so the shutdown is `12000`.
   `terminate/2` calls `close/1` and does not return until that call returns.
+  `init/1` calls `AgentLink.Agent.Reaper.reap/0` before `open/3`. A failed
+  reap stops this start, so no replacement agent is spawned while a retained
+  start time is still alive.
   """
 
   use GenServer
@@ -34,10 +38,6 @@ defmodule AgentLink.Relay.Agent do
 
   # A dropped stdout line can be huge, or not valid UTF-8. Log a prefix.
   @dropped_bytes 80
-
-  # Matches `AgentLink.Agent.Process` `@stop_step_ms`. One allowance per
-  # `kill` command. The confirmation wait uses the same floor.
-  @stop_step_ms 1_000
 
   @doc false
   def child_spec(opts) do
@@ -51,7 +51,8 @@ defmodule AgentLink.Relay.Agent do
   end
 
   defp shutdown_ms(timeout) do
-    timeout + max(timeout, @stop_step_ms) + @stop_step_ms * 2
+    allowance = AgentLink.Agent.Process.allowance_ms()
+    timeout + max(timeout, allowance) + allowance * 2
   end
 
   @doc """
@@ -69,6 +70,18 @@ defmodule AgentLink.Relay.Agent do
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)
+
+    case AgentLink.Agent.Reaper.reap() do
+      :ok ->
+        boot(opts)
+
+      {:error, reason} ->
+        Logger.error("agent reap failed: #{inspect(reason)}")
+        {:stop, {:reap, reason}}
+    end
+  end
+
+  defp boot(opts) do
     cwd = AgentLink.Paths.workdir()
     File.mkdir_p!(cwd)
     agent_module = Application.get_env(:agent_link, :agent_module, AgentLink.Agent.Process)

@@ -51,7 +51,7 @@ defmodule AgentLink.MixProject do
       if System.get_env("AGENTLINK_BURRITO") == "0" do
         steps
       else
-        steps ++ [&Burrito.wrap/1, &AgentLink.Release.forward_signals/1]
+        steps ++ [&AgentLink.Release.wrap_burrito/1, &AgentLink.Release.forward_signals/1]
       end
 
     [

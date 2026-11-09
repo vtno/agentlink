@@ -8,7 +8,9 @@
  * to the child process group. GenerateConsoleCtrlEvent cannot address a
  * process group with CTRL_C_EVENT, and CREATE_NEW_PROCESS_GROUP makes the
  * child ignore Ctrl-C, so Ctrl-Break is the graceful stop the child can see.
- * The wrapper waits for the child and returns its exit code.
+ * The wrapper waits for the child and returns its exit code. After
+ * Ctrl-Break it waits 2000 milliseconds. If the child is still running,
+ * TerminateJobObject kills the job and the wrapper exits 1.
  */
 
 static DWORD child_pid = 0;
@@ -165,10 +167,40 @@ int main(void) {
     SetConsoleCtrlHandler(on_console, TRUE);
     ResumeThread(process.hThread);
     CloseHandle(process.hThread);
-    WaitForSingleObject(process.hProcess, INFINITE);
 
-    if (!GetExitCodeProcess(process.hProcess, &code)) {
-        code = 1;
+    {
+        int forced = 0;
+        ULONGLONG grace_from = 0;
+
+        for (;;) {
+            DWORD wait = WaitForSingleObject(process.hProcess, 50);
+
+            if (wait == WAIT_OBJECT_0) {
+                if (forced || !GetExitCodeProcess(process.hProcess, &code)) {
+                    code = 1;
+                }
+
+                break;
+            }
+
+            if (InterlockedCompareExchange(&signaled, 0, 0) == 1) {
+                ULONGLONG now = GetTickCount64();
+
+                if (grace_from == 0) {
+                    grace_from = now;
+                }
+
+                if (!forced && now - grace_from >= 2000) {
+                    TerminateJobObject(job, 1);
+                    forced = 1;
+                }
+
+                if (forced && now - grace_from >= 4000) {
+                    code = 1;
+                    break;
+                }
+            }
+        }
     }
 
     CloseHandle(process.hProcess);

@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -24,16 +25,23 @@
 #endif
 
 /*
- * The Burrito child is placed in its own process group before exec.
- * A signal delivered to this wrapper's group reaches only the wrapper.
- * The wrapper forwards that one signal to the Burrito process's direct
- * child. That child is the VM: the launcher execs erlexec, which becomes
- * beam.smp. Helpers such as erl_child_setup are grandchildren, so a leaf
- * walk would signal them and miss the VM. The signal is sent only when
- * the recorded start time still matches. The wrapper waits until that
- * VM is gone and exits with the status of the Burrito process, which
- * has waited for the VM.
+ * The SIGTERM and SIGINT handler is installed before fork, so an early
+ * signal exits the wrapper before a child exists. The Burrito child is
+ * placed in its own process group before exec. A signal delivered to this
+ * wrapper's group reaches only the wrapper. The wrapper forwards that one
+ * signal to the Burrito process's direct child. That child is the VM: the
+ * launcher execs erlexec, which becomes beam.smp. Helpers such as
+ * erl_child_setup are grandchildren, so a leaf walk would signal them and
+ * miss the VM. The signal is sent only when the recorded start time still
+ * matches. The wrapper remembers that pid and start time. After the Burrito
+ * process exits, the wrapper keeps signaling that identity, including when
+ * the VM has been reparented to pid 1. It waits 2000 milliseconds, signals
+ * SIGKILL, and exits 1 if the VM is still alive 2000 milliseconds later.
+ * When the VM exits from the forwarded signal, the wrapper exits with the
+ * Burrito process's status.
  */
+
+#define FORCE_MS 2000
 
 #define MAX_PROCS 4096
 #define MAX_TRACKED 64
@@ -51,16 +59,28 @@ struct tracked {
 
 static pid_t child_pid = -1;
 static int wake_write = -1;
+static volatile sig_atomic_t saw_signal = 0;
 static struct tracked tracked_vm[MAX_TRACKED];
 static int tracked_count = 0;
 
 static void on_signal(int sig) {
     unsigned char byte = (unsigned char)sig;
+    saw_signal = 1;
 
     if (wake_write >= 0) {
         ssize_t wrote = write(wake_write, &byte, 1);
         (void)wrote;
     }
+}
+
+static long long now_ms(void) {
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 }
 
 static void remember(pid_t pid, unsigned long long start) {
@@ -81,19 +101,6 @@ static void remember(pid_t pid, unsigned long long start) {
         tracked_vm[tracked_count].start = start;
         tracked_count++;
     }
-}
-
-static int remembered_start(pid_t pid, unsigned long long *start) {
-    int index;
-
-    for (index = 0; index < tracked_count; index++) {
-        if (tracked_vm[index].pid == pid) {
-            *start = tracked_vm[index].start;
-            return 1;
-        }
-    }
-
-    return 0;
 }
 
 #if defined(__linux__)
@@ -309,30 +316,26 @@ static void observe(void) {
     }
 }
 
-static void forward(int sig) {
-    struct proc_row vms[MAX_TRACKED];
-    int count = find_vm(child_pid, vms, MAX_TRACKED);
+static int signal_tracked(int sig) {
     int index;
     int sent = 0;
 
     observe();
 
-    for (index = 0; index < count; index++) {
-        unsigned long long start = vms[index].start;
-        pid_t pid = vms[index].pid;
-
-        remember(pid, start);
-
-        if (!remembered_start(pid, &start)) {
-            continue;
-        }
+    for (index = 0; index < tracked_count; index++) {
+        pid_t pid = tracked_vm[index].pid;
+        unsigned long long start = tracked_vm[index].start;
 
         if (pid > 1 && same_start(pid, start) && kill(pid, sig) == 0) {
             sent = 1;
         }
     }
 
-    if (!sent && child_pid > 1) {
+    return sent;
+}
+
+static void forward(int sig) {
+    if (!signal_tracked(sig) && child_pid > 1) {
         kill(child_pid, sig);
     }
 }
@@ -399,11 +402,27 @@ int main(int argc, char **argv) {
     int child_done = 0;
     int child_code = 1;
     int escalated = 0;
+    int forced = 0;
+    long long deadline = 0;
 
     (void)argc;
 
     if (inner_path(inner, sizeof inner) != 0 || pipe(pipefd) != 0) {
         return 127;
+    }
+
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+    wake_write = pipefd[1];
+
+    memset(&action, 0, sizeof action);
+    action.sa_handler = on_signal;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGTERM, &action, NULL);
+    sigaction(SIGINT, &action, NULL);
+
+    if (saw_signal) {
+        return 1;
     }
 
     child_pid = fork();
@@ -413,11 +432,11 @@ int main(int argc, char **argv) {
     }
 
     if (child_pid == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGINT, SIG_DFL);
         close(pipefd[0]);
         close(pipefd[1]);
         setpgid(0, 0);
-        signal(SIGTERM, SIG_DFL);
-        signal(SIGINT, SIG_DFL);
         /* Burrito finds its payload from argv[0]. The wrapper path has no payload. */
         argv[0] = inner;
         execv(inner, argv);
@@ -426,15 +445,6 @@ int main(int argc, char **argv) {
     }
 
     setpgid(child_pid, child_pid);
-    wake_write = pipefd[1];
-    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
-    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
-
-    memset(&action, 0, sizeof action);
-    action.sa_handler = on_signal;
-    sigemptyset(&action.sa_mask);
-    sigaction(SIGTERM, &action, NULL);
-    sigaction(SIGINT, &action, NULL);
 
     for (;;) {
         unsigned char sig = 0;
@@ -449,6 +459,7 @@ int main(int argc, char **argv) {
             if (got == child_pid) {
                 child_done = 1;
                 child_code = status_code(status);
+                observe();
             } else if (got < 0 && errno != EINTR) {
                 child_done = 1;
                 child_code = 1;
@@ -460,12 +471,19 @@ int main(int argc, char **argv) {
         }
 
         if (child_done && !vm_alive()) {
-            return child_code;
+            return forced ? 1 : child_code;
         }
 
         if (child_done && vm_alive() && !escalated) {
-            forward(SIGTERM);
+            signal_tracked(SIGTERM);
             escalated = 1;
+            deadline = now_ms() + FORCE_MS;
+        } else if (child_done && vm_alive() && escalated && !forced && now_ms() >= deadline) {
+            signal_tracked(SIGKILL);
+            forced = 1;
+            deadline = now_ms() + FORCE_MS;
+        } else if (forced && now_ms() >= deadline) {
+            return 1;
         }
 
         ready.fd = pipefd[0];

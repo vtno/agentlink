@@ -18,7 +18,11 @@ defmodule AgentLink.Agent.Process do
 
   # One `kill` invocation and the `/proc` scan that precedes it.
   # `AgentLink.Relay.Agent` reserves the same amount, twice, in the shutdown.
+  # `allowance_ms/0` is that shared number.
   @stop_step_ms 1_000
+
+  @doc false
+  def allowance_ms, do: @stop_step_ms
 
   defmodule Record do
     @moduledoc false
@@ -144,9 +148,12 @@ defmodule AgentLink.Agent.Process do
   deadline, `close/1` signals `SIGKILL` the same way and waits again. That
   confirmation wait is `:agent_stop_timeout`, or `1000` milliseconds when
   that value is shorter, so a timeout of `0` still observes the reap.
-  `close/1` does not return `:ok` while a recorded process remains.
-  `AgentLink.Relay.Agent` sizes its shutdown to hold both waits and both
-  `kill` commands.
+  `close/1` reads `/proc` again immediately before `SIGKILL` and refreshes
+  each recorded process group. `close/1` does not return `:ok` while a
+  recorded process remains. A remaining `{pid, starttime}` is passed to
+  `AgentLink.Agent.Reaper.retain/1`. The next relay calls `reap/0` before
+  `open/3`. `AgentLink.Relay.Agent` sizes its shutdown to hold both waits
+  and both `kill` commands.
 
   A pid whose start time changed is left alone. `close/1` does not signal
   the VM's own OS pid. On macOS, `close/1` closes stdin and does not signal
@@ -155,7 +162,7 @@ defmodule AgentLink.Agent.Process do
   group and does not create a Job Object.
   """
   @impl true
-  @spec close(term) :: :ok | {:error, :timeout} | {:error, :no_kill}
+  @spec close(term) :: :ok | {:error, :timeout} | {:error, :no_kill} | {:error, :kill_failed}
   def close(port) do
     case take_record(port) do
       nil ->
@@ -172,18 +179,72 @@ defmodule AgentLink.Agent.Process do
             signal_error(term)
 
           :timeout ->
-            owned = rescan(record, owned)
+            owned = refresh(rescan(record, owned))
             kill = signal_owned(owned, :kill)
 
             case wait_gone(owned, confirm_timeout(timeout)) do
-              :gone -> signal_error(first_error([term, kill]))
-              :timeout -> {:error, :timeout}
+              :gone ->
+                signal_error(term)
+
+              :timeout ->
+                retain_alive(owned)
+                signal_error(first_error([kill, {:error, :timeout}]))
+            end
+        end
+    end
+  end
+
+  @doc """
+  Signal `SIGKILL` to each `{pid, starttime}` whose start time still matches.
+
+  Waits `1000` milliseconds. Returns `:ok` when every start time is gone.
+  Returns `{:error, :no_kill}` when `kill` is not on `PATH` and a pid remains.
+  Returns `{:error, :kill_failed}` when `kill` exits non-zero and that start
+  time still matches. Returns `{:error, :timeout}` when a start time still
+  matches after the wait. Does not signal pid 1 or this VM's OS pid.
+  `AgentLink.Agent.Reaper` calls this. `close/1` does not.
+  """
+  @spec force([{integer(), String.t()}]) ::
+          :ok | {:error, :timeout} | {:error, :no_kill} | {:error, :kill_failed}
+  def force(identities) when is_list(identities) do
+    owned =
+      Enum.flat_map(identities, fn
+        {pid, starttime} when is_integer(pid) and is_binary(starttime) ->
+          case read_identity(pid) do
+            {:ok, %Identity{starttime: ^starttime, pgrp: pgrp}} ->
+              [%Owned{pid: pid, starttime: starttime, pgrp: pgrp, root: false, group: false}]
+
+            _ ->
+              []
+          end
+
+        _ ->
+          []
+      end)
+
+    case owned do
+      [] ->
+        :ok
+
+      _ ->
+        case signal_owned(owned, :kill) do
+          {:error, :no_kill} = error ->
+            error
+
+          kill ->
+            case wait_gone(owned, @stop_step_ms) do
+              :gone -> :ok
+              :timeout -> signal_error(first_error([kill, {:error, :timeout}]))
             end
         end
     end
   end
 
   defp open_command(command, args, cwd, finder) do
+    if listener = Application.get_env(:agent_link, :agent_open_listener) do
+      send(listener, {:agent_opening, self()})
+    end
+
     case resolve(command, finder) do
       {:ok, path} -> open_regular(path, args, cwd)
       {:error, message} -> {:error, message}
@@ -330,6 +391,24 @@ defmodule AgentLink.Agent.Process do
     owned ++ Enum.reject(snapshot(record), &MapSet.member?(known, &1.pid))
   end
 
+  defp refresh(owned) do
+    Enum.flat_map(owned, fn %Owned{pid: pid, starttime: starttime} = proc ->
+      case read_identity(pid) do
+        {:ok, %Identity{starttime: ^starttime, pgrp: pgrp}} -> [%{proc | pgrp: pgrp}]
+        _ -> []
+      end
+    end)
+  end
+
+  defp retain_alive(owned) do
+    identities =
+      Enum.flat_map(owned, fn %Owned{pid: pid, starttime: starttime} ->
+        if matching?(pid, starttime), do: [{pid, starttime}], else: []
+      end)
+
+    AgentLink.Agent.Reaper.retain(identities)
+  end
+
   defp descendants(root_pid) do
     table = proc_table()
 
@@ -445,9 +524,28 @@ defmodule AgentLink.Agent.Process do
         {:error, :no_kill}
 
       kill ->
-        System.cmd(kill, ["-s", signal, "--", Integer.to_string(target)], stderr_to_stdout: true)
-        :ok
+        {output, status} =
+          System.cmd(kill, ["-s", signal, "--", Integer.to_string(target)],
+            stderr_to_stdout: true
+          )
+
+        cond do
+          status == 0 ->
+            :ok
+
+          not kill_target_alive?(target) ->
+            :ok
+
+          true ->
+            Logger.error("agent stop kill failed status=#{status} #{String.trim(output)}")
+            {:error, :kill_failed}
+        end
     end
+  end
+
+  defp kill_target_alive?(target) when is_integer(target) do
+    pid = abs(target)
+    pid > 1 and File.exists?("/proc/#{pid}")
   end
 
   defp wait_gone(owned, timeout) do

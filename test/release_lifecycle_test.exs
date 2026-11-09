@@ -95,7 +95,10 @@ defmodule AgentLink.ReleaseLifecycleTest do
     pidfile = hold_link!(dir)
     sys = write_sys!(dir, all_config(port_num))
     {port, os_pid, started} = boot!(bin, ["start"], env(dir, "lifeall", sys))
-    log = await_listen!(port, port_num, "")
+
+    log =
+      await_listen!(port, port_num, "", "The agent relay on this machine is starting.")
+
     {parent, child, log} = await_hold!(port, pidfile, log)
     parent_started = starttime!(parent)
     child_started = starttime!(child)
@@ -156,22 +159,24 @@ defmodule AgentLink.ReleaseLifecycleTest do
   end
 
   test "SIGTERM during connect exits 1", %{bin: bin, dir: dir} do
-    sys = write_sys!(dir, connect_config(), :notice)
-    env = env(dir, "lifeconnect1", sys)
+    for n <- 1..4 do
+      sys = write_sys!(dir, connect_config(), :notice)
+      env = env(dir, "lifeconnect#{n}", sys)
 
-    {port, os_pid, started} =
-      boot!(
-        bin,
-        ["start", "connect", "--plane", "ws://127.0.0.1:9/acp", "--token", "sekret"],
-        env
-      )
+      {port, os_pid, started} =
+        boot!(
+          bin,
+          ["start", "connect", "--plane", "ws://127.0.0.1:9/acp", "--token", "sekret"],
+          env
+        )
 
-    log = await_running!(bin, env, port, os_pid, "")
-    signal_if_same!(os_pid, started, "-TERM")
-    {status, logged} = await_exit!(port, log)
-    assert status == 1
-    assert shown(logged) =~ "SIGTERM received"
-    await_gone!(os_pid, started)
+      log = await_running!(bin, env, port, os_pid, "")
+      signal_if_same!(os_pid, started, "-TERM")
+      {status, logged} = await_exit!(port, log)
+      assert status == 1, shown(logged)
+      assert shown(logged) =~ "SIGTERM received"
+      await_gone!(os_pid, started)
+    end
   end
 
   defp boot!(bin, args, env) do
@@ -276,31 +281,32 @@ defmodule AgentLink.ReleaseLifecycleTest do
   end
 
   @listen_deadline_ms 30_000
+  @listen_banner "Waiting for the uplink to connect."
 
-  defp await_listen!(port, port_num, log) do
-    await_listen!(port, port_num, log, System.monotonic_time(:millisecond))
+  defp await_listen!(port, port_num, log, marker \\ @listen_banner) do
+    await_listen!(port, port_num, log, marker, System.monotonic_time(:millisecond))
   end
 
-  defp await_listen!(port, port_num, log, started) do
+  defp await_listen!(port, port_num, log, marker, started) do
     receive do
       {^port, {:data, data}} ->
-        await_listen!(port, port_num, log <> data, started)
+        await_listen!(port, port_num, log <> data, marker, started)
 
       {^port, {:exit_status, status}} ->
         flunk("release exited #{status} before listening\n#{shown(log)}")
     after
       0 ->
         cond do
-          accept?(port_num) ->
+          accept?(port_num) and String.contains?(log, marker) ->
             log
 
           System.monotonic_time(:millisecond) - started >= @listen_deadline_ms ->
             flunk(
-              "127.0.0.1:#{port_num} did not accept within #{@listen_deadline_ms}ms\n#{shown(log)}"
+              "127.0.0.1:#{port_num} did not log #{marker} within #{@listen_deadline_ms}ms\n#{shown(log)}"
             )
 
           true ->
-            await_listen!(port, port_num, log, started)
+            await_listen!(port, port_num, log, marker, started)
         end
     end
   end
