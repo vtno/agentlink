@@ -104,6 +104,28 @@ defmodule AgentLink.ApplicationTest.ObservedStdio do
   defp observer, do: Application.fetch_env!(:agent_link, :connect_observer)
 end
 
+defmodule AgentLink.ApplicationTest.OnceAgent do
+  @moduledoc false
+
+  def open(_owner, launch, cwd) do
+    if listener = Application.get_env(:agent_link, :agent_listener) do
+      send(listener, {:once_open, launch, cwd})
+    end
+
+    {:error, "once agent refused\n"}
+  end
+
+  def write(_agent, _data), do: :closed
+  def close(_agent), do: :ok
+end
+
+defmodule AgentLink.ApplicationTest.CrashAgent do
+  @moduledoc false
+  def open(_owner, _launch, _cwd), do: raise("boom")
+  def write(_agent, _data), do: :closed
+  def close(_agent), do: :ok
+end
+
 defmodule AgentLink.ApplicationTest do
   use ExUnit.Case, async: false
 
@@ -149,6 +171,13 @@ defmodule AgentLink.ApplicationTest do
   test "plane mode does not start an agent relay" do
     Application.put_env(:agent_link, :mode, :plane)
     Application.put_env(:agent_link, :port, 18_096)
+
+    Application.put_env(
+      :agent_link,
+      :link_path,
+      "/tmp/agentlink-plane-missing-#{System.unique_integer([:positive])}.json"
+    )
+
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
     assert Process.whereis(AgentLink.Plane)
     assert Process.whereis(AgentLink.Plane.Sessions)
@@ -172,6 +201,66 @@ defmodule AgentLink.ApplicationTest do
     refute Process.whereis(AgentLink.Relay.Agent)
   end
 
+  test "all mode prints a missing launch once and does not stay up" do
+    Application.put_env(:agent_link, :mode, :all)
+    Application.put_env(:agent_link, :port, 18_100)
+
+    Application.put_env(
+      :agent_link,
+      :link_path,
+      "/tmp/agentlink-all-missing-#{System.unique_integer([:positive])}.json"
+    )
+
+    stderr =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert {:error, message} = AgentLink.Application.start(:normal, [])
+        assert message =~ "No link file"
+        send(self(), {:boot_message, message})
+      end)
+
+    assert_received {:boot_message, message}
+    assert message =~ "No link file"
+    assert stderr =~ "No link file"
+    assert length(String.split(stderr, "No link file")) == 2
+    refute Process.whereis(AgentLink.Supervisor)
+    refute Process.whereis(AgentLink.Plane)
+    refute Process.whereis(AgentLink.Relay.Agent)
+  end
+
+  test "an open error before startup is one attempt and one message" do
+    previous = Application.get_env(:agent_link, :agent_module)
+    Application.put_env(:agent_link, :agent_module, AgentLink.ApplicationTest.OnceAgent)
+    on_exit(fn -> AgentLink.TestHelpers.restore(:agent_module, previous) end)
+    Application.put_env(:agent_link, :mode, :relay)
+    write_link()
+
+    stderr =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert {:error, message} = AgentLink.Application.start(:normal, [])
+        assert message =~ "once agent refused"
+        send(self(), {:boot_message, message})
+      end)
+
+    assert_received {:boot_message, _message}
+    assert stderr =~ "once agent refused"
+    assert length(String.split(stderr, "once agent refused")) == 2
+    assert_received {:once_open, %AgentLink.Agent.Launch{}, _cwd}
+    refute_received {:once_open, _launch, _cwd}
+    refute Process.whereis(AgentLink.Supervisor)
+  end
+
+  test "a raised open stays a supervisor error" do
+    previous = Application.get_env(:agent_link, :agent_module)
+    Application.put_env(:agent_link, :agent_module, AgentLink.ApplicationTest.CrashAgent)
+    on_exit(fn -> AgentLink.TestHelpers.restore(:agent_module, previous) end)
+    Application.put_env(:agent_link, :mode, :relay)
+    write_link()
+
+    assert {:error, reason} = AgentLink.Application.start(:normal, [])
+    refute is_binary(reason)
+    refute Process.whereis(AgentLink.Supervisor)
+  end
+
   test "relay mode starts only the relay" do
     if pid = Process.whereis(AgentLink.Supervisor) do
       Process.exit(pid, :kill)
@@ -181,7 +270,7 @@ defmodule AgentLink.ApplicationTest do
     write_link()
     Application.put_env(:agent_link, :mode, :relay)
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
-    assert_receive {:agent_opened, _agent, _cwd}
+    assert_receive {:agent_opened, _agent, _launch, _cwd}
     assert Process.whereis(AgentLink.Relay.Agent)
     refute Process.whereis(AgentLink.Plane)
     refute Process.whereis(AgentLink.Plane.Sessions)
@@ -380,6 +469,40 @@ defmodule AgentLink.ApplicationTest do
     refute_received {:connect_exit, 0}
   end
 
+  test "a bad launch after startup stops the relay supervisor and leaves the plane" do
+    start_all(18_101)
+    File.write!(Application.fetch_env!(:agent_link, :link_path), ~s({"name":"opencode"}))
+    supervisor = Process.whereis(AgentLink.Relay.Agent.Supervisor)
+    ref = Process.monitor(supervisor)
+    Process.exit(Process.whereis(AgentLink.Relay.Agent), :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^supervisor, _}
+    assert Process.alive?(Process.whereis(AgentLink.Plane))
+    assert Process.alive?(Process.whereis(AgentLink.Supervisor))
+    refute Process.whereis(AgentLink.Relay.Agent.Supervisor)
+    refute Process.whereis(AgentLink.Relay.Agent)
+  end
+
+  test "a bad launch after startup stops the application supervisor in relay mode" do
+    if pid = Process.whereis(AgentLink.Supervisor) do
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+    end
+
+    write_link()
+    Application.put_env(:agent_link, :mode, :relay)
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert_receive {:agent_opened, _agent, _launch, _cwd}
+    File.write!(Application.fetch_env!(:agent_link, :link_path), ~s({"name":"opencode"}))
+    ref = Process.monitor(sup)
+    Process.exit(Process.whereis(AgentLink.Relay.Agent), :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^sup, _}
+    refute Process.whereis(AgentLink.Supervisor)
+    refute Process.whereis(AgentLink.Plane)
+  end
+
   test "an agent relay crash loop leaves the plane up" do
     start_all(18_098)
     supervisor = Process.whereis(AgentLink.Relay.Agent.Supervisor)
@@ -406,7 +529,7 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :port, port)
     write_link()
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
-    assert_receive {:agent_opened, _agent, _cwd}
+    assert_receive {:agent_opened, _agent, _launch, _cwd}
   end
 
   defp refute_client_relay do
@@ -541,7 +664,7 @@ defmodule AgentLink.ApplicationTest do
 
     File.write!(
       path,
-      ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"})
+      ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent","command":"agentlink-fake","args":["acp"]})
     )
 
     Application.put_env(:agent_link, :link_path, path)

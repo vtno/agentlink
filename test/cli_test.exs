@@ -56,40 +56,18 @@ defmodule AgentLink.CLITest do
     assert {:ok, :help} = AgentLink.CLI.parse(["--help"])
   end
 
-  test "relay and the root command take an OpenCode executable" do
-    path =
-      Path.join(System.tmp_dir!(), "agentlink-opencode-#{System.unique_integer([:positive])}")
+  test "the removed opencode bin flag is rejected" do
+    for argv <- [
+          ["--opencode-bin", "opencode"],
+          ["relay", "--token", "sekret", "--opencode-bin", "opencode"],
+          ["plane", "--opencode-bin", "opencode"],
+          ["connect", "--opencode-bin", "opencode"]
+        ] do
+      assert {:error, message} = AgentLink.CLI.parse(argv)
+      refute message =~ "--opencode-bin"
+    end
 
-    File.touch!(path)
-    on_exit(fn -> File.rm(path) end)
-    expanded = Path.expand(path)
-
-    assert {:ok, %AgentLink.CLI{mode: :all, opencode_bin: ^expanded}} =
-             AgentLink.CLI.parse(["--opencode-bin", path])
-
-    assert {:ok, %AgentLink.CLI{mode: :relay, token: "sekret", opencode_bin: ^expanded}} =
-             AgentLink.CLI.parse(["relay", "--token", "sekret", "--opencode-bin", path])
-
-    assert {:error, message} = AgentLink.CLI.parse(["plane", "--opencode-bin", path])
-    assert message =~ "does not run opencode"
-    assert {:error, message} = AgentLink.CLI.parse(["--opencode-bin", path <> "-missing"])
-    assert message =~ "not found"
-  end
-
-  test "apply stores the OpenCode executable" do
-    path =
-      Path.join(System.tmp_dir!(), "agentlink-opencode-#{System.unique_integer([:positive])}")
-
-    File.touch!(path)
-    on_exit(fn -> File.rm(path) end)
-    previous = Application.get_env(:agent_link, :opencode_bin)
-    mode = Application.get_env(:agent_link, :mode)
-
-    assert :ok = AgentLink.CLI.apply(["--opencode-bin", path])
-    assert Application.get_env(:agent_link, :opencode_bin) == Path.expand(path)
-
-    AgentLink.TestHelpers.restore(:opencode_bin, previous)
-    AgentLink.TestHelpers.restore(:mode, mode)
+    refute AgentLink.CLI.usage() =~ "opencode"
   end
 
   test "connect takes a plane, a target, and a token" do
@@ -99,8 +77,7 @@ defmodule AgentLink.CLITest do
               plane: "wss://plane.example/acp",
               target: "lab",
               token: "sekret",
-              port: nil,
-              opencode_bin: nil
+              port: nil
             }} =
              AgentLink.CLI.parse([
                "connect",

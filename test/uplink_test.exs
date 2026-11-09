@@ -26,6 +26,30 @@ defmodule AgentLink.UplinkTest do
     assert AgentLink.Uplink.endpoint(url) == AgentLink.Transport.endpoint(url, "/agent")
   end
 
+  test "a supplied link skips the initial read" do
+    File.rm!(Application.fetch_env!(:agent_link, :link_path))
+
+    link = %AgentLink.Link{
+      name: "supplied",
+      label: "from the caller",
+      program: "metadata",
+      plane_url: "ws://127.0.0.1:4/agent"
+    }
+
+    uplink = start_uplink(link: link, watch_interval: nil)
+    assert [hello] = sent(uplink)
+    assert hello["params"]["name"] == "supplied"
+    assert hello["params"]["label"] == "from the caller"
+    assert hello["params"]["program"] == "metadata"
+    assert :sys.get_state(transport_pid(uplink)).url == "ws://127.0.0.1:4/agent"
+
+    ref = Process.monitor(uplink)
+    send(uplink, :watch)
+
+    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 1_000
+    assert message =~ "No link file"
+  end
+
   test "a missing link file stops the uplink" do
     Process.flag(:trap_exit, true)
     missing = "/tmp/agentlink-uplink-missing-#{System.unique_integer([:positive])}.json"
@@ -387,9 +411,11 @@ defmodule AgentLink.UplinkTest do
 
   defp start_uplink(opts \\ []) do
     {interval, opts} = Keyword.pop(opts, :watch_interval, :default)
+    {link, opts} = Keyword.pop(opts, :link)
     transport_opts = Keyword.put_new(opts, :backoff, 60_000)
 
     uplink_opts = [owner: self(), transport: FakeTransport, transport_opts: transport_opts]
+    uplink_opts = if link, do: Keyword.put(uplink_opts, :link, link), else: uplink_opts
 
     uplink_opts =
       if interval == :default do

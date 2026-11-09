@@ -2,21 +2,40 @@ defmodule AgentLink.OpenCodeLiveTest do
   use ExUnit.Case, async: false
 
   @port 18_099
+  @model "xai/grok-4.20-0309-non-reasoning"
 
   @tag :wrapped
   @tag timeout: 240_000
   test "the wrapped binary asks the agent for a landing page" do
     dir = tmp_dir()
-    {:ok, wrapper} = Agent.start(fn -> nil end)
+    {port, page_dir} = start_binary(System.fetch_env!("AGENTLINK_BIN"), dir)
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
 
-    on_exit(fn ->
-      stop_wrapper(Agent.get(wrapper, & &1))
-      File.rm_rf(dir)
-    end)
+    on_exit(fn -> File.rm_rf(dir) end)
 
-    page_dir = start_binary(System.fetch_env!("AGENTLINK_BIN"), dir, wrapper)
-    assert :ok = wait_runtime()
-    request_page(page_dir)
+    owned =
+      case AgentLink.OwnedStop.capture(os_pid) do
+        {:ok, owned} ->
+          owned
+
+        :error ->
+          flunk("could not read /proc starttime for launcher pid #{os_pid}")
+      end
+
+    on_exit(fn -> AgentLink.OwnedStop.stop(owned) end)
+
+    try do
+      assert :ok = wait_runtime()
+      request_page(page_dir)
+    after
+      AgentLink.OwnedStop.stop(owned)
+
+      try do
+        Port.close(port)
+      catch
+        _, _ -> :ok
+      end
+    end
   end
 
   defp request_page(page_dir) do
@@ -48,12 +67,15 @@ defmodule AgentLink.OpenCodeLiveTest do
                "mcpServers" => []
              })
 
-    _ =
-      AgentLink.LiveClient.request(client, "session/set_config_option", %{
-        "sessionId" => session_id,
-        "configId" => "model",
-        "value" => "xai/grok-4.20-0309-non-reasoning"
-      })
+    assert {:ok, %{"result" => %{"configOptions" => options}}} =
+             AgentLink.LiveClient.request(client, "session/set_config_option", %{
+               "sessionId" => session_id,
+               "configId" => "model",
+               "value" => @model
+             })
+
+    assert %{"id" => "model", "currentValue" => @model} =
+             Enum.find(options, &(&1["id"] == "model"))
 
     assert {:ok, %{"result" => %{"stopReason" => "end_turn"}}} =
              AgentLink.LiveClient.request(
@@ -98,30 +120,27 @@ defmodule AgentLink.OpenCodeLiveTest do
      under_home(AgentLink.Paths.default_workdir(), root, home)}
   end
 
-  defp start_binary(bin, dir, wrapper) do
+  defp start_binary(bin, dir) do
     home = Path.join(dir, "home")
     File.mkdir_p!(home)
     {link, page_dir} = paths_under(home)
     File.mkdir_p!(Path.dirname(link))
     File.mkdir_p!(page_dir)
     File.write!(Path.join(page_dir, "opencode.json"), model_config())
-    File.write!(link, link_json())
-
-    opencode = System.get_env("OPENCODE_BIN") || AgentLink.Paths.default_opencode_bin()
-    unless File.exists?(opencode), do: flunk("opencode not found: #{opencode}")
+    opencode = System.get_env("OPENCODE_BIN") || System.find_executable("opencode")
+    unless is_binary(opencode) and File.exists?(opencode), do: flunk("opencode not found")
+    File.write!(link, link_json(opencode))
 
     port =
       Port.open({:spawn_executable, bin}, [
         :binary,
         :exit_status,
         :stderr_to_stdout,
-        {:args,
-         ["--port", Integer.to_string(@port), "--token", "live-token", "--opencode-bin", opencode]},
+        {:args, ["--port", Integer.to_string(@port), "--token", "live-token"]},
         {:env, binary_env(home)}
       ])
 
-    Agent.update(wrapper, fn _ -> port end)
-    page_dir
+    {port, page_dir}
   end
 
   defp under_home(path, root, home) do
@@ -131,11 +150,18 @@ defmodule AgentLink.OpenCodeLiveTest do
   end
 
   defp model_config do
-    ~s({"$schema":"https://opencode.ai/config.json","model":"xai/grok-4.20-0309-non-reasoning"})
+    Jason.encode!(%{"$schema" => "https://opencode.ai/config.json", "model" => @model})
   end
 
-  defp link_json do
-    ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:#{@port}/agent"})
+  defp link_json(opencode) do
+    Jason.encode!(%{
+      "name" => "opencode",
+      "label" => "this machine",
+      "program" => "opencode",
+      "plane_url" => "ws://127.0.0.1:#{@port}/agent",
+      "command" => opencode,
+      "args" => ["acp"]
+    })
   end
 
   defp binary_env(home) do
@@ -143,24 +169,11 @@ defmodule AgentLink.OpenCodeLiveTest do
 
     System.get_env()
     |> Map.put("HOME", home)
-    |> Map.put_new("XDG_DATA_HOME", Path.join(real_home, ".local/share"))
-    |> Map.put_new("XDG_CONFIG_HOME", Path.join(real_home, ".config"))
-    |> Map.put_new("XDG_STATE_HOME", Path.join(real_home, ".local/state"))
+    |> Map.put("XDG_DATA_HOME", Path.join(real_home, ".local/share"))
+    |> Map.put("XDG_CONFIG_HOME", Path.join(real_home, ".config"))
+    |> Map.put("XDG_STATE_HOME", Path.join(real_home, ".local/state"))
     |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)
   end
-
-  defp stop_wrapper(port) when is_port(port) do
-    case Port.info(port, :os_pid) do
-      {:os_pid, pid} -> System.cmd("kill", ["-TERM", Integer.to_string(pid)])
-      _ -> :ok
-    end
-
-    Port.close(port)
-  catch
-    _, _ -> :ok
-  end
-
-  defp stop_wrapper(_), do: :ok
 
   defp find_html(dir) do
     case Path.wildcard(Path.join(dir, "**/*.html")) do

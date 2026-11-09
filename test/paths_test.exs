@@ -16,20 +16,7 @@ defmodule AgentLink.PathsTest do
     assert AgentLink.Paths.plane_url(9001) == "ws://127.0.0.1:9001/agent"
   end
 
-  test "the opencode executable defaults to PATH, then ~/.local/bin" do
-    expected =
-      System.find_executable("opencode") ||
-        Path.join(System.user_home!(), ".local/bin/opencode")
-
-    assert AgentLink.Paths.default_opencode_bin() == expected
-  end
-
-  test "application config overrides the workspace and the executable" do
+  test "application config overrides the workspace" do
     assert AgentLink.Paths.workdir() == "/tmp/agentlink-test-workdir"
-
-    previous = Application.get_env(:agent_link, :opencode_bin)
-    Application.put_env(:agent_link, :opencode_bin, "/tmp/opencode-from-config")
-    on_exit(fn -> AgentLink.TestHelpers.restore(:opencode_bin, previous) end)
-    assert AgentLink.Paths.opencode_bin() == "/tmp/opencode-from-config"
   end
 end

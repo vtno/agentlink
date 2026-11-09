@@ -1,3 +1,8 @@
+defmodule AgentLink.Relay.AgentTest.DownTransport do
+  @moduledoc false
+  def start_link(_opts), do: {:error, :transport_down}
+end
+
 defmodule AgentLink.Relay.AgentTest do
   use ExUnit.Case, async: false
 
@@ -8,10 +13,7 @@ defmodule AgentLink.Relay.AgentTest do
     path =
       Path.join(System.tmp_dir!(), "agentlink-relay-#{System.unique_integer([:positive])}.json")
 
-    File.write!(
-      path,
-      ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent"})
-    )
+    File.write!(path, link_body())
 
     Application.put_env(:agent_link, :link_path, path)
 
@@ -179,7 +181,7 @@ defmodule AgentLink.Relay.AgentTest do
     assert_receive {:DOWN, ^ref, :process, ^relay, {:agent_exit, :killed}}
   end
 
-  test "a missing link file stops the agent relay and closes the agent" do
+  test "a missing link file stops the agent relay before the agent opens" do
     Process.flag(:trap_exit, true)
 
     Application.put_env(
@@ -190,7 +192,105 @@ defmodule AgentLink.Relay.AgentTest do
 
     assert {:error, {:shutdown, message}} = AgentLink.Relay.Agent.start_link([])
     assert message =~ "No link file"
-    assert_receive {:agent_opened, agent, _cwd}
+    refute_received {:agent_opened, _agent, _launch, _cwd}
+    refute Process.whereis(AgentLink.Relay.Agent)
+  end
+
+  test "an invalid launch stops the agent relay before the agent opens" do
+    Process.flag(:trap_exit, true)
+    File.write!(Application.fetch_env!(:agent_link, :link_path), ~s({"name":"opencode"}))
+
+    assert {:error, {:shutdown, message}} = AgentLink.Relay.Agent.start_link([])
+    assert message =~ "must include a command"
+    refute_received {:agent_opened, _agent, _launch, _cwd}
+    refute Process.whereis(AgentLink.Relay.Agent)
+  end
+
+  test "an open error stops the agent relay and does not leave a port" do
+    Process.flag(:trap_exit, true)
+    previous = Application.get_env(:agent_link, :agent_module)
+    Application.put_env(:agent_link, :agent_module, AgentLink.Agent.Process)
+
+    on_exit(fn -> AgentLink.TestHelpers.restore(:agent_module, previous) end)
+
+    File.write!(
+      Application.fetch_env!(:agent_link, :link_path),
+      ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent","command":"agentlink-no-such-bin","args":[]})
+    )
+
+    assert {:error, {:shutdown, message}} = AgentLink.Relay.Agent.start_link([])
+    assert message =~ "could not find agentlink-no-such-bin"
+    refute Process.whereis(AgentLink.Relay.Agent)
+  end
+
+  test "the relay's initial uplink uses the link from the one launch read" do
+    assert {:unix, _} = :os.type()
+    dir = Path.join(System.tmp_dir!(), "agentlink-fifo-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    fifo = Path.join(dir, "agent.link.json")
+    {"", 0} = System.cmd("mkfifo", [fifo])
+    previous = Application.get_env(:agent_link, :link_path)
+    Application.put_env(:agent_link, :link_path, fifo)
+
+    writer =
+      spawn(fn ->
+        # `File.read/1` blocks in the file server until this writer closes.
+        # `:prim_file` writes without that server, so the read can finish.
+        # The second open waits until that read has returned. Opening it
+        # earlier can append `second` onto the bytes of the first read.
+        serve = fn body ->
+          {:ok, fd} = :prim_file.open(String.to_charlist(fifo), [:write, :binary])
+          :ok = :prim_file.write(fd, body)
+          :ok = :prim_file.close(fd)
+        end
+
+        serve.(snapshot_body("first"))
+
+        receive do
+          :second -> serve.(snapshot_body("second"))
+        end
+      end)
+
+    on_exit(fn ->
+      Process.exit(writer, :kill)
+      AgentLink.TestHelpers.restore(:link_path, previous)
+      stop(AgentLink.Relay.Agent)
+      stop(AgentLink.Uplink)
+      File.rm_rf(dir)
+    end)
+
+    start_supervised!(%{
+      id: AgentLink.Relay.Agent,
+      start:
+        {AgentLink.Relay.Agent, :start_link,
+         [
+           [
+             transport: AgentLink.FakeTransport,
+             transport_opts: [backoff: 60_000],
+             watch_interval: nil
+           ]
+         ]},
+      restart: :temporary
+    })
+
+    assert_receive {:agent_opened, _agent, launch, _cwd}
+    assert launch == %AgentLink.Agent.Launch{command: "agentlink-fake", args: ["acp"]}
+    %{transport_pid: transport} = :sys.get_state(AgentLink.Uplink)
+    assert [hello] = AgentLink.FakeTransport.sent(transport)
+    assert hello["params"]["name"] == "first"
+    assert hello["params"]["label"] == "first"
+    assert hello["params"]["program"] == "metadata"
+    send(writer, :second)
+    assert :ok = await_blocked_open!(writer)
+  end
+
+  test "an uplink start failure closes the agent and returns that reason" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, :transport_down} =
+             AgentLink.Relay.Agent.start_link(transport: AgentLink.Relay.AgentTest.DownTransport)
+
+    assert_receive {:agent_opened, agent, %AgentLink.Agent.Launch{}, _cwd}
     refute Process.alive?(agent)
     refute Process.whereis(AgentLink.Relay.Agent)
   end
@@ -237,9 +337,25 @@ defmodule AgentLink.Relay.AgentTest do
       restart: :temporary
     })
 
-    assert_receive {:agent_opened, agent, cwd}
+    assert_receive {:agent_opened, agent, launch, cwd}
     assert cwd == "/tmp/agentlink-test-workdir"
+    assert launch == %AgentLink.Agent.Launch{command: "agentlink-fake", args: ["acp"]}
     agent
+  end
+
+  defp snapshot_body(name) do
+    Jason.encode!(%{
+      "name" => name,
+      "label" => name,
+      "program" => "metadata",
+      "plane_url" => "ws://127.0.0.1:1/agent",
+      "command" => "agentlink-fake",
+      "args" => ["acp"]
+    })
+  end
+
+  defp link_body do
+    ~s({"name":"opencode","label":"this machine","program":"opencode","plane_url":"ws://127.0.0.1:1/agent","command":"agentlink-fake","args":["acp"]})
   end
 
   defp wait_for(fun) do
@@ -251,6 +367,24 @@ defmodule AgentLink.Relay.AgentTest do
   defp uplink_outbox do
     %{transport_pid: pid} = :sys.get_state(AgentLink.Uplink)
     :sys.get_state(pid).outbox
+  end
+
+  defp await_blocked_open!(writer) do
+    receive do
+    after
+      0 ->
+        case Process.info(writer, :current_stacktrace) do
+          {:current_stacktrace, stack} ->
+            if Enum.any?(stack, &match?({:prim_file, :open, 2, _}, &1)) do
+              :ok
+            else
+              await_blocked_open!(writer)
+            end
+
+          nil ->
+            flunk("the second link read consumed the next payload")
+        end
+    end
   end
 
   defp stop(name) do

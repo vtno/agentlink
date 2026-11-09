@@ -413,6 +413,28 @@ defmodule AgentLink.TransportTest do
            }
   end
 
+  test "FakeTransport complete_dial finishes a peer close without waiting" do
+    transport = start_fake(backoff: 60_000, preface: %{"method" => "agentlink.uplink"})
+    assert FakeTransport.sent(transport) == [%{"method" => "agentlink.uplink"}]
+
+    :ok = FakeTransport.disconnect(transport, 1001, "going away")
+    assert_receive {:transport_closed, 1001, "going away"}
+    assert FakeTransport.deliver(transport, %{"n" => 1}) == :closed
+    assert FakeTransport.sent(transport) == [%{"method" => "agentlink.uplink"}]
+
+    :ok = FakeTransport.send_message(transport, %{"n" => 2})
+    :ok = FakeTransport.complete_dial(transport)
+
+    assert FakeTransport.sent(transport) == [
+             %{"method" => "agentlink.uplink"},
+             %{"method" => "agentlink.uplink"},
+             %{"n" => 2}
+           ]
+
+    assert FakeTransport.deliver(transport, %{"n" => 3}) == :ok
+    assert_receive {:from_plane, %{"n" => 3}}
+  end
+
   test "FakeTransport hold cancels a scheduled dial" do
     transport = start_fake(backoff: 60_000)
     :ok = FakeTransport.disconnect(transport, 1001, "gone")

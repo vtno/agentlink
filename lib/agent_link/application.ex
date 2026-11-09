@@ -3,6 +3,15 @@ defmodule AgentLink.Application do
   `agentlink` runs the plane and the relay in one BEAM. `agentlink plane` and
   `agentlink relay` split them onto two machines. They still talk over the agent
   WebSocket. The link file holds the name, the label, the program, and the plane URL.
+  `command` and `args` in that file are the launch. `program` is metadata.
+
+  `agentlink plane` and `agentlink connect` do not read the link file. `agentlink`
+  and `agentlink relay` read it in `AgentLink.Relay.Agent.init/1`. When that start
+  fails and the reason unwraps to a binary message, the command prints the message
+  once and exits with status 1. The unwrap accepts `{:shutdown, reason}` and
+  `{:failed_to_start_child, id, reason}`. A failure that does not end in a binary
+  message stays a supervisor error. In the test environment, `start/2` returns
+  `{:error, message}` instead of halting.
 
   `agentlink connect` starts `AgentLink.Relay.Client` as the only supervisor
   child. It does not start the plane, the agent relay, or a link-file check,
@@ -42,7 +51,6 @@ defmodule AgentLink.Application do
   def start(_type, _args) do
     with :ok <- command(),
          :ok <- prepare(),
-         :ok <- ensure_link(),
          {:ok, children} <- children() do
       children
       |> start_supervisor()
@@ -67,23 +75,6 @@ defmodule AgentLink.Application do
       :ok
     else
       AgentLink.Setup.prepare()
-    end
-  end
-
-  defp ensure_link do
-    case Application.fetch_env!(:agent_link, :mode) do
-      mode when mode in [:plane, :connect] ->
-        :ok
-
-      _ ->
-        case AgentLink.Link.read() do
-          {:ok, _link} ->
-            :ok
-
-          {:error, message} ->
-            IO.puts(:stderr, message)
-            boot_error(message)
-        end
     end
   end
 
@@ -185,18 +176,14 @@ defmodule AgentLink.Application do
   end
 
   defp start_supervisor(children) do
-    if Application.fetch_env!(:agent_link, :mode) == :connect do
-      start_connect_supervisor(children)
-    else
-      Supervisor.start_link(children, supervisor_opts())
-    end
+    # A child that stops in init kills a linked caller that does not trap exits,
+    # so start_link never gets to return the error. Start in a process that
+    # traps exits, then unlink a live supervisor. The application master links
+    # the pid this function returns.
+    start_trapped_supervisor(children, Application.fetch_env!(:agent_link, :mode) == :connect)
   end
 
-  # A child that stops in init kills a linked caller that does not trap exits,
-  # so start_link never gets to return the error. Start in a process that
-  # traps exits, then unlink a live supervisor. The application master links
-  # the pid this function returns.
-  defp start_connect_supervisor(children) do
+  defp start_trapped_supervisor(children, notify?) do
     parent = self()
     ref = make_ref()
 
@@ -208,11 +195,11 @@ defmodule AgentLink.Application do
           case Supervisor.start_link(children, supervisor_opts()) do
             {:ok, sup} = ok ->
               Process.unlink(sup)
-              notify_connect_watcher({:supervisor, sup})
+              if notify?, do: notify_connect_watcher({:supervisor, sup})
               ok
 
             other ->
-              notify_connect_watcher(:stop)
+              if notify?, do: notify_connect_watcher(:stop)
               other
           end
 
@@ -243,21 +230,39 @@ defmodule AgentLink.Application do
   defp watch_connect({:ok, _sup} = ok), do: ok
 
   defp watch_connect({:error, reason} = error) do
-    if Application.fetch_env!(:agent_link, :mode) == :connect do
-      message = start_failure(reason)
-      IO.puts(:stderr, message)
-      boot_error(message)
-    else
-      error
+    case Application.fetch_env!(:agent_link, :mode) do
+      :connect ->
+        report_boot(start_failure(reason))
+
+      mode when mode in [:relay, :all] ->
+        case shutdown_message(reason) do
+          message when is_binary(message) -> report_boot(message)
+          _ -> error
+        end
+
+      _ ->
+        error
     end
   end
 
   defp watch_connect(other), do: other
 
-  defp start_failure({:shutdown, reason}), do: start_failure(reason)
-  defp start_failure({:failed_to_start_child, _id, reason}), do: start_failure(reason)
-  defp start_failure(message) when is_binary(message), do: message
-  defp start_failure(reason), do: "agentlink connect failed: #{inspect(reason)}\n"
+  defp start_failure(reason) do
+    case shutdown_message(reason) do
+      message when is_binary(message) -> message
+      _ -> "agentlink connect failed: #{inspect(reason)}\n"
+    end
+  end
+
+  defp shutdown_message({:shutdown, reason}), do: shutdown_message(reason)
+  defp shutdown_message({:failed_to_start_child, _id, reason}), do: shutdown_message(reason)
+  defp shutdown_message(message) when is_binary(message), do: message
+  defp shutdown_message(_reason), do: nil
+
+  defp report_boot(message) do
+    IO.puts(:stderr, message)
+    boot_error(message)
+  end
 
   defp connect_watcher do
     listener = Application.get_env(:agent_link, :halt_listener)

@@ -41,7 +41,10 @@ defmodule AgentLink.Uplink do
   `:transport_opts` are passed through to that module. This process sets
   `:owner`, `:url`, `:default_path`, and `:preface`. `:watch_interval` is
   milliseconds between reads of the link file, default 1_000. `nil` does not
-  schedule those reads.
+  schedule those reads. `:link` is an `AgentLink.Link` from the caller. When
+  `:link` is set, this process uses that link as its first snapshot. When
+  `:link` is omitted, this process calls `AgentLink.Link.read/1` at startup.
+  A watch and a non-parking close still call `AgentLink.Link.read/1`.
   """
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -49,7 +52,7 @@ defmodule AgentLink.Uplink do
 
   @impl true
   def init(opts) do
-    case read_link() do
+    case initial_link(opts) do
       {:ok, link} ->
         module = Keyword.get(opts, :transport, AgentLink.Transport.WebSocket)
 
@@ -179,6 +182,13 @@ defmodule AgentLink.Uplink do
   defp schedule_watch(%__MODULE__{watch_interval: interval}) do
     Process.send_after(self(), :watch, interval)
     :ok
+  end
+
+  defp initial_link(opts) do
+    case Keyword.fetch(opts, :link) do
+      {:ok, %AgentLink.Link{} = link} -> {:ok, link}
+      :error -> read_link()
+    end
   end
 
   defp read_link do

@@ -1,6 +1,6 @@
 # AgentLink
 
-Agent and editor vendors each build their own walled garden to keep you on their platform. AgentLink is a neutral bridge. It proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. AgentLink runs OpenCode today, and more agents are planned in [issue #10](https://github.com/vtno/pont/issues/10).
+Agent and editor vendors each build their own walled garden to keep you on their platform. AgentLink is a neutral bridge. It proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. The link file names the command. For OpenCode, set `command` to `opencode` and `args` to `["acp"]`. Another installed adapter uses the same fields, for example `kimi` and `["acp"]`. More agents are described in [Add Claude Code and Codex agents](https://github.com/vtno/agentlink/issues/10).
 
 A client is a program connected to the plane.
 
@@ -10,7 +10,7 @@ ACP messages are JSON-RPC. The agent writes one JSON object per line on its stan
 
 ## Run AgentLink from source
 
-You need Elixir 1.17 or a later 1.x release. To run an agent, you also need the `opencode` binary. AgentLink looks for `opencode` on `PATH`, then at `$HOME/.local/bin/opencode`.
+You need Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
 
 `agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
 
@@ -21,23 +21,27 @@ Create `$HOME/.agentlink/agent.link.json` with the object below when you start a
   "name": "opencode",
   "label": "this machine",
   "program": "opencode",
-  "plane_url": "ws://127.0.0.1:8090/agent"
+  "plane_url": "ws://127.0.0.1:8090/agent",
+  "command": "opencode",
+  "args": ["acp"]
 }
 ```
+
+`program` is metadata. It does not select `command`. When `program` is missing, `AgentLink.Link` uses `opencode`. `command` and `args` are required. `args` may be `[]`.
 
 See [Link file](#link-file) for the field rules.
 
 1. Save that object as `$HOME/.agentlink/agent.link.json`.
 2. Run `mix deps.get`.
 3. Run `mix run --no-halt`.
-4. Confirm that the log contains `opened AgentLink.OpenCode`.
+4. Confirm that the log contains `opened AgentLink.Agent.Process`.
 
 `mix run --no-halt` starts the plane and the relay. Pass AgentLink flags after `--`.
 
 ```sh
 mix run --no-halt -- --port 8090 --token 'the-token'
 mix run --no-halt -- plane --port 8090
-mix run --no-halt -- relay --token 'the-token' --opencode-bin /usr/local/bin/opencode
+mix run --no-halt -- relay --token 'the-token'
 mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 ```
 
@@ -133,9 +137,9 @@ The listener is plain `ws://` on `127.0.0.1`. The token identifies the caller. T
 ### Command line
 
 ```
-agentlink [--port PORT] [--token TOKEN] [--opencode-bin PATH]
+agentlink [--port PORT] [--token TOKEN]
 agentlink plane [--port PORT] [--token TOKEN]
-agentlink relay --token TOKEN [--opencode-bin PATH]
+agentlink relay --token TOKEN
 agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 ```
 
@@ -145,7 +149,7 @@ agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 
 `--token` is the token. `agentlink relay` requires `--token`. Without it, AgentLink prints `agentlink relay needs --token.` A plane with no token creates one. See [Security model](#security-model).
 
-`--opencode-bin` is the OpenCode executable. AgentLink rejects the flag when that file does not exist. `agentlink plane` rejects the flag and prints `agentlink plane does not run opencode.`
+`--opencode-bin` is rejected. The usage text does not list it. The command and the args come from the link file.
 
 `agentlink connect` starts the client relay. The editor runs that command as its ACP agent over stdio. The command does not start the plane or the agent relay, and it does not read the link file.
 
@@ -177,11 +181,13 @@ The plane returns status 401 and the body `unauthorized` when it rejects the tok
 
 ### Link file
 
-`AgentLink.Link` reads `$HOME/.agentlink/agent.link.json`. The relay does not start until that file exists and is a JSON object. `agentlink plane` does not read the file.
+`AgentLink.Link` reads `$HOME/.agentlink/agent.link.json`. The relay starts when that file exists, is a JSON object, and includes `command` and `args`. `agentlink plane` does not read the file.
 
-If the file is deleted after startup, the uplink stops. The relay supervisor restarts the relay. The relay supervisor stops after 5 restarts in 20 seconds. A plane started beside the relay keeps running.
+When the file is present and only `command` or `args` change, the running child and the current uplink stay as they are. The next start of the relay reads the new `command` and `args`. An automatic restart is one of those starts.
 
-The object holds `name`, `label`, `program`, and `plane_url`.
+When the file is missing, the uplink stops. The relay supervisor starts the relay again. That start fails because the file is missing. The supervisor stops after 5 restarts in 20 seconds. A start that cannot open the `command` counts toward those 5 restarts. In `all` mode the relay supervisor is transient, so the plane keeps running. In `relay` mode `AgentLink.Relay.Agent` is a child of the application supervisor. When that supervisor stops, the node stops.
+
+The object holds `name`, `label`, `program`, `plane_url`, `command`, and `args`. `AgentLink.Link` keeps `name`, `label`, `program`, and `plane_url`. `AgentLink.Agent.Launch` keeps `command` and `args`.
 
 `AgentLink.Link` turns `name` into a slug before the uplink dials. Letters become lowercase. Each run of characters other than letters and digits becomes one `-`. The slug then removes dashes at the ends and keeps at most 40 characters. `Lab Box` becomes `lab-box`.
 
@@ -195,7 +201,9 @@ The plane accepts a hello name of 1 to 40 characters that matches `^[a-z0-9][a-z
 
 `plane_url` chooses the scheme, the host, the port, and the path. `wss` and `https` use TLS. The default port for those schemes is 443. `ws` and `http` stay plain. The default port for those schemes is 80. When the path is missing, the uplink uses `/agent`. When the host is missing, the uplink dials `127.0.0.1`. The uplink ignores the query string. For `wss` and `https`, Mint verifies the server certificate against the system CA store from `:public_key.cacerts_get/0`.
 
-`label` is the display name. `program` is the product name, such as `opencode`.
+`label` is the display name. `program` is metadata, such as `opencode`. It does not select `command`. When `program` is missing, `AgentLink.Link` uses `opencode`.
+
+`command` is a bare name or an absolute path. `AgentLink.Agent.Launch.load/1` trims it. `args` is a list of strings. `[]` is valid. Each string is kept as written. An `env` key is an error. OpenCode uses `"command": "opencode"` and `"args": ["acp"]`. `kimi` with `["acp"]` is the same shape. AgentLink does not add `acp`, and it does not set `OPENCODE_DISABLE_AUTOUPDATE`.
 
 ### Uplink close codes
 
@@ -262,13 +270,13 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`AgentLink.OpenCode` runs `opencode acp` in that workspace. `AgentLink.OpenCode` leaves stderr off the ACP stream. The process environment includes `OPENCODE_DISABLE_AUTOUPDATE=1`.
+`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. `close/1` closes the port, which closes the child's stdin. `close/1` does not reap a process tree.
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 
 ## Run the tests
 
-`mix test` does not start OpenCode. `mix test` excludes tests tagged `:wrapped`.
+`mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped`.
 
 Set `AGENTLINK_BIN` to the wrapped binary. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 

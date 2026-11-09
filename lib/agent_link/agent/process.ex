@@ -3,11 +3,13 @@ defmodule AgentLink.Agent.Process do
   Open an `AgentLink.Agent.Launch` from the caller.
 
   `open/3`, `write/2`, and `close/1` run in the caller. This module does not
-  start a GenServer. The relay does not call it. `AgentLink.OpenCode` is
-  still the production behaviour. The handle is the port. This module does
-  not read the link file, does not call `AgentLink.Agent.Launch.load/1`, and
-  does not read application config.
+  start a GenServer. `open/3` is the `AgentLink.Agent` callback. The relay
+  calls it. The handle is the port. This module does not read the link file,
+  does not call `AgentLink.Agent.Launch.load/1`, and does not read application
+  config. `open/4` takes a finder and is not a callback.
   """
+
+  @behaviour AgentLink.Agent
 
   alias AgentLink.Agent.Launch
 
@@ -22,9 +24,9 @@ defmodule AgentLink.Agent.Process do
 
   A bare name contains neither `/` nor `\\` and is not `.`, `..`, or a
   drive-relative form such as `C:opencode`. A bare name is passed to the
-  finder. The fourth argument defaults to `&System.find_executable/1`.
-  `open/3` is that call. `open/4` takes a finder so a test can pass a
-  function. `nil` from the finder is an error that names the command.
+  finder. `open/3` calls `open/4` with `&System.find_executable/1`.
+  `open/4` takes a finder so a test can pass a function. `nil` from the
+  finder is an error that names the command.
 
   A path that is absolute on this host is used unchanged. It is not passed
   to the finder. It is not expanded against `cwd` or the VM cwd. On Unix, a
@@ -51,10 +53,21 @@ defmodule AgentLink.Agent.Process do
   returned as an error that names the path and the reason from the spawn.
   The OS decides that reason.
   """
+  @impl true
+  @spec open(pid, Launch.t(), String.t()) :: {:ok, port} | {:error, String.t()}
+  def open(owner, %Launch{} = launch, cwd) when is_pid(owner) do
+    open(owner, launch, cwd, &System.find_executable/1)
+  end
+
+  @doc """
+  Open `launch` in `cwd` with `finder`. The caller must be `owner`.
+
+  `open/3` is the `AgentLink.Agent` callback. `open/4` is not.
+  """
   @spec open(pid, Launch.t(), String.t(), (String.t() -> String.t() | nil)) ::
           {:ok, port} | {:error, String.t()}
-  def open(owner, %Launch{command: command, args: args}, cwd, finder \\ &System.find_executable/1)
-      when is_pid(owner) do
+  def open(owner, %Launch{command: command, args: args}, cwd, finder)
+      when is_pid(owner) and is_function(finder, 1) do
     if owner == self() do
       open_command(command, args, cwd, finder)
     else
@@ -68,6 +81,7 @@ defmodule AgentLink.Agent.Process do
   Returns `:ok` when `Port.info/1` shows an open port. Returns `:closed`
   otherwise.
   """
+  @impl true
   @spec write(term, iodata) :: :ok | :closed
   def write(port, data) do
     if is_port(port) and Port.info(port) do
@@ -85,6 +99,7 @@ defmodule AgentLink.Agent.Process do
   port, which closes the child's stdin. `close/1` does not reap a process
   tree.
   """
+  @impl true
   @spec close(term) :: :ok
   def close(port) do
     if is_port(port) and Port.info(port), do: Port.close(port)

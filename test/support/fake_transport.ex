@@ -8,7 +8,8 @@ defmodule AgentLink.FakeTransport do
   dial. `allow/1` makes the next dial succeed and does not dial by itself.
   `close_next/3` makes the next `reconnect/2` open and then close before
   that call returns. `close_on_preface/3` makes the next `preface/2` report
-  a close of the open socket before that call returns.
+  a close of the open socket before that call returns. `complete_dial/1`
+  finishes a dial that a peer close left on the backoff timer.
   """
 
   @behaviour AgentLink.Transport
@@ -99,6 +100,13 @@ defmodule AgentLink.FakeTransport do
     GenServer.call(server, {:disconnect, code, reason})
   end
 
+  @doc """
+  Finish a scheduled dial now. A peer close leaves that dial on the backoff
+  timer. This cancels the timer and sends the dial the timer would send.
+  `:idle` means no dial is waiting. A dial already queued is left to run.
+  """
+  def complete_dial(server), do: GenServer.call(server, :complete_dial)
+
   @doc "Objects written to the plane, oldest first."
   def sent(server), do: GenServer.call(server, :sent)
 
@@ -173,6 +181,27 @@ defmodule AgentLink.FakeTransport do
 
   def handle_call({:disconnect, code, reason}, _from, state) do
     {:reply, :ok, peer_closed(state, code, reason)}
+  end
+
+  def handle_call(:complete_dial, _from, %{connect_token: nil} = state) do
+    {:reply, :idle, state}
+  end
+
+  def handle_call(:complete_dial, _from, %{timer: nil} = state) do
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:complete_dial, _from, %{timer: timer, connect_token: token} = state) do
+    state = %{state | timer: nil}
+
+    case Process.cancel_timer(timer) do
+      false ->
+        {:reply, :ok, state}
+
+      _remaining ->
+        send(self(), {:connect, token})
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call(:sent, _from, state), do: {:reply, Enum.reverse(state.sent), state}
