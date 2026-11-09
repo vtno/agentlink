@@ -31,9 +31,14 @@ defmodule AgentLink.Plane.Sessions do
 
   `:subscribe` on `start_link/1` defaults to `AgentLink.Plane.Subscription`.
   `AgentLink.Plane.Supervisor` starts this directory.
+
+  The directory traps exits and is linked to each session. A session crash
+  removes that session. The directory and the other sessions keep running.
+  Their history stays in those session processes.
   """
 
   use GenServer
+  require Logger
 
   @page_size 50
 
@@ -51,7 +56,10 @@ defmodule AgentLink.Plane.Sessions do
   end
 
   @impl true
-  def init(%__MODULE__{} = state), do: {:ok, state}
+  def init(%__MODULE__{} = state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
 
   @doc """
   Start the session when it is new, and subscribe this client.
@@ -212,6 +220,41 @@ defmodule AgentLink.Plane.Sessions do
       |> Enum.sort(&before?/2)
 
     {:reply, page(rows, runtime, Keyword.get(opts, :cursor)), state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, pid, reason}, %__MODULE__{} = state) do
+    if reason != :normal do
+      Logger.warning("session #{inspect(pid)} stopped #{inspect(reason)}")
+    end
+
+    {:noreply, forget_session(state, pid)}
+  end
+
+  defp forget_session(state, pid) do
+    case Enum.find(state.sessions, fn {_key, session} -> session == pid end) do
+      nil ->
+        state
+
+      {key, _session} ->
+        %{
+          state
+          | sessions: Map.delete(state.sessions, key),
+            clients: drop_client_key(state.clients, key)
+        }
+    end
+  end
+
+  defp drop_client_key(clients, key) do
+    Enum.reduce(clients, %{}, fn {client_id, subs}, acc ->
+      subs = Map.delete(subs, key)
+
+      if subs == %{} do
+        acc
+      else
+        Map.put(acc, client_id, subs)
+      end
+    end)
   end
 
   defp initial(opts) do

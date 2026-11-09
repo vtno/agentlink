@@ -1,1 +1,1 @@
-ExUnit.start(exclude: [:wrapped])
+ExUnit.start(exclude: [:wrapped, :release])

@@ -45,9 +45,18 @@ defmodule AgentLink.MixProject do
   end
 
   defp releases do
+    steps = [:assemble, &AgentLink.Release.forward_start_args/1]
+
+    steps =
+      if System.get_env("AGENTLINK_BURRITO") == "0" do
+        steps
+      else
+        steps ++ [&Burrito.wrap/1, &AgentLink.Release.forward_signals/1]
+      end
+
     [
       agentlink: [
-        steps: [:assemble, &Burrito.wrap/1],
+        steps: steps,
         burrito: [
           targets: [
             linux: [os: :linux, cpu: :x86_64],

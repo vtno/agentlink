@@ -5,6 +5,12 @@ defmodule AgentLink.Application do
   WebSocket. The link file holds the name, the label, the program, and the plane URL.
   `command` and `args` in that file are the launch. `program` is metadata.
 
+  `start/2` starts `AgentLink.Supervisor` with `Supervisor.start_link/2` in the
+  calling process. That process is the supervisor's parent and stays linked to
+  it. In a release, the caller is the process `application_master` uses to stop
+  the application, so `Application.stop/1`, `bin/agentlink stop`, and `SIGTERM`
+  shut the tree down.
+
   `agentlink plane` and `agentlink connect` do not read the link file. `agentlink`
   and `agentlink relay` read it in `AgentLink.Relay.Agent.init/1`. When that start
   fails and the reason unwraps to a binary message, the command prints the message
@@ -32,7 +38,8 @@ defmodule AgentLink.Application do
   the command exits with status 0. That includes stdin that is already closed
   when the client relay starts. `start_client/2` is the child start function.
   `boot_client/2` has the watcher monitor that pid before the client relay
-  handles stdin. Any other `{:shutdown, message}` exits with status 1. The
+  handles stdin. The watcher is linked to the process that called `start/2`.
+  Any other `{:shutdown, message}` exits with status 1. The
   supervisor starts the client relay again after a crash because
   `AgentLink.Relay.Client.child_spec/1` sets `restart: :transient`. The
   supervisor's own stop exits with status 1. In the test environment,
@@ -176,45 +183,36 @@ defmodule AgentLink.Application do
   end
 
   defp start_supervisor(children) do
-    # A child that stops in init kills a linked caller that does not trap exits,
-    # so start_link never gets to return the error. Start in a process that
-    # traps exits, then unlink a live supervisor. The application master links
-    # the pid this function returns.
-    start_trapped_supervisor(children, Application.fetch_env!(:agent_link, :mode) == :connect)
+    notify? = Application.fetch_env!(:agent_link, :mode) == :connect
+    # The application starter already traps exits. A test calls start/2 from a
+    # process that does not. Trap for the start_link so a child that stops in
+    # init returns {:error, reason} to this process, which stays the parent.
+    trapped? = Process.flag(:trap_exit, true)
+
+    result =
+      try do
+        Supervisor.start_link(children, supervisor_opts())
+      after
+        if not trapped?, do: Process.flag(:trap_exit, false)
+      end
+
+    case result do
+      {:ok, sup} = ok ->
+        if notify?, do: notify_connect_watcher({:supervisor, sup})
+        ok
+
+      {:error, _reason} = error ->
+        if notify?, do: stop_connect_watcher()
+        flush_exits()
+        error
+    end
   end
 
-  defp start_trapped_supervisor(children, notify?) do
-    parent = self()
-    ref = make_ref()
-
-    starter =
-      spawn(fn ->
-        Process.flag(:trap_exit, true)
-
-        result =
-          case Supervisor.start_link(children, supervisor_opts()) do
-            {:ok, sup} = ok ->
-              Process.unlink(sup)
-              if notify?, do: notify_connect_watcher({:supervisor, sup})
-              ok
-
-            other ->
-              if notify?, do: notify_connect_watcher(:stop)
-              other
-          end
-
-        send(parent, {ref, result})
-      end)
-
-    starter_ref = Process.monitor(starter)
-
+  defp flush_exits do
     receive do
-      {^ref, result} ->
-        Process.demonitor(starter_ref, [:flush])
-        result
-
-      {:DOWN, ^starter_ref, :process, ^starter, reason} ->
-        {:error, reason}
+      {:EXIT, _pid, _reason} -> flush_exits()
+    after
+      0 -> :ok
     end
   end
 
@@ -266,9 +264,24 @@ defmodule AgentLink.Application do
 
   defp connect_watcher do
     listener = Application.get_env(:agent_link, :halt_listener)
-    watcher = spawn(fn -> connect_watch(listener) end)
+    watcher = spawn_link(fn -> connect_watch(listener) end)
     Application.put_env(:agent_link, :connect_watcher, watcher)
     watcher
+  end
+
+  defp stop_connect_watcher do
+    case Application.get_env(:agent_link, :connect_watcher) do
+      pid when is_pid(pid) ->
+        ref = Process.monitor(pid)
+        send(pid, :stop)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   defp notify_connect_watcher(message) do

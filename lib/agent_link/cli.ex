@@ -1,46 +1,76 @@
 defmodule AgentLink.CLI do
   @moduledoc """
-  The start command. No arguments runs the plane and the relay.
+  The start command. `parse([])` is `:all`. `apply/1` with an empty list does
+  not store that mode, so the configured `:mode` stays. `config/config.exs`
+  sets `:mode` to `:all` and `:cli` to `true`. A non-empty argv is stored and
+  replaces the configured mode, port, and token.
   `plane` is the plane alone. `relay` starts `AgentLink.Relay.Agent`.
   `connect` starts `AgentLink.Relay.Client`.
   """
 
   defstruct mode: :all, port: nil, token: nil, plane: nil, target: nil
 
-  @doc "Read the command and store the mode, the port, and the token."
+  @doc """
+  Read the command and store the mode, the port, and the token.
+
+  An empty list does not change `:mode`, `:port`, or `:master_token`.
+  `parse([])` is still `:all`. A non-empty list that parses is stored, so
+  those words replace a mode set in `sys.config` when `:cli` is `true`.
+  """
   def apply(argv \\ nil) do
-    argv = argv || argv_from_launch()
+    argv = if is_nil(argv), do: argv_from_launch(), else: argv
 
-    case parse(argv) do
-      {:ok, :help} ->
-        IO.puts(usage())
-        {:halt, 0}
+    if argv == [] do
+      :ok
+    else
+      case parse(argv) do
+        {:ok, :help} ->
+          IO.puts(usage())
+          {:halt, 0}
 
-      {:ok, %__MODULE__{} = cli} ->
-        store(cli)
-        :ok
+        {:ok, %__MODULE__{} = cli} ->
+          store(cli)
+          :ok
 
-      {:error, message} ->
-        IO.puts(:stderr, message)
-        {:error, message}
+        {:error, message} ->
+          IO.puts(:stderr, message)
+          {:error, message}
+      end
     end
   end
 
-  @doc "Arguments from the wrapped binary, or from the normal Elixir launch."
+  @doc """
+  Arguments from a release boot, the wrapped binary, or a normal Elixir launch.
+
+  A release boot and a Burrito boot read `:init.get_plain_arguments/0`.
+  `System.argv/0` is empty on those boots, including when the words were passed
+  after `--`. A release boot has `RELEASE_ROOT` set. A Burrito boot has
+  `__BURRITO` set. Both drop a leading `--no-halt --` pair. An explicit list
+  drops that pair only when `__BURRITO` is set. Any other launch uses
+  `System.argv/0` and keeps the list it was given.
+  """
   def argv_from_launch(argv \\ nil) do
-    argv =
+    {argv, launcher?} =
       cond do
         is_list(argv) ->
-          argv
+          {argv, System.get_env("__BURRITO") != nil}
 
-        System.get_env("__BURRITO") != nil ->
-          :init.get_plain_arguments() |> Enum.map(&to_string/1)
+        launcher_boot?() ->
+          {plain_arguments(), true}
 
         true ->
-          System.argv()
+          {System.argv(), false}
       end
 
-    if System.get_env("__BURRITO") != nil, do: drop_launcher_prefix(argv), else: argv
+    if launcher?, do: drop_launcher_prefix(argv), else: argv
+  end
+
+  defp launcher_boot? do
+    System.get_env("__BURRITO") != nil or System.get_env("RELEASE_ROOT") != nil
+  end
+
+  defp plain_arguments do
+    Enum.map(:init.get_plain_arguments(), &to_string/1)
   end
 
   @doc "Drop the `--no-halt --` pair the Burrito launcher inserts."

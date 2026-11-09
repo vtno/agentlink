@@ -18,6 +18,12 @@ defmodule AgentLink.Relay.Agent do
   For `session/new` and `session/load`, a missing, null, or empty `cwd`
   in params is filled with `AgentLink.Paths.workdir()` before the message is
   written to the agent. An explicit `cwd` passes through unchanged.
+
+  The child shutdown is `2 * :agent_stop_timeout + 1000` milliseconds, read
+  when the child spec is built. The default `:agent_stop_timeout` is `5000`,
+  so the shutdown is `11000`. `terminate/2` calls `close/1`, which may wait
+  that timeout twice. The extra second is so the supervisor does not kill
+  this process before `SIGKILL`.
   """
 
   use GenServer
@@ -38,6 +44,17 @@ defmodule AgentLink.Relay.Agent do
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @doc false
+  def child_spec(opts) do
+    timeout = Application.get_env(:agent_link, :agent_stop_timeout, 5_000)
+
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      shutdown: timeout * 2 + 1_000
+    }
   end
 
   @impl true

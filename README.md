@@ -270,13 +270,15 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. `close/1` closes the port, which closes the child's stdin. `close/1` does not reap a process tree.
+`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. `close/1` signals `SIGTERM` to that group when the recorded start time still matches, closes stdin, and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way. `AgentLink.Relay.Agent` waits `2 * :agent_stop_timeout + 1000` milliseconds, `11000` at the default, before the supervisor kills the relay. On macOS and Windows, `close/1` closes stdin and does not signal a process group. It does not create a Job Object.
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 
 ## Run the tests
 
-`mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped`.
+`mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped` and `:release`.
+
+`mix test --only release` builds a plain Mix release with `AGENTLINK_BURRITO=0` and checks `bin/agentlink start` for each mode, plus `SIGTERM`. It does not build a Burrito binary.
 
 Set `AGENTLINK_BIN` to the wrapped binary. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 

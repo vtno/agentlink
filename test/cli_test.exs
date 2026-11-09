@@ -158,6 +158,22 @@ defmodule AgentLink.CLITest do
     AgentLink.TestHelpers.restore(:connect_token, previous.connect_token)
   end
 
+  test "an empty argv leaves the configured mode" do
+    previous = Application.get_env(:agent_link, :mode)
+    Application.put_env(:agent_link, :mode, :plane)
+    assert :ok = AgentLink.CLI.apply([])
+    assert Application.get_env(:agent_link, :mode) == :plane
+    AgentLink.TestHelpers.restore(:mode, previous)
+  end
+
+  test "a release boot reads plain arguments and those words replace the mode" do
+    assert release_mode(["-extra", "--no-halt", "--", "relay", "--token", "sekret"]) == "relay"
+  end
+
+  test "a release boot with no words leaves the configured mode" do
+    assert release_mode([]) == "plane"
+  end
+
   test "apply stores the command" do
     previous = %{
       mode: Application.get_env(:agent_link, :mode),
@@ -176,5 +192,34 @@ defmodule AgentLink.CLITest do
     AgentLink.TestHelpers.restore(:port, previous.port)
     AgentLink.TestHelpers.restore(:plane_url, previous.plane_url)
     AgentLink.TestHelpers.restore(:master_token, previous.token)
+  end
+
+  defp release_mode(extra) do
+    eval = ~S"""
+    application:ensure_all_started(elixir),
+    application:set_env(agent_link, mode, plane),
+    ok = 'Elixir.AgentLink.CLI':apply(),
+    {ok, Mode} = application:get_env(agent_link, mode),
+    io:format("mode=~s~n", [atom_to_binary(Mode, utf8)]),
+    halt().
+    """
+
+    ebin = Path.expand("_build/test/lib/agent_link/ebin")
+    lib = :code.lib_dir(:elixir) |> to_string() |> Path.dirname()
+
+    {output, status} =
+      System.cmd(
+        System.find_executable("erl"),
+        ["-noshell", "-pa", ebin, "-eval", eval | extra],
+        env: [{"RELEASE_ROOT", "/tmp"}, {"ERL_LIBS", lib}, {"__BURRITO", nil}],
+        stderr_to_stdout: true
+      )
+
+    assert status == 0, output
+
+    [line] =
+      output |> String.split("\n", trim: true) |> Enum.filter(&String.starts_with?(&1, "mode="))
+
+    String.trim_leading(line, "mode=")
   end
 end

@@ -32,6 +32,19 @@ defmodule AgentLink.Relay.AgentTest do
     :ok
   end
 
+  test "shutdown outlasts two agent stop waits" do
+    previous = Application.get_env(:agent_link, :agent_stop_timeout)
+    Application.put_env(:agent_link, :agent_stop_timeout, 40)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:agent_link, :agent_stop_timeout, previous),
+        else: Application.delete_env(:agent_link, :agent_stop_timeout)
+    end)
+
+    assert AgentLink.Relay.Agent.child_spec([]).shutdown == 1_080
+  end
+
   test "send_message is down when the agent relay is not running" do
     assert AgentLink.Relay.Agent.send_message(%{"method" => "ping"}) == :down
   end

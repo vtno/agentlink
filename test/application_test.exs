@@ -130,6 +130,7 @@ defmodule AgentLink.ApplicationTest do
   use ExUnit.Case, async: false
 
   setup do
+    Process.flag(:trap_exit, true)
     Application.put_env(:agent_link, :agent_listener, self())
 
     previous =

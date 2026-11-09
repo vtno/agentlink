@@ -5,6 +5,12 @@
 -export([start/0]).
 
 start() ->
+    case os:getenv("AGENTLINK_FIXTURE_IGNORE_TERM") of
+        false ->
+            ok;
+        _ ->
+            os:set_signal(sigterm, ignore)
+    end,
     loop().
 
 loop() ->
