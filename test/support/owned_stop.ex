@@ -20,12 +20,6 @@ defmodule AgentLink.OwnedStop do
   process-tree stop on macOS or Windows. When `/proc` cannot be read,
   `capture/1` returns `:error` and `stop/1` returns
   `{:error, :proc_unreadable}` without signaling.
-
-  A Burrito launcher exits on `SIGTERM` and leaves its VM running. The
-  launcher in `deps/burrito/src/erlang_launcher.zig` calls `child.kill` when
-  a write to the launcher stdout returns a negative result. The comment
-  there names `EPIPE` as the example. This module does not change that
-  launcher.
   """
 
   # proc(5) counts pid as field 1 and comm as field 2. starttime is field 22.

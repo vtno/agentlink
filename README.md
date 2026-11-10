@@ -49,23 +49,28 @@ mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 
 A plane with no token creates one for that process and prints it. Look for `AgentLink created a token for this process. Pass the same --token to start again.` AgentLink also prints `agentlink relay --token '…'`. AgentLink does not write the token to disk. Pass the same `--token` the next time you start the plane.
 
-## Build a binary
+## Build a release
 
-The build machine needs Elixir 1.17 or a later 1.x release, Zig 0.16.0, and `xz` on `PATH`. Burrito exits with status 1 when the Zig version is not 0.16.0. Burrito also exits with status 1 when `zig` or `xz` is missing. A Windows build needs `7z` or `7zz` on `PATH`. When `7z` and `7zz` are both missing, Burrito warns that Windows releases fail. The machine that runs the binary does not need Elixir.
+The build machine needs Elixir 1.17 or a later 1.x release. The machine that runs the release does not need Elixir. The release includes its own ERTS.
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
-3. Put the binary for your machine on `PATH` as `agentlink`.
+3. Add `_build/prod/rel/agentlink/bin` to `PATH`, or run `bin/agentlink` by that path.
 
-With no `BURRITO_TARGET`, step 2 writes three binaries.
+The release directory looks like this:
 
-- `burrito_out/agentlink_linux` is the Linux x86_64 binary.
-- `burrito_out/agentlink_macos` is the macOS binary for Apple Silicon (aarch64).
-- `burrito_out/agentlink_windows.exe` is the Windows x86_64 binary.
+```text
+_build/prod/rel/agentlink/
+  bin/agentlink
+  bin/agentlink.bat
+  erts-<version>/
+  lib/
+  releases/
+```
 
-Burrito prints `Output Path:` and the file it wrote.
+`bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink stop` stops the running node. `bin/agentlink start` also boots the release and passes any words after `start`.
 
-To build one binary, set `BURRITO_TARGET` to `linux`, `macos`, or `windows`.
+`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI drops one leading `start`. A direct `plane`, `relay`, or `connect` does not set that variable. This suite checks that script as text. It does not run the `.bat` file, and it does not run the release on macOS or Windows.
 
 ```sh
 agentlink
@@ -270,18 +275,20 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child inherits the VM environment. Stderr stays off the ACP stream. `close/1` closes the port, which closes the child's stdin. `close/1` does not reap a process tree.
+`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child receives the VM environment without `AGENTLINK_WINDOWS_START`. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. On Linux, `close/1` signals `SIGTERM` to that group, and to any descendant that left the group, when the recorded start time still matches. It closes stdin and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way and returns `:ok` only when those processes are gone. A start time that remains is kept by `AgentLink.Agent.Reaper` in `agent-reaper-<pid>-<starttime>.bin`, named for this VM. That process starts before the relay. `init/1` reloads that file and drops a pid whose start time no longer matches, so a Reaper restart still blocks the next open. Another VM's file is removed only when its pid does not exist, or when that pid exists and its readable start time differs from the real start time in the name. A stored start time of `0`, or a start time that cannot be read, stays in the directory. `init/1` removes this VM's `.bad-*` and `.tmp` files. A load, modify, and save of this VM's file is `:global.trans/3` on `{{:agentlink_reaper, vm}, self()}` for this node, so a `retain/1` during `init/1` waits and still leaves its pairs. `retain/1` writes the pairs into that file even when the Reaper is not running, and the call still fails. `reap/0` fails when the Reaper is not running. The next relay signals `SIGKILL` and opens a replacement only after every retained start time is gone. `AgentLink.Relay.Agent` waits `12000` milliseconds at that default before the supervisor kills the relay. On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object.
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 
 ## Run the tests
 
-`mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped`.
+`mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped` and `:release`.
 
-Set `AGENTLINK_BIN` to the wrapped binary. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
+`mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
+
+Set `AGENTLINK_BIN` to `bin/agentlink` in the release. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 
 ```sh
-AGENTLINK_BIN=./burrito_out/agentlink_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped
+AGENTLINK_BIN=./_build/prod/rel/agentlink/bin/agentlink OPENCODE_BIN=/path/to/opencode mix test --only wrapped
 ```
 
-The wrapped test starts the binary. The test asks OpenCode to write an HTML page, then checks the page.
+The wrapped test starts that release. The test asks OpenCode to write an HTML page, then checks the page.

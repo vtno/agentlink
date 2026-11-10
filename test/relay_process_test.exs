@@ -32,8 +32,15 @@ defmodule AgentLink.Relay.ProcessTest do
       stamp: System.get_env("AGENTLINK_FIXTURE_STAMP"),
       ready: System.get_env("AGENTLINK_FIXTURE_READY"),
       stderr_path: System.get_env("AGENTLINK_STDERR_PATH"),
-      stderr_token: System.get_env("AGENTLINK_STDERR_TOKEN")
+      stderr_token: System.get_env("AGENTLINK_STDERR_TOKEN"),
+      reaper_dir: Application.get_env(:agent_link, :reaper_dir)
     }
+
+    reaper_dir =
+      Path.join(System.tmp_dir!(), "agentlink-reaper-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(reaper_dir)
+    Application.put_env(:agent_link, :reaper_dir, reaper_dir)
 
     root = Path.join(System.tmp_dir!(), "agentlink-wired-#{System.unique_integer([:positive])}")
     File.mkdir_p!(root)
@@ -64,6 +71,7 @@ defmodule AgentLink.Relay.ProcessTest do
       File.rm_rf(root)
       if pid = Process.whereis(AgentLink.Relay.Agent), do: Process.exit(pid, :kill)
       if pid = Process.whereis(AgentLink.Uplink), do: Process.exit(pid, :kill)
+      if pid = Process.whereis(AgentLink.Agent.Reaper), do: Process.exit(pid, :kill)
     end)
 
     %{
@@ -208,6 +216,7 @@ defmodule AgentLink.Relay.ProcessTest do
     {:ok, sup} =
       Supervisor.start_link(
         [
+          AgentLink.Agent.Reaper,
           %{
             id: AgentLink.Relay.Agent,
             start: {AgentLink.Relay.Agent, :start_link, [relay_opts()]},
@@ -408,6 +417,7 @@ defmodule AgentLink.Relay.ProcessTest do
     AgentLink.TestHelpers.restore(:agent_module, previous.agent_module)
     AgentLink.TestHelpers.restore(:link_path, previous.link_path)
     AgentLink.TestHelpers.restore(:workdir, previous.workdir)
+    AgentLink.TestHelpers.restore(:reaper_dir, previous.reaper_dir)
     restore_system("AGENTLINK_PROCESS_PROBE", previous.probe)
     restore_system("OPENCODE_DISABLE_AUTOUPDATE", previous.autoupdate)
     restore_system("AGENTLINK_FIXTURE_STAMP", previous.stamp)

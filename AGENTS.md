@@ -2,7 +2,7 @@
 
 AgentLink is the control plane and the agent relay. It proxies ACP between apps and agent runtimes. The web UI is not in this directory.
 
-Mix. `mix test` skips `:wrapped`. The OpenCode test is `AGENTLINK_BIN=./burrito_out/agentlink_linux OPENCODE_BIN=/path/to/opencode mix test --only wrapped`.
+Mix. `mix test` skips `:wrapped` and `:release`. The OpenCode test is `AGENTLINK_BIN=./_build/prod/rel/agentlink/bin/agentlink OPENCODE_BIN=/path/to/opencode mix test --only wrapped`.
 
 Read the matching file when the task touches that area:
 

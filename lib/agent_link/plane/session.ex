@@ -21,9 +21,15 @@ defmodule AgentLink.Plane.Session do
   `AgentLink.Plane.Subscription`.
 
   `AgentLink.Plane.Sessions` starts this process from `open/5`.
+
+  This process traps exits and is linked to each subscription. A subscription
+  crash removes that subscription. The session and its history keep running.
+  A subscription that exits `:normal`, including when the client dies, stays
+  a normal exit and does not stop the session.
   """
 
   use GenServer
+  require Logger
 
   defstruct [:runtime, :session_id, :subscribe, :history, subscriptions: []]
 
@@ -40,7 +46,10 @@ defmodule AgentLink.Plane.Session do
   end
 
   @impl true
-  def init(%__MODULE__{} = state), do: {:ok, state}
+  def init(%__MODULE__{} = state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
 
   @doc """
   Start a subscription and return the capped replay.
@@ -128,6 +137,16 @@ defmodule AgentLink.Plane.Session do
   @impl true
   def handle_info({:subscription_down, _client_id, _session_id}, %__MODULE__{} = state) do
     {:noreply, state}
+  end
+
+  def handle_info({:EXIT, pid, reason}, %__MODULE__{} = state) do
+    if reason != :normal and reason != :shutdown do
+      Logger.warning(
+        "subscription #{inspect(pid)} stopped #{inspect(reason)} session=#{state.session_id}"
+      )
+    end
+
+    {:noreply, %{state | subscriptions: List.delete(state.subscriptions, pid)}}
   end
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, %__MODULE__{} = state) do

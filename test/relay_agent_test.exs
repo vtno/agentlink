@@ -17,6 +17,14 @@ defmodule AgentLink.Relay.AgentTest do
 
     Application.put_env(:agent_link, :link_path, path)
 
+    reaper_dir =
+      Path.join(System.tmp_dir!(), "agentlink-reaper-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(reaper_dir)
+    previous_reaper = Application.get_env(:agent_link, :reaper_dir)
+    Application.put_env(:agent_link, :reaper_dir, reaper_dir)
+    start_supervised!(AgentLink.Agent.Reaper)
+
     on_exit(fn ->
       Application.delete_env(:agent_link, :agent_listener)
 
@@ -24,12 +32,31 @@ defmodule AgentLink.Relay.AgentTest do
         do: Application.put_env(:agent_link, :link_path, previous),
         else: Application.delete_env(:agent_link, :link_path)
 
+      if previous_reaper,
+        do: Application.put_env(:agent_link, :reaper_dir, previous_reaper),
+        else: Application.delete_env(:agent_link, :reaper_dir)
+
+      File.rm_rf(reaper_dir)
+
       File.rm(path)
       stop(AgentLink.Relay.Agent)
       stop(AgentLink.Uplink)
     end)
 
     :ok
+  end
+
+  test "shutdown outlasts two agent stop waits" do
+    previous = Application.get_env(:agent_link, :agent_stop_timeout)
+    Application.put_env(:agent_link, :agent_stop_timeout, 40)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:agent_link, :agent_stop_timeout, previous),
+        else: Application.delete_env(:agent_link, :agent_stop_timeout)
+    end)
+
+    assert AgentLink.Relay.Agent.child_spec([]).shutdown == 3_040
   end
 
   test "send_message is down when the agent relay is not running" do

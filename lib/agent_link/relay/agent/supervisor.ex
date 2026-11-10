@@ -13,7 +13,7 @@ defmodule AgentLink.Relay.Agent.Supervisor do
 
   @impl true
   def init(_opts) do
-    Supervisor.init([AgentLink.Relay.Agent],
+    Supervisor.init([AgentLink.Agent.Reaper, AgentLink.Relay.Agent],
       strategy: :one_for_one,
       max_restarts: 5,
       max_seconds: 20

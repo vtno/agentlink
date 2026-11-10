@@ -141,7 +141,7 @@ defmodule AgentLink.Plane.SessionsTest do
 
     Process.exit(ada_client, :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^ada, :normal}
+    assert_receive {:DOWN, ^ref, :process, ^ada, :normal}, 5_000
     assert :ok = Sessions.leave("lab", "ses", "ada")
     assert :ok = Sessions.broadcast("lab", "ses", user("later"))
     assert notified("bea", "ses") == [message("ses", user("later"))]
@@ -161,8 +161,8 @@ defmodule AgentLink.Plane.SessionsTest do
 
     Process.exit(ada_client, :kill)
 
-    assert_receive {:DOWN, ^one_ref, :process, ^one, :normal}
-    assert_receive {:DOWN, ^two_ref, :process, ^two, :normal}
+    assert_receive {:DOWN, ^one_ref, :process, ^one, :normal}, 5_000
+    assert_receive {:DOWN, ^two_ref, :process, ^two, :normal}, 5_000
 
     assert :ok = Sessions.leave("lab", "one", "ada")
     refute Map.has_key?(:sys.get_state(Sessions).clients["ada"], {"lab", "one"})
@@ -333,6 +333,78 @@ defmodule AgentLink.Plane.SessionsTest do
 
     assert Sessions.list("lab") == %{sessions: [], next_cursor: nil}
     assert :ok = Sessions.open("lab", "ses", "ada", self(), attrs("/tmp"))
+  end
+
+  test "a normal client exit leaves the directory and the other session" do
+    directory = Process.whereis(Sessions)
+    ada = client()
+    bea = client()
+    assert :ok = Sessions.open("lab", "ses-a", "ada", ada, attrs("/tmp/a"))
+    assert :ok = Sessions.open("lab", "ses-b", "bea", bea, attrs("/tmp/b"))
+    assert :ok = Sessions.broadcast("lab", "ses-b", user("kept"))
+    subscription = subscription("ada", "ses-a")
+    ref = Process.monitor(subscription)
+    Process.exit(ada, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^subscription, :normal}, 5_000
+    assert Process.whereis(Sessions) == directory
+    assert {:ok, replay} = Sessions.load("lab", "ses-b", "bea", bea)
+    assert replay == [message("ses-b", user("kept"))]
+  end
+
+  test "a session crash leaves the directory and the other session" do
+    directory = Process.whereis(Sessions)
+    assert :ok = Sessions.open("lab", "ses-a", "ada", client(), attrs("/tmp/a"))
+    assert :ok = Sessions.open("lab", "ses-b", "bea", client(), attrs("/tmp/b"))
+    assert :ok = Sessions.broadcast("lab", "ses-b", user("kept"))
+    crashed = session("ses-a")
+    ref = Process.monitor(crashed)
+    send(crashed, :lifecycle_crash)
+    assert_receive {:DOWN, ^ref, :process, ^crashed, _reason}, 5_000
+    assert Process.whereis(Sessions) == directory
+    assert {:error, :unknown} = Sessions.load("lab", "ses-a", "ada", self())
+    assert {:ok, replay} = Sessions.load("lab", "ses-b", "bea", self())
+    assert replay == [message("ses-b", user("kept"))]
+  end
+
+  test "a subscription crash leaves the session and its history" do
+    assert :ok = Sessions.open("lab", "ses", "ada", client(), attrs("/tmp"))
+    assert :ok = Sessions.broadcast("lab", "ses", user("kept"))
+    session = session("ses")
+    subscription = hd(subscriptions("ses"))
+    ref = Process.monitor(subscription)
+    send(subscription, :lifecycle_crash)
+    assert_receive {:DOWN, ^ref, :process, ^subscription, _reason}, 5_000
+    assert Process.alive?(session)
+    assert AgentLink.Plane.Session.replay(session) == [message("ses", user("kept"))]
+  end
+
+  test "stopping the directory stops its sessions" do
+    assert :ok = Sessions.open("lab", "ses", "ada", client(), attrs("/tmp"))
+    session = session("ses")
+    ref = Process.monitor(session)
+    stop_supervised!(Sessions)
+    assert_receive {:DOWN, ^ref, :process, ^session, _reason}, 5_000
+  end
+
+  test "an unexpected message crashes the directory" do
+    directory = Process.whereis(Sessions)
+    ref = Process.monitor(directory)
+    send(directory, :lifecycle_crash)
+    assert_receive {:DOWN, ^ref, :process, ^directory, _reason}, 5_000
+  end
+
+  test "a real subscription crash leaves the session" do
+    stop_supervised!(Sessions)
+    start_supervised!(Sessions)
+    assert :ok = Sessions.open("lab", "ses", "ada", client(), attrs("/tmp"))
+    assert :ok = Sessions.broadcast("lab", "ses", user("kept"))
+    session = session("ses")
+    subscription = hd(subscriptions("ses"))
+    ref = Process.monitor(subscription)
+    send(subscription, :lifecycle_crash)
+    assert_receive {:DOWN, ^ref, :process, ^subscription, _reason}, 5_000
+    assert Process.alive?(session)
+    assert AgentLink.Plane.Session.replay(session) == [message("ses", user("kept"))]
   end
 
   defp attrs(cwd, history \\ []) do

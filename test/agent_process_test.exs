@@ -10,10 +10,13 @@ defmodule AgentLink.Agent.ProcessTest do
   call `Process.sleep/1`.
 
   `{port, {:exit_status, 17}}` arrives while the port is open, and the os
-  pid is then gone. After `close/1`, the fixture sees stdin EOF, writes
-  `eof` to the stamp file, and exits. The test waits until that file
-  contains `eof` and the os pid is gone. A timer is not the success
-  condition.
+  pid is then gone. `close/1` signals the recorded pid. The default fixture
+  exits, and the test waits until that pid's start time no longer matches.
+  A fixture that ignores `SIGTERM` still writes `eof` to the stamp file
+  after stdin closes. The hold fixture ignores `SIGTERM` and stdin EOF and
+  forks a child. `close/1` with `:agent_stop_timeout` set to `0` signals
+  `SIGKILL` to the process group. The test waits until both start times no
+  longer match. A timer is not the success condition.
 
   These tests were run on Linux x86_64. macOS and Windows were not run.
   The symlink cases use `File.ln_s!/2` and were run on Linux.
@@ -23,6 +26,15 @@ defmodule AgentLink.Agent.ProcessTest do
 
   alias AgentLink.Agent.Launch
   alias AgentLink.Agent.Process, as: AgentProcess
+
+  test "the agent environment omits AGENTLINK_WINDOWS_START" do
+    System.put_env("AGENTLINK_WINDOWS_START", "1")
+    on_exit(fn -> System.delete_env("AGENTLINK_WINDOWS_START") end)
+
+    refute Enum.any?(AgentProcess.port_env(), fn {key, _value} ->
+             key == ~c"AGENTLINK_WINDOWS_START"
+           end)
+  end
 
   setup_all do
     beam_dir =
@@ -235,13 +247,102 @@ defmodule AgentLink.Agent.ProcessTest do
 
   test "write and close report a closed port", %{beam_dir: beam_dir, exe: exe} do
     dir = make_dir()
-    {port, os_pid, stamp} = opened!(exe, fixture_args(beam_dir, []), dir, refuse_finder(exe))
+    {port, os_pid, _stamp} = opened!(exe, fixture_args(beam_dir, []), dir, refuse_finder(exe))
+    started = proc_starttime!(os_pid)
     ping!(port)
     assert AgentProcess.close(port) == :ok
     assert AgentProcess.write(port, "ping\n") == :closed
     assert AgentProcess.write(self(), "ping\n") == :closed
     assert AgentProcess.close(port) == :ok
-    wait_reaped!(os_pid, stamp)
+    await_gone!(os_pid, started)
+  end
+
+  test "close still closes stdin when SIGTERM is ignored", %{beam_dir: beam_dir, exe: exe} do
+    System.put_env("AGENTLINK_FIXTURE_IGNORE_TERM", "1")
+    on_exit(fn -> System.delete_env("AGENTLINK_FIXTURE_IGNORE_TERM") end)
+    dir = make_dir()
+    {port, os_pid, stamp} = opened!(exe, fixture_args(beam_dir, []), dir, refuse_finder(exe))
+    started = proc_starttime!(os_pid)
+    ping!(port)
+    assert AgentProcess.close(port) == :ok
+    await_gone!(os_pid, started)
+    assert stamp_eof?(stamp)
+  end
+
+  test "close stops a process group that ignores stdin EOF" do
+    previous = Application.get_env(:agent_link, :agent_stop_timeout)
+    Application.put_env(:agent_link, :agent_stop_timeout, 0)
+    on_exit(fn -> AgentLink.TestHelpers.restore(:agent_stop_timeout, previous) end)
+
+    python = System.find_executable("python3")
+    assert is_binary(python)
+    script = Path.expand("fixtures/agentlink_hold_fixture.py", __DIR__)
+    File.chmod!(script, 0o755)
+    dir = make_dir()
+
+    assert {:ok, port} =
+             AgentProcess.open(
+               self(),
+               %Launch{command: python, args: [script]},
+               dir,
+               fn _command -> flunk("finder must not be called") end
+             )
+
+    os_pid = os_pid!(port)
+    parent = proc_starttime!(os_pid)
+
+    on_exit(fn ->
+      AgentProcess.close(port)
+      await_gone!(os_pid, parent)
+    end)
+
+    {ready_parent, child} = ready_pids!(port)
+    assert ready_parent == os_pid
+    child_started = proc_starttime!(child)
+    assert AgentProcess.close(port) == :ok
+    refute same_process?(os_pid, parent)
+    refute same_process?(child, child_started)
+  end
+
+  test "close stops a setsid grandchild that ignores SIGTERM" do
+    previous = Application.get_env(:agent_link, :agent_stop_timeout)
+    Application.put_env(:agent_link, :agent_stop_timeout, 0)
+    on_exit(fn -> AgentLink.TestHelpers.restore(:agent_stop_timeout, previous) end)
+
+    python = System.find_executable("python3")
+    assert is_binary(python)
+    script = Path.expand("fixtures/agentlink_setsid_fixture.py", __DIR__)
+    File.chmod!(script, 0o755)
+    dir = make_dir()
+
+    assert {:ok, port} =
+             AgentProcess.open(
+               self(),
+               %Launch{command: python, args: [script]},
+               dir,
+               fn _command -> flunk("finder must not be called") end
+             )
+
+    os_pid = os_pid!(port)
+    parent = proc_starttime!(os_pid)
+    {ready_parent, grandchild} = ready_pids!(port)
+    assert ready_parent == os_pid
+    grandchild_started = proc_starttime!(grandchild)
+    assert pgrp!(grandchild) == grandchild
+    assert pgrp!(grandchild) != os_pid
+    [intermediate] = children!(os_pid)
+    intermediate_started = proc_starttime!(intermediate)
+
+    on_exit(fn ->
+      kill_if_same!(grandchild, grandchild_started)
+      kill_if_same!(intermediate, intermediate_started)
+      kill_if_same!(os_pid, parent)
+    end)
+
+    assert AgentProcess.close(port) == :ok
+    refute same_process?(os_pid, parent)
+    refute same_process?(intermediate, intermediate_started)
+    refute same_process?(grandchild, grandchild_started)
   end
 
   test "a deleted executable path fails the next open", %{beam_dir: beam_dir, exe: exe} do
@@ -329,13 +430,11 @@ defmodule AgentLink.Agent.ProcessTest do
       case AgentProcess.open(self(), launch, cwd, finder) do
         {:ok, port} ->
           os_pid = os_pid!(port)
+          started = proc_starttime!(os_pid)
 
           on_exit(fn ->
             AgentProcess.close(port)
-
-            if os_alive?(os_pid) do
-              wait_reaped!(os_pid, stamp)
-            end
+            await_gone!(os_pid, started)
           end)
 
           {port, os_pid, stamp}
@@ -378,17 +477,87 @@ defmodule AgentLink.Agent.ProcessTest do
     end
   end
 
-  # The child writes the stamp after stdin closes, then exits. ExUnit's
-  # timeout is the failure path. A timer is not the success condition.
-  defp wait_reaped!(os_pid, stamp) do
-    receive do
-    after
-      0 ->
-        if stamp_eof?(stamp) and not os_alive?(os_pid) do
-          :ok
-        else
-          wait_reaped!(os_pid, stamp)
+  # The recorded start time is the process `open/3` started. A reused pid
+  # has a different start time. ExUnit's timeout is the failure path.
+  defp await_gone!(os_pid, starttime) do
+    if same_process?(os_pid, starttime) do
+      receive do
+      after
+        0 -> await_gone!(os_pid, starttime)
+      end
+    else
+      :ok
+    end
+  end
+
+  defp proc_starttime!(os_pid) do
+    {:ok, stat} = File.read("/proc/#{os_pid}/stat")
+    {:ok, %{starttime: starttime}} = AgentLink.OwnedStop.parse_stat(stat)
+    starttime
+  end
+
+  defp pgrp!(os_pid) do
+    {:ok, stat} = File.read("/proc/#{os_pid}/stat")
+    {pos, _} = List.last(:binary.matches(stat, ")"))
+    rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
+    fields = String.split(rest, " ", trim: true)
+    {pgrp, ""} = Integer.parse(Enum.at(fields, 2))
+    pgrp
+  end
+
+  defp children!(parent) do
+    {:ok, names} = File.ls("/proc")
+
+    Enum.flat_map(names, fn name ->
+      case Integer.parse(name) do
+        {pid, ""} ->
+          case File.read("/proc/#{pid}/stat") do
+            {:ok, stat} ->
+              case AgentLink.OwnedStop.parse_stat(stat) do
+                {:ok, %{ppid: ^parent}} -> [pid]
+                _ -> []
+              end
+
+            _ ->
+              []
+          end
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp kill_if_same!(pid, starttime) do
+    if same_process?(pid, starttime) and pid > 1 and Integer.to_string(pid) != System.pid() do
+      System.cmd("kill", ["-s", "KILL", "--", Integer.to_string(pid)], stderr_to_stdout: true)
+    end
+
+    :ok
+  end
+
+  defp same_process?(os_pid, starttime) do
+    case File.read("/proc/#{os_pid}/stat") do
+      {:ok, stat} ->
+        case AgentLink.OwnedStop.parse_stat(stat) do
+          {:ok, %{starttime: ^starttime}} -> true
+          _ -> false
         end
+
+      _ ->
+        false
+    end
+  end
+
+  defp ready_pids!(port) do
+    line = collect(port, "\n", "")
+
+    case Regex.run(~r/^ready (\d+) (\d+)\n$/, line) do
+      [_, parent, child] ->
+        {String.to_integer(parent), String.to_integer(child)}
+
+      _ ->
+        flunk("hold fixture did not report pids: #{inspect(line)}")
     end
   end
 

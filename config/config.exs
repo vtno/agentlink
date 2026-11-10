@@ -7,7 +7,8 @@ config :agent_link,
   master_token: nil,
   agent_module: AgentLink.Agent.Process,
   access: AgentLink.Access.Single,
-  cli: true
+  cli: true,
+  agent_stop_timeout: 5_000
 
 config :logger, level: :info
 
