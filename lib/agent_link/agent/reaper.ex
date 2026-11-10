@@ -12,8 +12,13 @@ defmodule AgentLink.Agent.Reaper do
   and its readable start time differs from the real start time in the name.
   A stored start time of `0`, or a start time that cannot be read, is left in
   place. That includes a machine without `/proc`. `init/1` removes this VM's
-  `.bad-*` and `.tmp` files. This VM's record is removed on a clean shutdown.
-  Each write uses its own temporary name and mode `0600`.
+  `.bad-*` and `.tmp` files. `init/1` traps exits, so a supervisor
+  `:shutdown` runs `terminate/2` inside the `2000` millisecond child
+  shutdown. That callback deletes this VM's file inside `:global.trans/3`
+  on `{{:agentlink_reaper, vm}, self()}`, limited to `[node()]`.
+  `Process.exit/2` with `:kill` does not run
+  `terminate/2`, so the file stays. Each write uses its own temporary name
+  and mode `0600`.
 
   Every load, modify, and save of this VM's file, including a clean
   shutdown's delete, runs inside `:global.trans/3` on
@@ -67,6 +72,7 @@ defmodule AgentLink.Agent.Reaper do
 
   @impl true
   def init(opts) do
+    Process.flag(:trap_exit, true)
     vm = vm_opt(opts)
     reader = starttime_opt(opts)
     dir = directory()

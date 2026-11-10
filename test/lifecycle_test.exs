@@ -9,7 +9,7 @@ defmodule AgentLink.LifecycleTest do
   is `0` in that test, so `close/1` signals `SIGKILL` without waiting out
   the default `5000`, then waits until the recorded processes are gone.
   The replacement test checks those start times when the new relay calls
-  `open/3`. The sticky test keeps a process alive through `close/1` and
+  `open/5`. The sticky test keeps a process alive through `close/1` and
   hides `kill`, so the next start fails while that start time still matches.
   `await_accept!/1` gives up after `5000` milliseconds.
   """
@@ -418,6 +418,14 @@ defmodule AgentLink.LifecycleTest do
     assert os_alive?(os_pid, started)
   end
 
+  test "a supervised stop removes this VM's reaper file" do
+    assert {:ok, sup} = Supervisor.start_link([AgentLink.Agent.Reaper], strategy: :one_for_one)
+    path = AgentLink.Agent.Reaper.record_path()
+    assert File.regular?(path)
+    assert :ok = Supervisor.stop(sup, :shutdown)
+    refute File.regular?(path)
+  end
+
   test "two reapers in one directory keep separate records" do
     python = System.find_executable("python3")
 
@@ -508,7 +516,7 @@ defmodule AgentLink.LifecycleTest do
              )
 
     on_exit(fn ->
-      if Process.alive?(reaper), do: GenServer.stop(reaper)
+      if Process.alive?(reaper), do: Process.exit(reaper, :kill)
     end)
 
     assert File.regular?(other_bin)
@@ -543,7 +551,7 @@ defmodule AgentLink.LifecycleTest do
              AgentLink.Agent.Reaper.start_link(name: false, vm: vm, starttime: reader)
 
     on_exit(fn ->
-      if Process.alive?(reaper), do: GenServer.stop(reaper)
+      if Process.alive?(reaper), do: Process.exit(reaper, :kill)
     end)
 
     assert File.regular?(live_zero)

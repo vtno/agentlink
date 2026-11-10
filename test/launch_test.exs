@@ -27,21 +27,32 @@ defmodule AgentLink.LaunchTest do
     refute script =~ "Unknown command"
     assert script =~ "start_iex)\n    start \"iex\" --werl"
     bat = File.read!(Path.join(bin, name <> ".bat"))
-    refute bat =~ "for /f"
     refute bat =~ "tokens=1*"
     refute bat =~ "AGENTLINK_START_TAIL"
+    assert bat =~ "for /f \"tokens=1,2\""
     assert bat =~ "if not \"!REL_EXTRA!\" == \"--no-halt\" goto start_plain"
     assert bat =~ "setlocal DisableDelayedExpansion"
     assert bat =~ "set AGENTLINK_WINDOWS_START=1"
-    assert bat =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
     assert bat =~ ":start_plain\n"
     assert bat =~ ":cli\n"
 
     cli =
       bat |> String.split(":cli\n", parts: 2) |> Enum.at(1) |> String.split(":start\n") |> hd()
 
+    refute cli =~ "for /f"
     refute cli =~ "AGENTLINK_WINDOWS_START"
     assert cli =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
+
+    start =
+      bat
+      |> String.split(":start\n", parts: 2)
+      |> Enum.at(1)
+      |> String.split(":start_plain\n")
+      |> hd()
+
+    refute start =~ "for /f"
+    assert start =~ "set AGENTLINK_WINDOWS_START=1"
+    assert start =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
 
     assert_raise RuntimeError, ~r/could not patch/, fn ->
       AgentLink.Release.forward_start_args(release)
@@ -74,6 +85,7 @@ defmodule AgentLink.LaunchTest do
 
   defp bat_script do
     """
+    if not defined RELEASE_VSN (for /f "tokens=1,2" %%K in ('type "!RELEASE_ROOT!\releases\start_erl.data"') do (set ERTS_VSN=%%K) && (set RELEASE_VSN=%%L))
     echo Usage: %~nx0 COMMAND [ARGS]
     echo.
     if not "%~1" == "" (

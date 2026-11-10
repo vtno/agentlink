@@ -91,11 +91,13 @@ defmodule AgentLink.ReleaseLifecycleTest do
     track!(child, child_started)
     assert shown(log) =~ "The uplink will dial the plane_url"
     refute accept?(port_num)
+    assert_reaper_file!(dir)
     signal_if_same!(os_pid, started, "-TERM")
     assert await_status!(port, log) == 0
     await_gone!(parent, parent_started)
     await_gone!(child, child_started)
     await_gone!(os_pid, started)
+    refute_reaper_files!(dir)
     refute accept?(port_num)
   end
 
@@ -114,11 +116,13 @@ defmodule AgentLink.ReleaseLifecycleTest do
     track!(parent, parent_started)
     track!(child, child_started)
     assert shown(log) =~ "The agent relay on this machine is starting."
+    assert_reaper_file!(dir)
     signal_if_same!(os_pid, started, "-TERM")
     assert await_status!(port, log) == 0
     await_closed!(port_num)
     await_gone!(parent, parent_started)
     await_gone!(child, child_started)
+    refute_reaper_files!(dir)
   end
 
   test "bin/agentlink stop shuts a plane down", %{bin: bin, dir: dir} do
@@ -222,12 +226,14 @@ defmodule AgentLink.ReleaseLifecycleTest do
     held_started = starttime!(held)
     track!(parent, parent_started)
     track!(held, held_started)
+    assert_reaper_file!(dir)
     signal_group!(child, child_started)
     assert await_status!(port, log) == 0
     await_gone!(parent, parent_started)
     await_gone!(held, held_started)
     await_gone!(child, child_started)
     await_gone!(leader, leader_started)
+    refute_reaper_files!(dir)
   end
 
   defp all_group!(bin, dir) do
@@ -245,6 +251,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
     held_started = starttime!(held)
     track!(parent, parent_started)
     track!(held, held_started)
+    assert_reaper_file!(dir)
     signal_group!(child, child_started)
     assert await_status!(port, log) == 0
     await_closed!(port_num)
@@ -252,6 +259,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
     await_gone!(held, held_started)
     await_gone!(child, child_started)
     await_gone!(leader, leader_started)
+    refute_reaper_files!(dir)
   end
 
   defp connect_group!(bin, dir) do
@@ -651,4 +659,19 @@ defmodule AgentLink.ReleaseLifecycleTest do
   end
 
   defp shown(log), do: String.replace(log, "sekret", "[token]")
+
+  defp assert_reaper_file!(dir) do
+    assert Enum.any?(reaper_names(dir), &String.ends_with?(&1, ".bin"))
+  end
+
+  defp refute_reaper_files!(dir) do
+    assert reaper_names(dir) == []
+  end
+
+  defp reaper_names(dir) do
+    dir
+    |> Path.join("tmp")
+    |> File.ls!()
+    |> Enum.filter(&String.contains?(&1, "agent-reaper-"))
+  end
 end
