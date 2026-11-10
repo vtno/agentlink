@@ -14,6 +14,6 @@ On Linux the VM's port spawn makes the command a session leader, and that pid is
 
 On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object. `write/2` returns `:ok` when the port is open and `:closed` otherwise.
 
-`bin/agentlink` is the Mix release script. `plane`, `relay`, `connect`, and a leading flag boot the VM and pass those words after `--`. `SIGTERM` stops `plane`, `relay`, and `all`. `SIGINT` in those modes opens the Erlang BREAK prompt. `agentlink connect` installs `AgentLink.ConnectStop` in place of `:erl_signal_handler`. That handler stops on `SIGTERM` and ignores `SIGINT`.
+`bin/agentlink` is the Mix release script. `plane`, `relay`, `connect`, and a leading flag boot the VM and pass those words after `--`. `SIGTERM` stops `plane`, `relay`, and `all`. `agentlink connect` installs `AgentLink.ConnectStop` in place of `:erl_signal_handler`. That handler stops on `SIGTERM` with status 1. `SIGINT` opens the Erlang BREAK prompt in every mode, the same as a plain release.
 
 For `session/new` and `session/load`, the relay fills a missing, null, or empty `cwd` in params with its workspace, `AgentLink.Paths.workdir()`, before the message reaches the agent. An explicit `cwd` passes through unchanged.

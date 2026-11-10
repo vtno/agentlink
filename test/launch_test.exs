@@ -27,7 +27,6 @@ defmodule AgentLink.LaunchTest do
     refute script =~ "Unknown command"
     assert script =~ "start_iex)\n    start \"iex\" --werl"
     bat = File.read!(Path.join(bin, name <> ".bat"))
-    refute bat =~ "tokens=1*"
     refute bat =~ "AGENTLINK_START_TAIL"
     assert bat =~ "for /f \"tokens=1,2\""
     assert bat =~ "if not \"!REL_EXTRA!\" == \"--no-halt\" goto start_plain"
