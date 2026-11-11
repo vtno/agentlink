@@ -70,7 +70,11 @@ _build/prod/rel/agentlink/
 
 `bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink stop` stops the running node. `bin/agentlink start` also boots the release and passes any words after `start`.
 
-`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI drops one leading `start`. A direct `plane`, `relay`, or `connect` does not set that variable. This suite checks that script as text. It does not run the `.bat` file, and it does not run the release on macOS or Windows.
+`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. On a release boot, the CLI keeps the words after the first bare `--`. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI then drops one leading `start` on Windows. A direct `plane`, `relay`, or `connect` does not set that variable. The Mix suite checks the script as text. The release workflow also runs both launchers and a plane startup and shutdown on native runners.
+
+The release workflow builds the Mix release once on Linux. Each target replaces ERTS and the matching OTP applications with the prebuilt runtime installed by `erlef/setup-beam`. Project and dependency code stays compiled once. The packager preserves Mix's relocatable `erl` script and removes the installation-specific `erl.ini`.
+
+`.tool-versions` pins OTP and Elixir for both workflows. `.github/release-targets.json` defines the targets and their native runners once. Each matrix job packages its target, downloads the uploaded artifact, and smoke-tests it. Linux x86_64 and aarch64 and macOS x86_64 and arm64 use tarballs. Windows x86_64 uses a zip. A pushed `v*` tag publishes the archives and `SHA256SUMS` only after all matrix jobs pass. Manual runs and matching pull requests build and test without publishing.
 
 ```sh
 agentlink
@@ -282,6 +286,8 @@ The relay reads one JSON object per line from the agent's standard output. The r
 ## Run the tests
 
 `mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped` and `:release`.
+
+`python3 -m unittest discover -s .github/scripts -p 'test_*.py'` checks runtime replacement, version mismatches, and archive contents using temporary fixture directories without starting processes.
 
 `mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
 

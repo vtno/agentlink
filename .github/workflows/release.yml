@@ -8,118 +8,88 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - .github/release-targets.json
+      - .github/scripts/**
+      - .tool-versions
+      - lib/**
+      - mix.exs
+      - mix.lock
 
 permissions:
   contents: read
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: linux-x86_64
-            runner: ubuntu-24.04
-          - target: linux-aarch64
-            runner: ubuntu-24.04-arm
-          - target: macos-x86_64
-            runner: macos-15-intel
-          - target: macos-arm64
-            runner: macos-15
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.targets.outputs.matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: targets
+        run: echo "matrix=$(jq -c . .github/release-targets.json)" >> "$GITHUB_OUTPUT"
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
-          otp-version: '29.1.2'
-          elixir-version: '1.20.4'
+          version-file: .tool-versions
           version-type: strict
       - run: mix deps.get --check-locked
       - run: mix release
         env:
           MIX_ENV: prod
-      - name: Archive Unix release
-        run: tar -C _build/prod/rel/agentlink -czf agentlink-${{ matrix.target }}.tar.gz .
+      - name: Record OTP applications and archive the shared release
+        run: |
+          python3 .github/scripts/package_release.py inventory _build/prod/rel/agentlink "$INSTALL_DIR_FOR_OTP"
+          tar -C _build/prod/rel/agentlink -czf base-release.tar.gz .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: base-release
+          path: base-release.tar.gz
+          if-no-files-found: error
+
+  package-and-smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # setup-beam downloads the native prebuilt OTP, not a second Mix build.
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: base-release
+      - name: Swap the target runtime and pack the release
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        run: |
+          "$PYTHON" -m unittest discover -s .github/scripts -p 'test_*.py'
+          mkdir base
+          tar -xzf base-release.tar.gz -C base
+          "$PYTHON" .github/scripts/package_release.py package base "$INSTALL_DIR_FOR_OTP" "$TARGET" dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agentlink-${{ matrix.target }}
-          path: agentlink-${{ matrix.target }}.*
+          path: dist/*
           if-no-files-found: error
-
-  smoke:
-    needs: build
-    env:
-      RELEASE_DISTRIBUTION: none
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: linux-x86_64
-            runner: ubuntu-24.04
-          - target: linux-aarch64
-            runner: ubuntu-24.04-arm
-          - target: macos-x86_64
-            runner: macos-15-intel
-          - target: macos-arm64
-            runner: macos-15
-    runs-on: ${{ matrix.runner }}
-    steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: agentlink-${{ matrix.target }}
-      - name: Unpack Unix release
-        run: mkdir release && tar -xzf agentlink-${{ matrix.target }}.tar.gz -C release
-      - name: Check Unix launcher
+          path: downloaded
+      - name: Smoke-test the downloaded archive
+        timeout-minutes: 3
         shell: bash
-        run: |
-          set -o pipefail
-          release/bin/agentlink --help | grep -F 'agentlink plane'
-          release/bin/agentlink start --help | grep -F 'agentlink plane'
-      - name: Start and stop the plane
-        timeout-minutes: 2
-        run: |
-          python3 - <<'PY'
-          import os
-          import signal
-          import socket
-          import subprocess
+        env:
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        run: '"$PYTHON" .github/scripts/smoke_release.py downloaded'
 
-          with socket.socket() as sock:
-              sock.bind(('127.0.0.1', 0))
-              port = sock.getsockname()[1]
-
-          process = subprocess.Popen(
-              ['release/bin/agentlink', 'plane', '--port', str(port), '--token', 'ci-smoke'],
-              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-              start_new_session=True,
-          )
-          try:
-              for line in process.stdout:
-                  print(line, end='', flush=True)
-                  if 'Running AgentLink.Router with Bandit' in line and f'127.0.0.1:{port}' in line:
-                      break
-              else:
-                  raise RuntimeError('Plane exited before the listener started')
-
-              os.killpg(process.pid, signal.SIGTERM)
-              if process.wait() != 0:
-                  raise RuntimeError('Plane did not exit cleanly')
-              try:
-                  os.killpg(process.pid, 0)
-              except ProcessLookupError:
-                  pass
-              else:
-                  raise RuntimeError('Plane process group still exists')
-          finally:
-              try:
-                  os.killpg(process.pid, signal.SIGKILL)
-              except ProcessLookupError:
-                  pass
-              process.wait()
-          PY
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: smoke
+    needs: package-and-smoke
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -134,5 +104,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          sha256sum agentlink-*.tar.gz > SHA256SUMS
-          gh release create "$TAG" agentlink-*.tar.gz SHA256SUMS --verify-tag --title "$TAG" --generate-notes
+          sha256sum agentlink-*.tar.gz agentlink-*.zip > SHA256SUMS
+          gh release create "$TAG" agentlink-*.tar.gz agentlink-*.zip SHA256SUMS --verify-tag --title "$TAG" --generate-notes

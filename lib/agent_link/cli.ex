@@ -49,8 +49,8 @@ defmodule AgentLink.CLI do
 
   A release boot reads `:init.get_plain_arguments/0`. `System.argv/0` is empty
   on that boot, including when the words were passed after `--`. A release
-  boot has `RELEASE_ROOT` set and drops a leading `--no-halt --` pair. An
-  explicit list drops that pair only when `RELEASE_ROOT` is set. Any other
+  boot has `RELEASE_ROOT` set and keeps the words after the first bare `--`.
+  An explicit list is split only when `RELEASE_ROOT` is set. Any other
   launch uses `System.argv/0` and keeps the list it was given.
   `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START` to `1`. That boot
   drops one leading `start`. Any other boot keeps `start`.
@@ -79,9 +79,13 @@ defmodule AgentLink.CLI do
     Enum.map(:init.get_plain_arguments(), &to_string/1)
   end
 
-  @doc "Drop the `--no-halt --` pair a release boot can leave in the plain arguments."
-  def drop_launcher_prefix(["--no-halt", "--" | rest]), do: rest
-  def drop_launcher_prefix(args), do: args
+  @doc "Keep the words after the first bare `--`, or the original list if none exists."
+  def drop_launcher_prefix(args) do
+    case Enum.split_while(args, &(&1 != "--")) do
+      {_prefix, ["--" | rest]} -> rest
+      {_prefix, []} -> args
+    end
+  end
 
   @doc "Turn argv into a command. `:help` means show usage and do not start."
   def parse([]), do: {:ok, %__MODULE__{}}
