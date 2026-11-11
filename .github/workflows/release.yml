@@ -30,6 +30,9 @@ jobs:
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Preserve Unix line endings on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
@@ -40,6 +43,13 @@ jobs:
       - run: mix release
         env:
           MIX_ENV: prod
+      - name: Save failed release scripts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: failed-scripts-${{ matrix.target }}
+          path: _build/prod/rel/agentlink/bin/*
+          if-no-files-found: ignore
       - name: Archive Unix release
         if: runner.os != 'Windows'
         run: tar -C _build/prod/rel/agentlink -czf agentlink-${{ matrix.target }}.tar.gz .
