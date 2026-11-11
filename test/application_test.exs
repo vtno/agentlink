@@ -162,16 +162,23 @@ defmodule AgentLink.ApplicationTest do
 
       if pid = Process.whereis(AgentLink.Supervisor) do
         # :kill skips terminate/2. Linked child supervisors stop after they
-        # handle that EXIT. The next test can register names only after they are gone.
+        # handle that EXIT. The relay shutdown is 12_000 ms and the reaper
+        # shutdown is 2_000 ms. AgentLink.Uplink is not a supervisor child,
+        # so its name can outlive the relay :DOWN.
         refs =
-          [pid | descendant_pids(pid)]
+          [pid | child_pids(pid)]
           |> Enum.map(fn child -> {Process.monitor(child), child} end)
 
         Process.exit(pid, :kill)
 
         Enum.each(refs, fn {ref, child} ->
-          assert_receive {:DOWN, ^ref, :process, ^child, _reason}
+          assert_receive {:DOWN, ^ref, :process, ^child, _reason}, 12_000
         end)
+
+        if uplink = Process.whereis(AgentLink.Uplink) do
+          ref = Process.monitor(uplink)
+          assert_receive {:DOWN, ^ref, :process, ^uplink, _reason}, 12_000
+        end
       end
     end)
 
@@ -684,7 +691,7 @@ defmodule AgentLink.ApplicationTest do
   defp restore_link(nil), do: Application.delete_env(:agent_link, :link_path)
   defp restore_link(path), do: Application.put_env(:agent_link, :link_path, path)
 
-  defp descendant_pids(pid) do
+  defp child_pids(pid) do
     children =
       try do
         Supervisor.which_children(pid)
@@ -694,7 +701,7 @@ defmodule AgentLink.ApplicationTest do
 
     Enum.flat_map(children, fn
       {_id, child, :supervisor, _modules} when is_pid(child) ->
-        [child | descendant_pids(child)]
+        [child | child_pids(child)]
 
       {_id, child, _type, _modules} when is_pid(child) ->
         [child]
