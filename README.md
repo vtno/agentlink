@@ -206,7 +206,7 @@ The plane accepts a hello name of 1 to 40 characters that matches `^[a-z0-9][a-z
 
 `label` is the display name. `program` is metadata, such as `opencode`. It does not select `command`.
 
-`command` is a bare name or an absolute path. `AgentLink.Agent.Launch.load/1` trims it. `args` is a list of strings. `[]` is valid. Each string is kept as written. An `env` key is an error. OpenCode uses `"command": "opencode"` and `"args": ["acp"]`. `kimi` with `["acp"]` is the same shape.
+`command` is a bare name or an absolute path. `AgentLink.Agent.Launch.load/1` trims it. `args` is a list of strings. `[]` is valid. Each string is kept as written. An `env` key is an error. OpenCode uses `"command": "opencode"` and `"args": ["acp"]`. `kimi` with `["acp"]` is the same shape. AgentLink does not add `acp`, and it does not set `OPENCODE_DISABLE_AUTOUPDATE`.
 
 ### Uplink close codes
 
@@ -283,7 +283,7 @@ The relay reads one JSON object per line from the agent's standard output. The r
 
 `mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped` and `:release`.
 
-`mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
+`mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text, does not run it on Windows, and does not run the release on macOS. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
 
 Set `AGENTLINK_BIN` to `bin/agentlink` in the release. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 
