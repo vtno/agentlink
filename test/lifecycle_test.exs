@@ -1044,15 +1044,9 @@ defmodule AgentLink.LifecycleTest.Sticky do
   def close(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, pid} ->
-        case File.read("/proc/#{pid}/stat") do
-          {:ok, stat} ->
-            case starttime(stat) do
-              field when is_binary(field) -> AgentLink.Agent.Reaper.retain([{pid, field}])
-              _ -> :ok
-            end
-
-          _ ->
-            :ok
+        case AgentLink.Agent.Process.starttime(pid) do
+          field when is_binary(field) -> AgentLink.Agent.Reaper.retain([{pid, field}])
+          _ -> :ok
         end
 
       _ ->
@@ -1060,17 +1054,5 @@ defmodule AgentLink.LifecycleTest.Sticky do
     end
 
     {:error, :timeout}
-  end
-
-  defp starttime(stat) do
-    case :binary.matches(stat, ")") do
-      [] ->
-        nil
-
-      matches ->
-        {pos, 1} = List.last(matches)
-        rest = binary_part(stat, pos + 2, byte_size(stat) - pos - 2)
-        rest |> String.split(" ", trim: true) |> Enum.at(19)
-    end
   end
 end
