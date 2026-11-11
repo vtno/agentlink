@@ -2,49 +2,7 @@ defmodule AgentLink.Agent.Reaper do
   @moduledoc """
   Holds OS processes `close/1` could not reap, and blocks the next agent until they are gone.
 
-  The pairs are a file, not this process's memory. The file only has to survive
-  a restart of this process inside one VM. Its name is
-  `agent-reaper-<pid>-<starttime>.bin`, using this VM's OS pid and the start
-  time from `/proc/<pid>/stat`. The directory is `:reaper_dir` when that is
-  set, otherwise `RELEASE_TMP`, otherwise `~/.agentlink/run`. Two VMs that
-  share the directory do not read or signal each other's pairs. Another VM's
-  file is removed only when its pid does not exist, or when that pid exists
-  and its readable start time differs from the real start time in the name.
-  A stored start time of `0`, or a start time that cannot be read, is left in
-  place. That includes a machine without `/proc`. `init/1` removes this VM's
-  `.bad-*` and `.tmp` files. `init/1` traps exits, so a supervisor
-  `:shutdown` runs `terminate/2` inside the `2000` millisecond child
-  shutdown. That callback deletes this VM's file inside `:global.trans/3`
-  on `{{:agentlink_reaper, vm}, self()}`, limited to `[node()]`.
-  `Process.exit/2` with `:kill` does not run
-  `terminate/2`, so the file stays. Each write uses its own temporary name
-  and mode `0600`.
-
-  Every load, modify, and save of this VM's file, including a clean
-  shutdown's delete, runs inside `:global.trans/3` on
-  `{{:agentlink_reaper, vm}, self()}`, limited to `[node()]`. The resource is
-  this VM and the requester is the calling process, so two processes cannot
-  hold it together. `init/1` verifies the pairs it loaded before it saves
-  them. A `retain/1` that starts while `init/1` is between its load and its
-  save waits, then writes its pairs after that save.
-
-  The term is `{:agentlink_reaper, 1, pairs}`. A short, undecodable, non-list,
-  or other-version file is not trusted: it is logged, renamed beside the
-  record, and this process starts with no pairs from it. Those bytes are not
-  used to signal a process, and they do not block the next open, because the
-  pairs cannot be read.
-
-  This process starts before `AgentLink.Relay.Agent` in the same supervisor.
-  `retain/1` stores `{pid, starttime}` pairs. When this process is not
-  running, `retain/1` still writes the pairs into this VM's file and returns
-  `{:error, :noproc}`. `reap/0` reads that file again, signals `SIGKILL` to
-  each pair whose start time still matches, and waits `1000` milliseconds.
-  `:ok` means every retained start time is gone. `{:error, :timeout}` means
-  one still matches. `{:error, :no_kill}` means `kill` is not on `PATH` and a
-  retained process is still alive. `{:error, :kill_failed}` means `kill`
-  exited non-zero and that start time still matches. The next relay calls
-  `reap/0` before `open/5` for `AgentLink.Agent.Process` and does not open an
-  agent when the result is an error.
+  See [Reaper](../../../docs/agent.md#reaper).
   """
 
   use GenServer
@@ -65,7 +23,11 @@ defmodule AgentLink.Agent.Reaper do
     }
   end
 
-  @doc "Start the reaper. This VM's record file is loaded and checked against `/proc`."
+  @doc """
+  Start the reaper.
+
+  See [Reaper](../../../docs/agent.md#reaper).
+  """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, server_opts(opts))
   end
@@ -90,10 +52,9 @@ defmodule AgentLink.Agent.Reaper do
   end
 
   @doc """
-  Remember processes whose start time still matches.
+  Remember processes `close/1` could not stop.
 
-  Returns `{:error, :noproc}` when this process is not running. The pairs are
-  still written to this VM's file, so the next `reap/0` sees them.
+  See [Reaper](../../../docs/agent.md#reaper).
   """
   @spec retain([{integer(), String.t()}]) :: :ok | {:error, :noproc}
   def retain(identities) when is_list(identities) do
@@ -104,9 +65,9 @@ defmodule AgentLink.Agent.Reaper do
   end
 
   @doc """
-  SIGKILL every retained process and wait until its start time is gone.
+  Stop processes this reaper still holds.
 
-  Returns `{:error, :noproc}` when this process is not running.
+  See [Reaper](../../../docs/agent.md#reaper).
   """
   @spec reap() :: :ok | {:error, :timeout | :no_kill | :kill_failed | :noproc}
   def reap do

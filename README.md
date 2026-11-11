@@ -1,6 +1,6 @@
 # AgentLink
 
-Agent and editor vendors each build their own walled garden to keep you on their platform. AgentLink is a neutral bridge. It proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. The link file names the command. For OpenCode, set `command` to `opencode` and `args` to `["acp"]`. Another installed adapter uses the same fields, for example `kimi` and `["acp"]`. More agents are described in [Add Claude Code and Codex agents](https://github.com/vtno/agentlink/issues/10).
+AgentLink proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. The link file names the command. For OpenCode, set `command` to `opencode` and `args` to `["acp"]`. Another installed adapter uses the same fields, for example `kimi` and `["acp"]`. More agents are described in [Add Claude Code and Codex agents](https://github.com/vtno/agentlink/issues/10).
 
 A client is a program connected to the plane.
 
@@ -70,7 +70,7 @@ _build/prod/rel/agentlink/
 
 `bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink stop` stops the running node. `bin/agentlink start` also boots the release and passes any words after `start`.
 
-`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI drops one leading `start`. A direct `plane`, `relay`, or `connect` does not set that variable. This suite checks that script as text. It does not run the `.bat` file, and it does not run the release on macOS or Windows.
+`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI drops one leading `start`. A direct `plane`, `relay`, or `connect` does not set that variable.
 
 ```sh
 agentlink
@@ -154,8 +154,6 @@ agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 
 `--token` is the token. `agentlink relay` requires `--token`. Without it, AgentLink prints `agentlink relay needs --token.` A plane with no token creates one. See [Security model](#security-model).
 
-`--opencode-bin` is rejected. The usage text does not list it. The command and the args come from the link file.
-
 `agentlink connect` starts the client relay. The editor runs that command as its ACP agent over stdio. The command does not start the plane or the agent relay, and it does not read the link file.
 
 `--plane` is the plane WebSocket URL. `--target` is the agent name. `--token` is the bearer token. For each value, a flag that has text wins over the environment variable, and an environment variable that has text wins over the file. A blank value is unset. The variables are `AGENTLINK_PLANE`, `AGENTLINK_TARGET`, and `AGENTLINK_TOKEN`. The config file is `$HOME/.agentlink/config`, a JSON object with `plane` and an optional `target`. The token file is `$HOME/.agentlink/token`. Its mode is 0600 or tighter. A `token` key in the config file is an error.
@@ -206,9 +204,9 @@ The plane accepts a hello name of 1 to 40 characters that matches `^[a-z0-9][a-z
 
 `plane_url` chooses the scheme, the host, the port, and the path. `wss` and `https` use TLS. The default port for those schemes is 443. `ws` and `http` stay plain. The default port for those schemes is 80. When the path is missing, the uplink uses `/agent`. When the host is missing, the uplink dials `127.0.0.1`. The uplink ignores the query string. For `wss` and `https`, Mint verifies the server certificate against the system CA store from `:public_key.cacerts_get/0`.
 
-`label` is the display name. `program` is metadata, such as `opencode`. It does not select `command`. When `program` is missing, `AgentLink.Link` uses `opencode`.
+`label` is the display name. `program` is metadata, such as `opencode`. It does not select `command`.
 
-`command` is a bare name or an absolute path. `AgentLink.Agent.Launch.load/1` trims it. `args` is a list of strings. `[]` is valid. Each string is kept as written. An `env` key is an error. OpenCode uses `"command": "opencode"` and `"args": ["acp"]`. `kimi` with `["acp"]` is the same shape. AgentLink does not add `acp`, and it does not set `OPENCODE_DISABLE_AUTOUPDATE`.
+`command` is a bare name or an absolute path. `AgentLink.Agent.Launch.load/1` trims it. `args` is a list of strings. `[]` is valid. Each string is kept as written. An `env` key is an error. OpenCode uses `"command": "opencode"` and `"args": ["acp"]`. `kimi` with `["acp"]` is the same shape.
 
 ### Uplink close codes
 
@@ -275,7 +273,9 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child receives the VM environment without `AGENTLINK_WINDOWS_START`. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. On Linux, `close/1` signals `SIGTERM` to that group, and to any descendant that left the group, when the recorded start time still matches. It closes stdin and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way and returns `:ok` only when those processes are gone. A start time that remains is kept by `AgentLink.Agent.Reaper` in `agent-reaper-<pid>-<starttime>.bin`, named for this VM. That process starts before the relay. `init/1` reloads that file and drops a pid whose start time no longer matches, so a Reaper restart still blocks the next open. Another VM's file is removed only when its pid does not exist, or when that pid exists and its readable start time differs from the real start time in the name. A stored start time of `0`, or a start time that cannot be read, stays in the directory. `init/1` removes this VM's `.bad-*` and `.tmp` files. A load, modify, and save of this VM's file is `:global.trans/3` on `{{:agentlink_reaper, vm}, self()}` for this node, so a `retain/1` during `init/1` waits and still leaves its pairs. `retain/1` writes the pairs into that file even when the Reaper is not running, and the call still fails. `reap/0` fails when the Reaper is not running. The next relay signals `SIGKILL` and opens a replacement only after every retained start time is gone. `AgentLink.Relay.Agent` waits `12000` milliseconds at that default before the supervisor kills the relay. On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object.
+`AgentLink.Agent.Process` runs `command` and `args` in that workspace.
+
+See [Agent process](docs/agent.md#agent-process).
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 
