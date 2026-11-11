@@ -20,8 +20,7 @@ defmodule AgentLink.Relay.Agent do
   in params is filled with `AgentLink.Paths.workdir()` before the message is
   written to the agent. An explicit `cwd` passes through unchanged.
 
-  See [Agent process](../../../docs/agent.md#agent-process).
-  See [Reaper](../../../docs/agent.md#reaper).
+  See [Agent process](../../../docs/agent.md#agent-process) and [Reaper](../../../docs/agent.md#reaper).
   """
 
   use GenServer

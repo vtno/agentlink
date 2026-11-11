@@ -1,6 +1,6 @@
 defmodule AgentLink.Agent.Reaper do
   @moduledoc """
-  Holds OS processes `close/1` could not reap, and blocks the next agent until they are gone.
+  It holds the OS processes `close/1` could not stop.
 
   See [Reaper](../../../docs/agent.md#reaper).
   """
