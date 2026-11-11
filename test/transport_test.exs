@@ -56,11 +56,35 @@ defmodule AgentLink.TransportTest.PeerPlug do
   end
 end
 
+defmodule AgentLink.TransportTest.Scheduler do
+  @moduledoc false
+  use Agent
+
+  def start_link(_opts), do: Agent.start_link(fn -> %{} end, name: __MODULE__)
+
+  def send_after(destination, message, delay) do
+    ref = make_ref()
+    Agent.update(__MODULE__, &Map.put(&1, ref, {destination, message, delay}))
+    ref
+  end
+
+  def cancel_timer(ref), do: Agent.get_and_update(__MODULE__, &Map.pop(&1, ref))
+
+  def scheduled(ref), do: Agent.get(__MODULE__, &Map.get(&1, ref))
+
+  def fire(ref) do
+    {destination, message, _delay} = Agent.get_and_update(__MODULE__, &Map.pop(&1, ref))
+    send(destination, message)
+    :ok
+  end
+end
+
 defmodule AgentLink.TransportTest do
   use ExUnit.Case, async: false
 
   alias AgentLink.FakeTransport
   alias AgentLink.Transport.WebSocket
+  alias AgentLink.TransportTest.Scheduler
 
   test "sends and receives one decoded object" do
     ctx = start_transport()
@@ -138,25 +162,34 @@ defmodule AgentLink.TransportTest do
   end
 
   test "hold cancels a scheduled dial" do
-    ctx = start_transport(backoff: 60_000)
+    start_supervised!(Scheduler)
+    ctx = start_transport(backoff: 60_000, scheduler: Scheduler)
     send(ctx.socket, {:close, 1001, "gone"})
     assert await_closed() == {1001, "gone"}
+    timer = sync(ctx.transport).timer
+    assert Scheduler.scheduled(timer) != nil
 
     :ok = WebSocket.hold(ctx.transport)
     state = sync(ctx.transport)
     assert state.held == true
     assert state.timer == nil
+    assert Scheduler.scheduled(timer) == nil
   end
 
   test "a close schedules a reconnect with the configured backoff" do
-    ctx = start_transport(backoff: 60_000)
+    start_supervised!(Scheduler)
+    ctx = start_transport(backoff: 60_000, scheduler: Scheduler)
     send(ctx.socket, {:close, 1001, "going away"})
     assert {1001, _reason} = await_closed()
     state = sync(ctx.transport)
     assert state.backoff == 60_000
-    assert is_reference(state.timer)
-    Process.cancel_timer(state.timer)
-    send(ctx.transport, {:connect, state.connect_token})
+    assert is_reference(state.connect_token)
+
+    assert Scheduler.scheduled(state.timer) ==
+             {ctx.transport, {:connect, state.connect_token}, 60_000}
+
+    refute_received {:dial, _}
+    :ok = Scheduler.fire(state.timer)
     dial = await_dial()
     assert dial.path == "/agent"
     assert Process.alive?(ctx.transport)
@@ -459,6 +492,7 @@ defmodule AgentLink.TransportTest do
 
     transport_opts = [owner: parent, url: ws_url(port, path)]
     transport_opts = maybe_put(transport_opts, :backoff, Keyword.get(opts, :backoff, :omit))
+    transport_opts = maybe_put(transport_opts, :scheduler, Keyword.get(opts, :scheduler, :omit))
 
     transport_opts =
       maybe_put(transport_opts, :default_path, Keyword.get(opts, :default_path, :omit))
