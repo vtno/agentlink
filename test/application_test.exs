@@ -407,9 +407,8 @@ defmodule AgentLink.ApplicationTest do
 
     deliver_runtimes(transport, ["lab"])
 
-    assert_receive {:DOWN, ^ref, :process, ^client,
-                    {:shutdown,
-                     "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"}}
+    assert {:shutdown, "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"} =
+             await_down(ref, client)
 
     assert_receive {:connect_exit, 1}
 
@@ -456,7 +455,7 @@ defmodule AgentLink.ApplicationTest do
     client = connect_client!(sup)
     ref = Process.monitor(client)
     Process.exit(client, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^client, :killed}
+    assert await_down(ref, client) == :killed
 
     assert_receive {:connect_watching, _watcher}
     refute_received {:connect_exit, _}
@@ -481,7 +480,7 @@ defmodule AgentLink.ApplicationTest do
 
     ref = Process.monitor(sup)
     Process.exit(sup, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^sup, :killed}
+    assert await_down(ref, sup) == :killed
     assert_receive {:connect_exit, 1}
     refute_received {:connect_exit, 0}
   end
@@ -493,7 +492,7 @@ defmodule AgentLink.ApplicationTest do
     ref = Process.monitor(supervisor)
     Process.exit(Process.whereis(AgentLink.Relay.Agent), :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^supervisor, _}
+    await_down(ref, supervisor)
     assert Process.alive?(Process.whereis(AgentLink.Plane))
     assert Process.alive?(Process.whereis(AgentLink.Supervisor))
     refute Process.whereis(AgentLink.Relay.Agent.Supervisor)
@@ -504,7 +503,7 @@ defmodule AgentLink.ApplicationTest do
     if pid = Process.whereis(AgentLink.Supervisor) do
       ref = Process.monitor(pid)
       Process.exit(pid, :kill)
-      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+      await_down(ref, pid)
     end
 
     write_link()
@@ -515,7 +514,7 @@ defmodule AgentLink.ApplicationTest do
     ref = Process.monitor(sup)
     Process.exit(Process.whereis(AgentLink.Relay.Agent), :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^sup, _}
+    await_down(ref, sup)
     refute Process.whereis(AgentLink.Supervisor)
     refute Process.whereis(AgentLink.Plane)
   end
@@ -534,6 +533,12 @@ defmodule AgentLink.ApplicationTest do
     assert plane_only?(AgentLink.Plane.Supervisor)
     refute Process.whereis(AgentLink.Relay.Agent)
     refute Process.whereis(AgentLink.Relay.Agent.Supervisor)
+  end
+
+  defp await_down(ref, pid) do
+    receive do
+      {:DOWN, ^ref, :process, ^pid, reason} -> reason
+    end
   end
 
   defp start_all(port) do
