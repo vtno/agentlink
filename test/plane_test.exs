@@ -616,8 +616,9 @@ defmodule AgentLink.PlaneTest do
     client_reply!(pid)
 
     send(AgentLink.Plane, {:DOWN, make_ref(), :process, self(), :normal})
+    ref = Process.monitor(pid)
     Process.exit(pid, :kill)
-    Process.sleep(30)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
 
     AgentLink.Plane.agent_frame(
       "lab",

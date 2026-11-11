@@ -71,7 +71,8 @@ defmodule AgentLink.Relay.AgentTest do
     assert wait_for(fn -> %{"method" => "hi"} in uplink_outbox() end)
 
     AgentLink.FakeAgent.emit(agent, "not-json\n")
-    Process.sleep(30)
+    :sys.get_state(agent)
+    :sys.get_state(AgentLink.Relay.Agent)
     refute Enum.any?(uplink_outbox(), &(&1 == "not-json"))
   end
 
