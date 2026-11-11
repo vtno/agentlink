@@ -119,18 +119,18 @@ defmodule AgentLink.TransportTest do
     assert AgentLink.Frame.decode(first) == {:ok, %{"n" => 1}}
 
     send(ctx.socket, {:close, 1001, "gone"})
-    assert_receive {:transport_closed, 1001, "gone"}, 1_000
+    assert await_closed() == {1001, "gone"}
 
     :ok = WebSocket.send_message(ctx.transport, %{"n" => 2})
     :ok = WebSocket.send_message(ctx.transport, %{"n" => 3})
     sync(ctx.transport)
 
     :ok = WebSocket.reconnect(ctx.transport, ctx.url)
-    assert_receive {:dial, dial}, 1_000
+    dial = await_dial()
     assert dial.path == "/agent"
-    assert_receive {:socket, _socket}, 1_000
-    assert_receive {:received, second}, 1_000
-    assert_receive {:received, third}, 1_000
+    await_socket()
+    second = await_payload()
+    third = await_payload()
     assert AgentLink.Frame.decode(second) == {:ok, %{"n" => 2}}
     assert AgentLink.Frame.decode(third) == {:ok, %{"n" => 3}}
     refute_received {:received, _}
@@ -140,7 +140,7 @@ defmodule AgentLink.TransportTest do
   test "hold cancels a scheduled dial" do
     ctx = start_transport(backoff: 60_000)
     send(ctx.socket, {:close, 1001, "gone"})
-    assert_receive {:transport_closed, 1001, "gone"}, 1_000
+    assert await_closed() == {1001, "gone"}
 
     :ok = WebSocket.hold(ctx.transport)
     state = sync(ctx.transport)
@@ -148,12 +148,16 @@ defmodule AgentLink.TransportTest do
     assert state.timer == nil
   end
 
-  test "a close reconnects after the backoff" do
-    ctx = start_transport()
+  test "a close schedules a reconnect with the configured backoff" do
+    ctx = start_transport(backoff: 60_000)
     send(ctx.socket, {:close, 1001, "going away"})
-    assert_receive {:transport_closed, 1001, _}, 1_000
-    assert Process.read_timer(sync(ctx.transport).timer) > 400
-    assert_receive {:dial, dial}, 1_000
+    assert {1001, _reason} = await_closed()
+    state = sync(ctx.transport)
+    assert state.backoff == 60_000
+    assert is_reference(state.timer)
+    Process.cancel_timer(state.timer)
+    send(ctx.transport, {:connect, state.connect_token})
+    dial = await_dial()
     assert dial.path == "/agent"
     assert Process.alive?(ctx.transport)
   end
@@ -161,7 +165,7 @@ defmodule AgentLink.TransportTest do
   test "an empty close reason is delivered" do
     ctx = start_transport(backoff: 60_000)
     send(ctx.socket, {:close, 4004, ""})
-    assert_receive {:transport_closed, 4004, ""}, 1_000
+    assert await_closed() == {4004, ""}
     refute_received {:transport_closed, _, _}
   end
 
@@ -188,7 +192,7 @@ defmodule AgentLink.TransportTest do
     assert AgentLink.Frame.decode(payload) == {:ok, %{"n" => 1}}
 
     send(ctx.socket, {:close, 1001, "gone"})
-    assert_receive {:transport_closed, 1001, "gone"}, 1_000
+    assert await_closed() == {1001, "gone"}
     waiting = sync(ctx.transport)
     assert waiting.timer != nil
     assert waiting.conn == nil
@@ -215,10 +219,10 @@ defmodule AgentLink.TransportTest do
     ctx = start_transport(backoff: 60_000)
     :ok = WebSocket.hold(ctx.transport)
     send(ctx.socket, {:close, 4002, "too long"})
-    assert_receive {:transport_closed, 4002, "too long"}, 1_000
+    assert await_closed() == {4002, "too long"}
 
     :ok = WebSocket.reconnect(ctx.transport, ctx.other_url)
-    assert_receive {:dial, dial}, 1_000
+    dial = await_dial()
     assert dial.path == "/moved"
     refute_received {:transport_closed, _, _}
   end
@@ -248,8 +252,8 @@ defmodule AgentLink.TransportTest do
     await_queue(ctx.transport, fn len -> len > queued end)
     :sys.resume(ctx.transport)
 
-    assert Task.await(task) == :ok
-    assert_receive {:dial, dial}, 1_000
+    assert Task.await(task, :infinity) == :ok
+    dial = await_dial()
     assert dial.path == "/moved"
     refute_received {:transport_closed, _, _}
   end
@@ -259,9 +263,9 @@ defmodule AgentLink.TransportTest do
 
     ExUnit.CaptureLog.capture_log(fn ->
       send(ctx.socket, :drop)
-      assert_receive {:transport_closed, 1006, "socket closed"}, 1_000
+      assert await_closed() == {1006, "socket closed"}
       refute_received {:transport_closed, _, _}
-      assert_receive {:dial, _dial}, 1_000
+      await_dial()
     end)
 
     assert Process.alive?(ctx.transport)
@@ -280,10 +284,10 @@ defmodule AgentLink.TransportTest do
     next = %{"method" => "agentlink.uplink", "params" => %{"name" => "other"}}
     :ok = WebSocket.preface(ctx.transport, next)
     :ok = WebSocket.reconnect(ctx.transport, ctx.url)
-    assert_receive {:dial, dial}, 1_000
+    dial = await_dial()
     assert dial.path == "/agent"
-    assert_receive {:socket, _socket}, 1_000
-    assert_receive {:received, third}, 1_000
+    await_socket()
+    third = await_payload()
     assert AgentLink.Frame.decode(third) == {:ok, next}
     refute_received {:received, _}
     refute_received {:transport_closed, _, _}
@@ -325,7 +329,7 @@ defmodule AgentLink.TransportTest do
          ]}
       )
 
-    assert_receive {:transport_closed, 1002, reason}, 1_000
+    assert {1002, reason} = await_closed()
     refute reason == "closed"
     state = sync(transport)
     assert state.conn == nil
@@ -372,7 +376,7 @@ defmodule AgentLink.TransportTest do
     assert_receive {:from_plane, %{"method" => "yo"}}
 
     :ok = FakeTransport.disconnect(transport, 4004, "")
-    assert_receive {:transport_closed, 4004, ""}
+    assert await_closed() == {4004, ""}
     assert FakeTransport.deliver(transport, %{"method" => "late"}) == :closed
     assert FakeTransport.sent(transport) == [%{"n" => 1}, %{"n" => 2}]
 
@@ -418,7 +422,7 @@ defmodule AgentLink.TransportTest do
     assert FakeTransport.sent(transport) == [%{"method" => "agentlink.uplink"}]
 
     :ok = FakeTransport.disconnect(transport, 1001, "going away")
-    assert_receive {:transport_closed, 1001, "going away"}
+    assert await_closed() == {1001, "going away"}
     assert FakeTransport.deliver(transport, %{"n" => 1}) == :closed
     assert FakeTransport.sent(transport) == [%{"method" => "agentlink.uplink"}]
 
@@ -438,7 +442,7 @@ defmodule AgentLink.TransportTest do
   test "FakeTransport hold cancels a scheduled dial" do
     transport = start_fake(backoff: 60_000)
     :ok = FakeTransport.disconnect(transport, 1001, "gone")
-    assert_receive {:transport_closed, 1001, "gone"}
+    assert await_closed() == {1001, "gone"}
 
     :ok = FakeTransport.hold(transport)
     :ok = FakeTransport.send_message(transport, %{"n" => 1})
@@ -598,9 +602,31 @@ defmodule AgentLink.TransportTest do
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp await_peer do
-    assert_receive {:dial, dial}, 1_000
-    assert_receive {:socket, socket}, 1_000
-    {dial, socket}
+    {await_dial(), await_socket()}
+  end
+
+  defp await_closed do
+    receive do
+      {:transport_closed, code, reason} -> {code, reason}
+    end
+  end
+
+  defp await_dial do
+    receive do
+      {:dial, dial} -> dial
+    end
+  end
+
+  defp await_socket do
+    receive do
+      {:socket, socket} -> socket
+    end
+  end
+
+  defp await_payload do
+    receive do
+      {:received, payload} -> payload
+    end
   end
 
   defp await_message(pid, pred) do

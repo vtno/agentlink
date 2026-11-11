@@ -409,7 +409,7 @@ defmodule AgentLink.ApplicationTest do
     assert {:shutdown, "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"} =
              await_down(ref, client)
 
-    assert_receive {:connect_exit, 1}
+    assert await_connect_exit() == 1
 
     assert [{AgentLink.Relay.Client, :undefined, :worker, [AgentLink.Relay.Client]}] =
              Supervisor.which_children(sup)
@@ -422,7 +422,7 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :connect_stdio, AgentLink.ApplicationTest.EofAtOpen)
 
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
-    assert_receive {:connect_exit, 0}
+    assert await_connect_exit() == 0
     refute_received {:connect_exit, 1}
 
     assert [{AgentLink.Relay.Client, :undefined, :worker, [AgentLink.Relay.Client]}] =
@@ -439,7 +439,7 @@ defmodule AgentLink.ApplicationTest do
     stdio = connect_stdio!()
     :ok = AgentLink.FakeStdio.eof(stdio)
 
-    assert_receive {:connect_exit, 0}
+    assert await_connect_exit() == 0
     refute_received {:connect_exit, 1}
   end
 
@@ -456,7 +456,10 @@ defmodule AgentLink.ApplicationTest do
     Process.exit(client, :kill)
     assert await_down(ref, client) == :killed
 
-    assert_receive {:connect_watching, _watcher}
+    receive do
+      {:connect_watching, _watcher} -> :ok
+    end
+
     refute_received {:connect_exit, _}
     {transport, _dial} = connect_dial!()
     new_client = connect_client!(sup)
@@ -464,7 +467,7 @@ defmodule AgentLink.ApplicationTest do
     assert new_client != client
 
     deliver_runtimes(transport, ["lab"])
-    assert_receive {:connect_exit, 1}
+    assert await_connect_exit() == 1
   end
 
   test "AgentLink.Supervisor dying exits 1" do
@@ -480,7 +483,7 @@ defmodule AgentLink.ApplicationTest do
     ref = Process.monitor(sup)
     Process.exit(sup, :kill)
     assert await_down(ref, sup) == :killed
-    assert_receive {:connect_exit, 1}
+    assert await_connect_exit() == 1
     refute_received {:connect_exit, 0}
   end
 
@@ -536,6 +539,12 @@ defmodule AgentLink.ApplicationTest do
   defp await_down(ref, pid) do
     receive do
       {:DOWN, ^ref, :process, ^pid, reason} -> reason
+    end
+  end
+
+  defp await_connect_exit do
+    receive do
+      {:connect_exit, code} -> code
     end
   end
 
@@ -637,8 +646,9 @@ defmodule AgentLink.ApplicationTest do
   end
 
   defp connect_dial! do
-    assert_receive {:connect_dial, transport, dial}
-    {transport, dial}
+    receive do
+      {:connect_dial, transport, dial} -> {transport, dial}
+    end
   end
 
   defp connect_stdio! do

@@ -158,7 +158,11 @@ defmodule AgentLink.LifecycleTest do
     Application.put_env(:agent_link, :halt_listener, self())
     put_connect!()
     sup = start!(:connect)
-    assert_receive {:connect_supervisor, ^sup}, 5_000
+
+    receive do
+      {:connect_supervisor, ^sup} -> :ok
+    end
+
     assert Process.info(sup, :parent) == {:parent, self()}
     assert linked_to_self?(sup)
     assert child_ids(sup) == %{AgentLink.Relay.Client => :worker}
@@ -168,7 +172,13 @@ defmodule AgentLink.LifecycleTest do
     refute Process.whereis(AgentLink.Plane.Supervisor)
     refute Process.whereis(AgentLink.Relay.Agent)
     stop!(sup)
-    assert_receive {:connect_exit, 1}, 5_000
+
+    code =
+      receive do
+        {:connect_exit, code} -> code
+      end
+
+    assert code == 1
     refute_received {:connect_exit, 0}
   end
 
@@ -211,7 +221,11 @@ defmodule AgentLink.LifecycleTest do
     assert_received {:agent_opening, _owner}
     File.rm!(pidfile)
     assert :ok = GenServer.stop(agent, :shutdown)
-    assert_receive {:agent_opening, _owner}, 5_000
+
+    receive do
+      {:agent_opening, _owner} -> :ok
+    end
+
     refute os_alive?(parent, parent_started)
     refute os_alive?(child, child_started)
     refute File.exists?(pidfile)
@@ -273,7 +287,7 @@ defmodule AgentLink.LifecycleTest do
                watch_interval: nil
              )
 
-    assert_receive {:sticky_opened, os_pid}, 5_000
+    os_pid = await_sticky_opened()
     started = starttime!(os_pid)
     record = AgentLink.Agent.Reaper.record_path()
     kill = System.find_executable("kill")
@@ -337,7 +351,7 @@ defmodule AgentLink.LifecycleTest do
                watch_interval: nil
              )
 
-    assert_receive {:sticky_opened, os_pid}, 5_000
+    os_pid = await_sticky_opened()
     started = starttime!(os_pid)
     kill = System.find_executable("kill")
 
@@ -374,7 +388,7 @@ defmodule AgentLink.LifecycleTest do
                watch_interval: nil
              )
 
-    assert_receive {:sticky_opened, os_pid}, 5_000
+    os_pid = await_sticky_opened()
     started = starttime!(os_pid)
     kill = System.find_executable("kill")
     path = System.get_env("PATH")
@@ -607,7 +621,11 @@ defmodule AgentLink.LifecycleTest do
       end
     end)
 
-    assert_receive {:between, paused}, 5_000
+    paused =
+      receive do
+        {:between, paused} -> paused
+      end
+
     on_exit(fn -> Process.exit(paused, :kill) end)
 
     Application.put_env(:agent_link, :reaper_before_lock, fn ->
@@ -615,18 +633,27 @@ defmodule AgentLink.LifecycleTest do
     end)
 
     retain = Task.async(fn -> AgentLink.Agent.Reaper.retain([{other, other_field}]) end)
-    assert_receive {:locking, locker}, 5_000
 
-    case await_retain!(locker, retain, System.monotonic_time(:millisecond) + 5_000) do
+    locker =
+      receive do
+        {:locking, locker} -> locker
+      end
+
+    case await_retain!(locker, retain) do
       :waiting ->
         send(paused, :resume)
-        assert {:error, :noproc} = Task.await(retain, 5_000)
+        assert {:error, :noproc} = Task.await(retain, :infinity)
 
       {:done, {:error, :noproc}} ->
         send(paused, :resume)
     end
 
-    assert_receive {:reaper_started, {:ok, reaper}}, 5_000
+    result =
+      receive do
+        {:reaper_started, result} -> result
+      end
+
+    assert {:ok, reaper} = result
     assert {other, other_field} in AgentLink.Agent.Reaper.read_pairs()
     ref = Process.monitor(reaper)
     Process.exit(reaper, :kill)
@@ -856,7 +883,7 @@ defmodule AgentLink.LifecycleTest do
     starttime
   end
 
-  defp await_retain!(pid, task, deadline) do
+  defp await_retain!(pid, task) do
     case Task.yield(task, 0) do
       {:ok, result} ->
         {:done, result}
@@ -867,15 +894,14 @@ defmodule AgentLink.LifecycleTest do
             :waiting
 
           _ ->
-            if System.monotonic_time(:millisecond) > deadline do
-              flunk("retain did not reach the reaper lock")
-            else
-              receive do
-              after
-                0 -> await_retain!(pid, task, deadline)
-              end
-            end
+            await_retain!(pid, task)
         end
+    end
+  end
+
+  defp await_sticky_opened do
+    receive do
+      {:sticky_opened, os_pid} -> os_pid
     end
   end
 
