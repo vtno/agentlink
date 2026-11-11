@@ -75,6 +75,48 @@ jobs:
           set -o pipefail
           release/bin/agentlink --help | grep -F 'agentlink plane'
           release/bin/agentlink start --help | grep -F 'agentlink plane'
+      - name: Start and stop the plane
+        timeout-minutes: 2
+        run: |
+          python3 - <<'PY'
+          import os
+          import signal
+          import socket
+          import subprocess
+
+          with socket.socket() as sock:
+              sock.bind(('127.0.0.1', 0))
+              port = sock.getsockname()[1]
+
+          process = subprocess.Popen(
+              ['release/bin/agentlink', 'plane', '--port', str(port), '--token', 'ci-smoke'],
+              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+              start_new_session=True,
+          )
+          try:
+              for line in process.stdout:
+                  print(line, end='', flush=True)
+                  if 'Running AgentLink.Router with Bandit' in line and f'127.0.0.1:{port}' in line:
+                      break
+              else:
+                  raise RuntimeError('Plane exited before the listener started')
+
+              os.killpg(process.pid, signal.SIGTERM)
+              if process.wait() != 0:
+                  raise RuntimeError('Plane did not exit cleanly')
+              try:
+                  os.killpg(process.pid, 0)
+              except ProcessLookupError:
+                  pass
+              else:
+                  raise RuntimeError('Plane process group still exists')
+          finally:
+              try:
+                  os.killpg(process.pid, signal.SIGKILL)
+              except ProcessLookupError:
+                  pass
+              process.wait()
+          PY
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: smoke
