@@ -1,6 +1,6 @@
 defmodule AgentLink.Agent.Reaper do
   @moduledoc """
-  It holds the OS processes `close/1` could not stop.
+  `AgentLink.Agent.Reaper` holds the OS processes `close/1` could not stop.
 
   See [Reaper](../../../docs/agent.md#reaper).
   """
