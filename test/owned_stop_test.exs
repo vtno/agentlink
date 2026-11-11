@@ -34,9 +34,14 @@ defmodule AgentLink.OwnedStopTest do
   test "stop kills the child after its port owner exits" do
     unrelated = start_unrelated!()
     fixture = start_owner!()
+    port_ref = Port.monitor(fixture.port)
 
     send(fixture.owner, :exit)
     await_exit!(fixture.owner)
+
+    receive do
+      {:DOWN, ^port_ref, :port, _, _reason} -> :ok
+    end
 
     assert Port.info(fixture.port, :os_pid) == nil
     assert running?(fixture.child)
