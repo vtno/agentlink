@@ -100,8 +100,6 @@ probe_reply() ->
         json_string(Cwd),
         ",\"probe\":",
         json_env("AGENTLINK_PROCESS_PROBE"),
-        ",\"autoupdate\":",
-        json_env("OPENCODE_DISABLE_AUTOUPDATE"),
         ",\"args\":",
         json_array(Args),
         "}"

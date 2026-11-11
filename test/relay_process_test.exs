@@ -28,7 +28,6 @@ defmodule AgentLink.Relay.ProcessTest do
       link_path: Application.get_env(:agent_link, :link_path),
       workdir: Application.get_env(:agent_link, :workdir),
       probe: System.get_env("AGENTLINK_PROCESS_PROBE"),
-      autoupdate: System.get_env("OPENCODE_DISABLE_AUTOUPDATE"),
       stamp: System.get_env("AGENTLINK_FIXTURE_STAMP"),
       ready: System.get_env("AGENTLINK_FIXTURE_READY"),
       stderr_path: System.get_env("AGENTLINK_STDERR_PATH"),
@@ -54,7 +53,6 @@ defmodule AgentLink.Relay.ProcessTest do
     Application.put_env(:agent_link, :link_path, link)
     Application.put_env(:agent_link, :workdir, workdir)
     System.put_env("AGENTLINK_PROCESS_PROBE", "probe-token")
-    System.delete_env("OPENCODE_DISABLE_AUTOUPDATE")
     System.put_env("AGENTLINK_FIXTURE_STAMP", stamp)
     System.put_env("AGENTLINK_FIXTURE_READY", ready)
     System.put_env("AGENTLINK_STDERR_PATH", stderr_path)
@@ -131,7 +129,6 @@ defmodule AgentLink.Relay.ProcessTest do
     assert probe["args"] == @plain
     assert probe["cwd"] == workdir
     assert probe["probe"] == "probe-token"
-    assert probe["autoupdate"] == nil
     assert os_pid == port_os_pid()
 
     deliver!(%{"op" => "stderr"})
@@ -419,7 +416,6 @@ defmodule AgentLink.Relay.ProcessTest do
     AgentLink.TestHelpers.restore(:workdir, previous.workdir)
     AgentLink.TestHelpers.restore(:reaper_dir, previous.reaper_dir)
     restore_system("AGENTLINK_PROCESS_PROBE", previous.probe)
-    restore_system("OPENCODE_DISABLE_AUTOUPDATE", previous.autoupdate)
     restore_system("AGENTLINK_FIXTURE_STAMP", previous.stamp)
     restore_system("AGENTLINK_FIXTURE_READY", previous.ready)
     restore_system("AGENTLINK_STDERR_PATH", previous.stderr_path)
