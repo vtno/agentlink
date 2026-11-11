@@ -70,7 +70,7 @@ defmodule AgentLink.Plane.SessionTest do
 
     Process.exit(ada_client, :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^ada, :normal}
+    assert AgentLink.TestHelpers.await_down(ref, ada) == :normal
     assert :ok = Session.broadcast(session, user("after"))
     assert Process.alive?(session)
     assert FakeSubscribe.notified(bea) == [message("after")]

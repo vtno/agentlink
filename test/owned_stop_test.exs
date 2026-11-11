@@ -204,15 +204,24 @@ defmodule AgentLink.OwnedStopTest do
       end
 
     on_exit(fn ->
-      release(%{owner: owner, owned: owned, dir: dir})
+      release(%{owner: owner, port: port, owned: owned, dir: dir, child: child})
     end)
 
     %{port: port, owner: owner, launcher: launcher, child: child, owned: owned, dir: dir}
   end
 
   defp release(fixture) do
-    if is_pid(fixture.owner) and Process.alive?(fixture.owner), do: send(fixture.owner, :exit)
+    ref = Process.monitor(fixture.owner)
+    port_ref = Port.monitor(fixture.port)
+    send(fixture.owner, :exit)
+    AgentLink.TestHelpers.await_down(ref, fixture.owner)
+
+    receive do
+      {:DOWN, ^port_ref, :port, _, _reason} -> :ok
+    end
+
     AgentLink.OwnedStop.stop(fixture.owned)
+    await_dead!(fixture.child)
     File.rm_rf(fixture.dir)
   end
 

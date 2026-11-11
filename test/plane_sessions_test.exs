@@ -141,7 +141,7 @@ defmodule AgentLink.Plane.SessionsTest do
 
     Process.exit(ada_client, :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^ada, :normal}, 5_000
+    assert AgentLink.TestHelpers.await_down(ref, ada) == :normal
     assert :ok = Sessions.leave("lab", "ses", "ada")
     assert :ok = Sessions.broadcast("lab", "ses", user("later"))
     assert notified("bea", "ses") == [message("ses", user("later"))]
@@ -161,8 +161,8 @@ defmodule AgentLink.Plane.SessionsTest do
 
     Process.exit(ada_client, :kill)
 
-    assert_receive {:DOWN, ^one_ref, :process, ^one, :normal}, 5_000
-    assert_receive {:DOWN, ^two_ref, :process, ^two, :normal}, 5_000
+    assert AgentLink.TestHelpers.await_down(one_ref, one) == :normal
+    assert AgentLink.TestHelpers.await_down(two_ref, two) == :normal
 
     assert :ok = Sessions.leave("lab", "one", "ada")
     refute Map.has_key?(:sys.get_state(Sessions).clients["ada"], {"lab", "one"})
@@ -345,7 +345,7 @@ defmodule AgentLink.Plane.SessionsTest do
     subscription = subscription("ada", "ses-a")
     ref = Process.monitor(subscription)
     Process.exit(ada, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^subscription, :normal}, 5_000
+    assert AgentLink.TestHelpers.await_down(ref, subscription) == :normal
     assert Process.whereis(Sessions) == directory
     assert {:ok, replay} = Sessions.load("lab", "ses-b", "bea", bea)
     assert replay == [message("ses-b", user("kept"))]
@@ -359,7 +359,7 @@ defmodule AgentLink.Plane.SessionsTest do
     crashed = session("ses-a")
     ref = Process.monitor(crashed)
     send(crashed, :lifecycle_crash)
-    assert_receive {:DOWN, ^ref, :process, ^crashed, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, crashed)
     assert Process.whereis(Sessions) == directory
     assert {:error, :unknown} = Sessions.load("lab", "ses-a", "ada", self())
     assert {:ok, replay} = Sessions.load("lab", "ses-b", "bea", self())
@@ -373,7 +373,7 @@ defmodule AgentLink.Plane.SessionsTest do
     subscription = hd(subscriptions("ses"))
     ref = Process.monitor(subscription)
     send(subscription, :lifecycle_crash)
-    assert_receive {:DOWN, ^ref, :process, ^subscription, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, subscription)
     assert Process.alive?(session)
     assert AgentLink.Plane.Session.replay(session) == [message("ses", user("kept"))]
   end
@@ -383,14 +383,14 @@ defmodule AgentLink.Plane.SessionsTest do
     session = session("ses")
     ref = Process.monitor(session)
     stop_supervised!(Sessions)
-    assert_receive {:DOWN, ^ref, :process, ^session, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, session)
   end
 
   test "an unexpected message crashes the directory" do
     directory = Process.whereis(Sessions)
     ref = Process.monitor(directory)
     send(directory, :lifecycle_crash)
-    assert_receive {:DOWN, ^ref, :process, ^directory, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, directory)
   end
 
   test "a real subscription crash leaves the session" do
@@ -402,7 +402,7 @@ defmodule AgentLink.Plane.SessionsTest do
     subscription = hd(subscriptions("ses"))
     ref = Process.monitor(subscription)
     send(subscription, :lifecycle_crash)
-    assert_receive {:DOWN, ^ref, :process, ^subscription, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, subscription)
     assert Process.alive?(session)
     assert AgentLink.Plane.Session.replay(session) == [message("ses", user("kept"))]
   end

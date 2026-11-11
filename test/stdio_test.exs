@@ -13,7 +13,12 @@ defmodule AgentLink.StdioTest do
     assert Console.close(self()) == :ok
 
     port = Port.open({:spawn_executable, "/bin/true"}, [:binary, :exit_status])
-    Port.close(port)
+    ref = Port.monitor(port)
+
+    receive do
+      {:DOWN, ^ref, :port, ^port, _reason} -> :ok
+    end
+
     assert Console.write(port, "x") == :closed
     assert Console.close(port) == :ok
   end

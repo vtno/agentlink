@@ -11,7 +11,7 @@ defmodule AgentLink.LifecycleTest do
   The replacement test checks those start times when the new relay calls
   `open/5`. The sticky test keeps a process alive through `close/1` and
   hides `kill`, so the next start fails while that start time still matches.
-  `await_accept!/1` gives up after `5000` milliseconds.
+  Listener checks wait for socket state, bounded by ExUnit's test timeout.
   """
 
   use ExUnit.Case, async: false
@@ -59,11 +59,7 @@ defmodule AgentLink.LifecycleTest do
           ref = Process.monitor(pid)
           Process.exit(pid, :kill)
 
-          receive do
-            {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-          after
-            1_000 -> :ok
-          end
+          AgentLink.TestHelpers.await_down(ref, pid)
         end
       end
 
@@ -98,16 +94,18 @@ defmodule AgentLink.LifecycleTest do
   end
 
   test "stopping the plane supervisor restarts the listener, and stopping the top supervisor closes it" do
-    port = 18_422
-    sup = start!(:plane, port: port)
+    sup = start!(:plane, port: 0)
     plane = Process.whereis(AgentLink.Plane.Supervisor)
     bandit = child_pid(plane, Bandit)
+    {:ok, {_, old_port}} = ThousandIsland.listener_info(bandit)
     ref = Process.monitor(bandit)
     assert :ok = Supervisor.stop(plane)
-    assert_receive {:DOWN, ^ref, :process, ^bandit, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, bandit)
     new_plane = await_named(AgentLink.Plane.Supervisor, plane)
     new_bandit = child_pid(new_plane, Bandit)
     assert new_bandit != bandit
+    {:ok, {_, port}} = ThousandIsland.listener_info(new_bandit)
+    if old_port != port, do: await_closed!(old_port)
     await_accept!(port)
     stop!(sup)
     await_closed!(port)
@@ -186,7 +184,7 @@ defmodule AgentLink.LifecycleTest do
     child_started = starttime!(child)
     File.rm!(pidfile)
     assert :ok = GenServer.stop(agent, :shutdown)
-    assert_receive {:DOWN, ^ref, :process, ^agent, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, agent)
     await_gone!(parent, parent_started)
     await_gone!(child, child_started)
     new_agent = await_named(AgentLink.Relay.Agent, agent)
@@ -255,7 +253,7 @@ defmodule AgentLink.LifecycleTest do
     System.put_env("PATH", empty)
     ref = Process.monitor(sup)
     assert :ok = GenServer.stop(Process.whereis(AgentLink.Relay.Agent), :shutdown)
-    assert_receive {:DOWN, ^ref, :process, ^sup, _reason}, 5_000
+    AgentLink.TestHelpers.await_down(ref, sup)
     refute Process.whereis(AgentLink.Relay.Agent)
     assert os_alive?(os_pid, started)
     refute_received {:sticky_opened, _}
@@ -297,7 +295,7 @@ defmodule AgentLink.LifecycleTest do
     stop_named(AgentLink.Uplink)
     ref = Process.monitor(reaper)
     Process.exit(reaper, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^reaper, :killed}, 5_000
+    assert AgentLink.TestHelpers.await_down(ref, reaper) == :killed
     assert File.regular?(record)
     refute Process.whereis(AgentLink.Agent.Reaper)
     assert {:ok, _reaper} = AgentLink.Agent.Reaper.start_link()
@@ -395,7 +393,7 @@ defmodule AgentLink.LifecycleTest do
 
     ref = Process.monitor(reaper)
     Process.exit(reaper, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^reaper, :killed}, 5_000
+    assert AgentLink.TestHelpers.await_down(ref, reaper) == :killed
     assert :ok = GenServer.stop(AgentLink.Relay.Agent, :shutdown)
     stop_named(AgentLink.Uplink)
     assert {os_pid, field_starttime!(os_pid)} in AgentLink.Agent.Reaper.read_pairs()
@@ -632,7 +630,7 @@ defmodule AgentLink.LifecycleTest do
     assert {other, other_field} in AgentLink.Agent.Reaper.read_pairs()
     ref = Process.monitor(reaper)
     Process.exit(reaper, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^reaper, :killed}, 5_000
+    assert AgentLink.TestHelpers.await_down(ref, reaper) == :killed
     send(starter, :finish)
     Application.delete_env(:agent_link, :reaper_after_load)
     Application.delete_env(:agent_link, :reaper_before_lock)
@@ -702,7 +700,7 @@ defmodule AgentLink.LifecycleTest do
   defp stop!(sup) do
     ref = Process.monitor(sup)
     Process.exit(sup, :shutdown)
-    assert_receive {:DOWN, ^ref, :process, ^sup, :shutdown}, 5_000
+    assert AgentLink.TestHelpers.await_down(ref, sup) == :shutdown
   end
 
   defp child_ids(sup) do
@@ -791,26 +789,8 @@ defmodule AgentLink.LifecycleTest do
     missing_link()
   end
 
-  @accept_deadline_ms 5_000
-
   defp await_accept!(port) do
-    await_accept!(port, System.monotonic_time(:millisecond))
-  end
-
-  defp await_accept!(port, started) do
-    cond do
-      accept?(port) ->
-        :ok
-
-      System.monotonic_time(:millisecond) - started >= @accept_deadline_ms ->
-        flunk("127.0.0.1:#{port} did not accept within #{@accept_deadline_ms}ms")
-
-      true ->
-        receive do
-        after
-          0 -> await_accept!(port, started)
-        end
-    end
+    AgentLink.TestHelpers.await(fn -> accept?(port) end)
   end
 
   defp accept?(port) do
@@ -925,11 +905,7 @@ defmodule AgentLink.LifecycleTest do
       ref = Process.monitor(pid)
       Process.exit(pid, :kill)
 
-      receive do
-        {:DOWN, ^ref, :process, ^pid, _} -> :ok
-      after
-        1_000 -> :ok
-      end
+      AgentLink.TestHelpers.await_down(ref, pid)
     else
       :ok
     end

@@ -618,7 +618,7 @@ defmodule AgentLink.PlaneTest do
     send(AgentLink.Plane, {:DOWN, make_ref(), :process, self(), :normal})
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert AgentLink.TestHelpers.await_down(ref, pid) == :killed
 
     AgentLink.Plane.agent_frame(
       "lab",
@@ -682,8 +682,8 @@ defmodule AgentLink.PlaneTest do
     pid = agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
-    Process.exit(pid, :kill)
-    Process.sleep(30)
+    AgentLink.TestHelpers.kill_and_wait(pid)
+    AgentLink.TestHelpers.await(fn -> AgentLink.Registry.pid("lab") == nil end)
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 2)
     assert %{"error" => %{"message" => "runtime is down"}} = reply!()
   end
@@ -1020,8 +1020,7 @@ defmodule AgentLink.PlaneTest do
     assert %{"method" => "session/update"} = client_reply!(pid)
     assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
 
-    Process.exit(pid, :kill)
-    Process.sleep(30)
+    disconnect_client!(pid, id)
 
     AgentLink.Plane.agent_frame(
       "lab",
@@ -1377,16 +1376,11 @@ defmodule AgentLink.PlaneTest do
   defp disconnect_client!(pid, id) do
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
-    await_client_down!(id, System.monotonic_time(:millisecond) + 500)
-  end
+    assert AgentLink.TestHelpers.await_down(ref, pid) == :killed
 
-  defp await_client_down!(id, deadline) do
-    if Map.has_key?(:sys.get_state(AgentLink.Plane).clients, id) do
-      assert System.monotonic_time(:millisecond) < deadline, "plane did not process client DOWN"
-      Process.sleep(1)
-      await_client_down!(id, deadline)
-    end
+    AgentLink.TestHelpers.await(fn ->
+      not Map.has_key?(:sys.get_state(AgentLink.Plane).clients, id)
+    end)
   end
 
   defp agent!(name) do

@@ -172,12 +172,12 @@ defmodule AgentLink.ApplicationTest do
         Process.exit(pid, :kill)
 
         Enum.each(refs, fn {ref, child} ->
-          assert_receive {:DOWN, ^ref, :process, ^child, _reason}, 12_000
+          await_down(ref, child)
         end)
 
         if uplink = Process.whereis(AgentLink.Uplink) do
           ref = Process.monitor(uplink)
-          assert_receive {:DOWN, ^ref, :process, ^uplink, _reason}, 12_000
+          await_down(ref, uplink)
         end
       end
     end)
@@ -280,8 +280,7 @@ defmodule AgentLink.ApplicationTest do
 
   test "relay mode starts only the relay" do
     if pid = Process.whereis(AgentLink.Supervisor) do
-      Process.exit(pid, :kill)
-      Process.sleep(50)
+      Supervisor.stop(pid)
     end
 
     write_link()
@@ -525,7 +524,6 @@ defmodule AgentLink.ApplicationTest do
     supervisor_ref = Process.monitor(supervisor)
 
     crash_until_down(supervisor, supervisor_ref, 20)
-    Process.sleep(50)
     assert Process.alive?(Process.whereis(AgentLink.Plane))
     assert Process.alive?(Process.whereis(AgentLink.Registry))
     assert Process.alive?(Process.whereis(AgentLink.Plane.Supervisor))
@@ -543,8 +541,7 @@ defmodule AgentLink.ApplicationTest do
 
   defp start_all(port) do
     if pid = Process.whereis(AgentLink.Supervisor) do
-      Process.exit(pid, :kill)
-      Process.sleep(50)
+      Supervisor.stop(pid)
     end
 
     Application.put_env(:agent_link, :mode, :all)
@@ -568,10 +565,10 @@ defmodule AgentLink.ApplicationTest do
     crash_relay()
 
     receive do
-      {:DOWN, ^ref, :process, ^supervisor, _} -> :ok
-    after
-      200 ->
-        assert is_pid(wait_relay())
+      {:DOWN, ^ref, :process, ^supervisor, _} ->
+        :ok
+
+      {:agent_opened, _agent, _launch, _cwd} ->
         crash_until_down(supervisor, ref, attempts - 1)
     end
   end
@@ -582,22 +579,11 @@ defmodule AgentLink.ApplicationTest do
     pid = wait_relay()
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
+    await_down(ref, pid)
   end
 
-  defp wait_relay(attempts \\ 50) do
-    case Process.whereis(AgentLink.Relay.Agent) do
-      pid when is_pid(pid) ->
-        pid
-
-      nil when attempts > 0 ->
-        Process.sleep(20)
-        wait_relay(attempts - 1)
-
-      nil ->
-        flunk("agent relay did not start")
-    end
-  end
+  defp wait_relay,
+    do: AgentLink.TestHelpers.await(fn -> Process.whereis(AgentLink.Relay.Agent) end)
 
   defp connect_root do
     path =

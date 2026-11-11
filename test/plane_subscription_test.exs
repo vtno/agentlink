@@ -80,7 +80,7 @@ defmodule AgentLink.Plane.SubscriptionTest do
 
     Process.exit(client, :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
+    assert AgentLink.TestHelpers.await_down(ref, pid) == :normal
     assert_received {:subscription_down, "client-1", "session-1"}
     refute Process.alive?(pid)
   end
@@ -92,7 +92,7 @@ defmodule AgentLink.Plane.SubscriptionTest do
 
     assert :ok = module.stop(pid)
     refute Process.alive?(pid)
-    assert_received {:DOWN, ^ref, :process, ^pid, :normal}
+    assert AgentLink.TestHelpers.await_down(ref, pid) == :normal
     refute_received {:subscription_down, _, _}
     assert Process.info(client, :messages) == {:messages, []}
     assert :ok = module.stop(pid)

@@ -604,31 +604,12 @@ defmodule AgentLink.TransportTest do
   end
 
   defp await_message(pid, pred) do
-    deadline = System.monotonic_time(:millisecond) + 1_000
-
-    Stream.repeatedly(fn -> mailbox(pid) end)
-    |> Enum.reduce_while(:timeout, fn
-      nil, _ ->
-        {:halt, :dead}
-
-      messages, _ ->
-        cond do
-          pred.(messages) ->
-            {:halt, :ok}
-
-          System.monotonic_time(:millisecond) >= deadline ->
-            {:halt, :timeout}
-
-          true ->
-            Process.sleep(1)
-            {:cont, :timeout}
-        end
+    AgentLink.TestHelpers.await(fn ->
+      case mailbox(pid) do
+        nil -> flunk("transport exited while waiting")
+        messages -> pred.(messages)
+      end
     end)
-    |> case do
-      :ok -> :ok
-      :dead -> flunk("transport exited while waiting")
-      :timeout -> flunk("timed out waiting for the reconnect call")
-    end
   end
 
   defp mailbox(pid) do
@@ -639,31 +620,12 @@ defmodule AgentLink.TransportTest do
   end
 
   defp await_queue(pid, pred) do
-    deadline = System.monotonic_time(:millisecond) + 1_000
-
-    Stream.repeatedly(fn -> queue_len(pid) end)
-    |> Enum.reduce_while(:timeout, fn
-      nil, _ ->
-        {:halt, :dead}
-
-      len, _ ->
-        cond do
-          pred.(len) ->
-            {:halt, :ok}
-
-          System.monotonic_time(:millisecond) >= deadline ->
-            {:halt, :timeout}
-
-          true ->
-            Process.sleep(1)
-            {:cont, :timeout}
-        end
+    AgentLink.TestHelpers.await(fn ->
+      case queue_len(pid) do
+        nil -> flunk("transport exited while waiting")
+        len -> pred.(len)
+      end
     end)
-    |> case do
-      :ok -> :ok
-      :dead -> flunk("transport exited while waiting")
-      :timeout -> flunk("timed out waiting for the transport mailbox")
-    end
   end
 
   defp queue_len(pid) do

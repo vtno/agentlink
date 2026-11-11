@@ -376,8 +376,8 @@ defmodule AgentLink.Relay.ClientTest do
     ref = Process.monitor(client)
     assert :ok = FakeStdio.eof(stdio)
 
-    assert_receive {:DOWN, ^ref, :process, ^client, {:shutdown, "stdio closed"}}
-    assert_receive {:DOWN, ^stdio_ref, :process, ^stdio, :normal}
+    assert AgentLink.TestHelpers.await_down(ref, client) == {:shutdown, "stdio closed"}
+    assert AgentLink.TestHelpers.await_down(stdio_ref, stdio) == :normal
     assert_not_restarted(sup)
 
     {_sup, client} = supervise()
@@ -385,7 +385,7 @@ defmodule AgentLink.Relay.ClientTest do
     ref = Process.monitor(client)
     FakeStdio.refuse(:sys.get_state(client).stdio_term)
     deliver_down(client, %{"jsonrpc" => "2.0", "method" => "session/update"})
-    assert_receive {:DOWN, ^ref, :process, ^client, {:shutdown, "stdio closed"}}
+    assert AgentLink.TestHelpers.await_down(ref, client) == {:shutdown, "stdio closed"}
   end
 
   test "a plane close after runtime/select holds the socket and stops" do
@@ -402,7 +402,7 @@ defmodule AgentLink.Relay.ClientTest do
 
     ref = Process.monitor(client)
     assert :ok = FakeTransport.disconnect(transport, 1006, "")
-    assert_receive {:DOWN, ^ref, :process, ^client, {:shutdown, "plane closed"}}
+    assert AgentLink.TestHelpers.await_down(ref, client) == {:shutdown, "plane closed"}
     assert_not_restarted(sup)
 
     socket = :sys.get_state(transport)
@@ -416,7 +416,7 @@ defmodule AgentLink.Relay.ClientTest do
     stdio = :sys.get_state(client).stdio_term
     ref = Process.monitor(stdio)
     GenServer.stop(client)
-    assert_receive {:DOWN, ^ref, :process, ^stdio, :normal}
+    assert AgentLink.TestHelpers.await_down(ref, stdio) == :normal
   end
 
   test "an unknown message is ignored" do
@@ -465,7 +465,7 @@ defmodule AgentLink.Relay.ClientTest do
     {sup, client} = supervise(opts)
     ref = Process.monitor(client)
     fun.(client)
-    assert_receive {:DOWN, ^ref, :process, ^client, {:shutdown, ^message}}
+    assert AgentLink.TestHelpers.await_down(ref, client) == {:shutdown, message}
     assert_not_restarted(sup)
   end
 
