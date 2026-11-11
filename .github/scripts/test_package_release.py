@@ -2,11 +2,17 @@ import json
 from pathlib import Path
 import tarfile
 import tempfile
+import threading
 import unittest
 import zipfile
 
 from package_release import inventory, package, swap_runtime
-from smoke_release import _windows_command
+from smoke_release import (
+    _children_from_ps_text,
+    _children_from_task_dir,
+    _windows_command,
+    consume_stdout,
+)
 
 
 class PackageTest(unittest.TestCase):
@@ -70,7 +76,10 @@ class PackageTest(unittest.TestCase):
             self.assertIn("erts-17.1/bin/erl.exe", files)
             self.assertIn("lib/agent_link-1/ebin/agent.beam", files)
             self.assertNotIn("erts-17.1/bin/erl.ini", files)
+            self.assertNotIn("runtime.json", files)
+            self.assertFalse(any(name.endswith("/runtime.json") for name in files))
         self.assertTrue((self.base / "erts-17.1/bin/linux-only").exists())
+        self.assertTrue((self.base / "runtime.json").is_file())
 
     def test_windows_smoke_quotes_a_batch_path_containing_spaces(self):
         command = _windows_command(r"C:\Windows\System32\cmd.exe",
@@ -78,6 +87,62 @@ class PackageTest(unittest.TestCase):
                                    ("start", "--help"))
         self.assertEqual(command,
                          r'C:\Windows\System32\cmd.exe /d /s /c ""C:\agentlink smoke\release\bin\agentlink.bat" start --help"')
+
+
+class SmokeHelperTest(unittest.TestCase):
+    def test_proc_children_lists_only_that_task_directory(self):
+        root = Path(self._tmpdir())
+        task = root / "99" / "task"
+        self.write_children(task / "1", "10 11\n")
+        self.write_children(task / "2", "11 12")
+        self.assertEqual(_children_from_task_dir(task), [10, 11, 12])
+
+    def test_ps_children_keep_only_the_parent_pid(self):
+        text = "\n".join([
+            "  1  0",
+            "  20  7",
+            "  21  8",
+            "  22  7",
+            "  7  1",
+        ])
+        self.assertEqual(_children_from_ps_text(text, 7), [20, 22])
+
+    def test_stdout_reader_keeps_reading_after_the_listener_line(self):
+        lines = [
+            "Running AgentLink.Router with Bandit 127.0.0.1:9\n",
+            "shutdown-log\n",
+        ]
+        pending = iter(lines)
+        seen = []
+
+        class Stream:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                line = next(pending)
+                seen.append(line)
+                return line
+
+        found = threading.Event()
+        wake = threading.Event()
+        reader = threading.Thread(target=consume_stdout, args=(Stream(), 9, found, wake))
+        reader.start()
+        self.addCleanup(reader.join)
+        wake.wait()
+        self.assertTrue(found.is_set())
+        reader.join()
+        self.assertEqual(seen, lines)
+
+    def _tmpdir(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return tmp.name
+
+    @staticmethod
+    def write_children(directory, text):
+        directory.mkdir(parents=True)
+        (directory / "children").write_text(text)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,9 @@ def package(base, otp, target, output):
         release = Path(tmp) / "agentlink"
         shutil.copytree(base, release)
         swap_runtime(release, otp)
+        # The base artifact carries runtime.json so this step can find it.
+        # The published tar and zip do not.
+        (release / "runtime.json").unlink()
         if target.startswith("windows-"):
             archive = output / f"agentlink-{target}.zip"
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as handle:

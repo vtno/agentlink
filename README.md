@@ -72,7 +72,7 @@ _build/prod/rel/agentlink/
 
 `bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. On a release boot, the CLI keeps the words after the first bare `--`. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI then drops one leading `start` on Windows. A direct `plane`, `relay`, or `connect` does not set that variable. The Mix suite checks the script as text. The release workflow also runs both launchers and a plane startup and shutdown on native runners.
 
-The release workflow builds the Mix release once on Linux. Each target replaces ERTS and the matching OTP applications with the prebuilt runtime installed by `erlef/setup-beam`. Project and dependency code stays compiled once. The packager preserves Mix's relocatable `erl` script and removes the installation-specific `erl.ini`.
+The release workflow builds the Mix release once on Linux. Each target replaces ERTS and the matching OTP applications with the prebuilt runtime installed by `erlef/setup-beam`. Project and dependency code stays compiled once. The packager preserves Mix's relocatable `erl` script and removes the installation-specific `erl.ini`. The published archive does not include `runtime.json`.
 
 `.tool-versions` pins OTP and Elixir for both workflows. `.github/release-targets.json` defines the targets and their native runners once. Each matrix job packages its target, downloads the uploaded artifact, and smoke-tests it. Linux x86_64 and aarch64 and macOS x86_64 and arm64 use tarballs. Windows x86_64 uses a zip. A pushed `v*` tag publishes the archives and `SHA256SUMS` only after all matrix jobs pass. Manual runs and matching pull requests build and test without publishing.
 

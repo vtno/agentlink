@@ -8,6 +8,7 @@ import socket
 import subprocess
 import tarfile
 import tempfile
+import threading
 import zipfile
 
 
@@ -30,14 +31,90 @@ def _windows_command(comspec, binary, args):
 
 
 def unix_identity(pid):
-    stat = Path(f"/proc/{pid}/stat")
-    if stat.exists():
+    """Return `(pid, started)`, or `None` when that process is gone."""
+    proc = Path("/proc")
+    stat = proc / str(pid) / "stat"
+    if proc.is_dir():
+        if not stat.exists():
+            return None
         started = stat.read_text().rsplit(") ", 1)[1].split()[19]
-    else:
-        started = subprocess.check_output(["ps", "-p", str(pid), "-o", "lstart="], text=True).strip()
-        if not started:
-            raise RuntimeError("Plane exited before its creation time was read")
+        return pid, started
+    started = subprocess.check_output(["ps", "-p", str(pid), "-o", "lstart="], text=True).strip()
+    if not started:
+        return None
     return pid, started
+
+
+def child_pids(pid):
+    """Direct children of `pid`. Linux reads `/proc/<pid>/task/*/children`. macOS asks `ps` for pid and ppid only."""
+    task_dir = Path(f"/proc/{pid}/task")
+    if task_dir.is_dir():
+        return _children_from_task_dir(task_dir)
+    listing = subprocess.check_output(["ps", "-ax", "-o", "pid=,ppid="], text=True)
+    return _children_from_ps_text(listing, pid)
+
+
+def _children_from_task_dir(task_dir):
+    children = []
+    saw_file = False
+    for tid in sorted(task_dir.iterdir(), key=lambda path: path.name):
+        listing = tid / "children"
+        if not listing.is_file():
+            continue
+        saw_file = True
+        for part in listing.read_text().split():
+            child = int(part)
+            if child not in children:
+                children.append(child)
+    if not saw_file:
+        raise RuntimeError(f"{task_dir} has no children list")
+    return children
+
+
+def _children_from_ps_text(text, pid):
+    """Keep rows whose ppid is `pid`. The command column is not read."""
+    parent = str(pid)
+    children = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[1] != parent:
+            continue
+        child = int(fields[0])
+        if child not in children:
+            children.append(child)
+    return children
+
+
+def child_identities(pid):
+    identities = []
+    for child in child_pids(pid):
+        identity = unix_identity(child)
+        if identity is not None:
+            identities.append(identity)
+    return identities
+
+
+def signal_if_same(identity, sig):
+    if unix_identity(identity[0]) != identity:
+        return
+    try:
+        os.kill(identity[0], sig)
+    except ProcessLookupError:
+        pass
+
+
+def consume_stdout(stdout, port, found, wake):
+    """Read until EOF. `wake` is set on the listener line and again when the stream ends."""
+    try:
+        for line in stdout:
+            print(line.replace("ci-smoke", "[test-token]"), end="", flush=True)
+            if found.is_set():
+                continue
+            if "Running AgentLink.Router with Bandit" in line and f"127.0.0.1:{port}" in line:
+                found.set()
+                wake.set()
+    finally:
+        wake.set()
 
 
 class WindowsProcess:
@@ -103,6 +180,8 @@ def smoke(release, home):
     beam = None
     tracked = []
     identity = None
+    children = []
+    reader = None
     try:
         if os.name == "nt":
             epmd_port = free_port()
@@ -134,11 +213,19 @@ def smoke(release, home):
             tracked.append(WindowsProcess(process.pid))
         else:
             identity = unix_identity(process.pid)
-        for line in process.stdout:
-            print(line.replace("ci-smoke", "[test-token]"), end="", flush=True)
-            if "Running AgentLink.Router with Bandit" in line and f"127.0.0.1:{port}" in line:
-                break
-        else:
+            if identity is None:
+                raise RuntimeError("Plane exited before its creation time was read")
+        # One reader owns the pipe through shutdown. A full pipe would stall the VM.
+        found = threading.Event()
+        wake = threading.Event()
+        thread = threading.Thread(
+            target=consume_stdout, args=(process.stdout, port, found, wake),
+            name="agentlink-smoke-stdout",
+        )
+        thread.start()
+        reader = thread
+        wake.wait()
+        if not found.is_set():
             raise RuntimeError("Plane exited before its listener started")
 
         if os.name == "nt":
@@ -154,6 +241,7 @@ def smoke(release, home):
                 raise RuntimeError("Plane exited before SIGTERM")
             if unix_identity(process.pid) != identity:
                 raise RuntimeError("Plane process identity changed")
+            children = child_identities(process.pid)
             os.killpg(process.pid, signal.SIGTERM)
         if process.wait() != 0:
             raise RuntimeError("Plane launcher did not exit cleanly")
@@ -164,6 +252,9 @@ def smoke(release, home):
                 pass
             else:
                 raise RuntimeError("Plane process group still exists")
+            for child in children:
+                if unix_identity(child[0]) == child:
+                    raise RuntimeError(f"Plane child {child[0]} still exists")
         if epmd is not None:
             while True:
                 names = subprocess.run([str(epmd_bin), "-port", str(epmd_port), "-names"],
@@ -174,19 +265,25 @@ def smoke(release, home):
             if epmd.wait() != 0:
                 raise RuntimeError("epmd did not exit cleanly")
     finally:
-        for owned in reversed(tracked):
-            owned.close()
-        if process is not None and process.poll() is None:
-            if os.name == "nt":
-                process.kill()
-            else:
-                if unix_identity(process.pid) != identity:
-                    raise RuntimeError("Plane process identity changed during cleanup")
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
-        if epmd is not None and epmd.poll() is None:
-            epmd.kill()
-            epmd.wait()
+        try:
+            for owned in reversed(tracked):
+                owned.close()
+            if process is not None and process.poll() is None:
+                if os.name == "nt":
+                    process.kill()
+                else:
+                    if unix_identity(process.pid) != identity:
+                        raise RuntimeError("Plane process identity changed during cleanup")
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            for child in children:
+                signal_if_same(child, signal.SIGKILL)
+            if epmd is not None and epmd.poll() is None:
+                epmd.kill()
+                epmd.wait()
+        finally:
+            if reader is not None:
+                reader.join()
 
 
 def main():
