@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+          - target: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - target: macos-x86_64
+            runner: macos-15-intel
+          - target: macos-arm64
+            runner: macos-15
+          - target: windows-x86_64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: '29.1.2'
+          elixir-version: '1.20.4'
+          version-type: strict
+      - run: mix deps.get --check-locked
+      - run: mix release
+        env:
+          MIX_ENV: prod
+      - name: Archive Unix release
+        if: runner.os != 'Windows'
+        run: tar -C _build/prod/rel/agentlink -czf agentlink-${{ matrix.target }}.tar.gz .
+      - name: Archive Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path _build/prod/rel/agentlink/* -DestinationPath agentlink-${{ matrix.target }}.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agentlink-${{ matrix.target }}
+          path: agentlink-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    env:
+      RELEASE_DISTRIBUTION: none
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+          - target: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - target: macos-x86_64
+            runner: macos-15-intel
+          - target: macos-arm64
+            runner: macos-15
+          - target: windows-x86_64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agentlink-${{ matrix.target }}
+      - name: Unpack Unix release
+        if: runner.os != 'Windows'
+        run: mkdir release && tar -xzf agentlink-${{ matrix.target }}.tar.gz -C release
+      - name: Unpack Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Expand-Archive agentlink-${{ matrix.target }}.zip -DestinationPath release
+      - name: Check Unix launcher
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -o pipefail
+          release/bin/agentlink --help | grep -F 'agentlink plane'
+          release/bin/agentlink start --help | grep -F 'agentlink plane'
+      - name: Check Windows launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = & release/bin/agentlink.bat --help
+          if ($LASTEXITCODE -ne 0 -or "$output" -notmatch 'agentlink plane') { throw 'Direct launcher failed' }
+          $output = & release/bin/agentlink.bat start --help
+          if ($LASTEXITCODE -ne 0 -or "$output" -notmatch 'agentlink plane') { throw 'Start launcher failed' }
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: smoke
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agentlink-*
+          merge-multiple: true
+      - name: Publish release with checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum agentlink-*.tar.gz agentlink-*.zip > SHA256SUMS
+          gh release create "$TAG" agentlink-*.tar.gz agentlink-*.zip SHA256SUMS --verify-tag --title "$TAG" --generate-notes
