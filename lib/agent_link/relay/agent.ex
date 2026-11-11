@@ -20,7 +20,7 @@ defmodule AgentLink.Relay.Agent do
   in params is filled with `AgentLink.Paths.workdir()` before the message is
   written to the agent. An explicit `cwd` passes through unchanged.
 
-  `init/1` calls `reap/0` before `open/5`, and `child_spec/1` sizes the shutdown from `:agent_stop_timeout`.
+  `init/1` calls `AgentLink.Agent.Reaper.reap/0` before `open/5`, and `child_spec/1` sizes the shutdown from `:agent_stop_timeout`.
 
   See [Agent process](../../../docs/agent.md#agent-process) and [Reaper](../../../docs/agent.md#reaper).
   """
