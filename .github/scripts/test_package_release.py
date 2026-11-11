@@ -10,6 +10,8 @@ from package_release import inventory, package, swap_runtime
 from smoke_release import (
     _children_from_ps_text,
     _children_from_task_dir,
+    _identity_from_ps,
+    _identity_from_stat,
     _windows_command,
     consume_stdout,
 )
@@ -106,6 +108,55 @@ class SmokeHelperTest(unittest.TestCase):
             "  7  1",
         ])
         self.assertEqual(_children_from_ps_text(text, 7), [20, 22])
+
+    def test_ps_identity_is_none_when_ps_exits_or_prints_nothing(self):
+        class Ps:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+            def __call__(self, args, capture_output, text, check):
+                self.args = args
+                self.capture_output = capture_output
+                self.text = text
+                self.check = check
+                return self
+
+        exited = Ps(1, "")
+        self.assertIsNone(_identity_from_ps(41, exited))
+        self.assertEqual(exited.args, ["ps", "-p", "41", "-o", "lstart="])
+        self.assertTrue(exited.capture_output)
+        self.assertTrue(exited.text)
+        self.assertFalse(exited.check)
+        self.assertIsNone(_identity_from_ps(41, Ps(0, " \n")))
+        present = Ps(0, "Wed Nov 11 20:15:07 2026\n")
+        self.assertEqual(_identity_from_ps(41, present), (41, "Wed Nov 11 20:15:07 2026"))
+
+    def test_proc_identity_is_none_when_stat_disappears(self):
+        class Missing:
+            def exists(self):
+                return False
+
+            def read_text(self):
+                raise AssertionError("read_text")
+
+        class Removed:
+            def exists(self):
+                return True
+
+            def read_text(self):
+                raise FileNotFoundError("stat")
+
+        class Present:
+            def exists(self):
+                return True
+
+            def read_text(self):
+                return "41 (erl_child_setup) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 12345\n"
+
+        self.assertIsNone(_identity_from_stat(41, Missing()))
+        self.assertIsNone(_identity_from_stat(41, Removed()))
+        self.assertEqual(_identity_from_stat(41, Present()), (41, "12345"))
 
     def test_stdout_reader_keeps_reading_after_the_listener_line(self):
         lines = [

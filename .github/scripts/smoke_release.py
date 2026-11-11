@@ -33,14 +33,31 @@ def _windows_command(comspec, binary, args):
 def unix_identity(pid):
     """Return `(pid, started)`, or `None` when that process is gone."""
     proc = Path("/proc")
-    stat = proc / str(pid) / "stat"
     if proc.is_dir():
+        return _identity_from_stat(pid, proc / str(pid) / "stat")
+    return _identity_from_ps(pid, subprocess.run)
+
+
+def _identity_from_stat(pid, stat):
+    """`None` when `stat` is already gone, including a removal between exists and read."""
+    try:
         if not stat.exists():
             return None
-        started = stat.read_text().rsplit(") ", 1)[1].split()[19]
-        return pid, started
-    started = subprocess.check_output(["ps", "-p", str(pid), "-o", "lstart="], text=True).strip()
-    if not started:
+        text = stat.read_text()
+    except FileNotFoundError:
+        return None
+    started = text.rsplit(") ", 1)[1].split()[19]
+    return pid, started
+
+
+def _identity_from_ps(pid, run):
+    """`None` when `ps` exits non-zero or prints no start time. A gone pid makes `ps` exit 1."""
+    result = run(
+        ["ps", "-p", str(pid), "-o", "lstart="],
+        capture_output=True, text=True, check=False,
+    )
+    started = result.stdout.strip()
+    if result.returncode != 0 or not started:
         return None
     return pid, started
 
