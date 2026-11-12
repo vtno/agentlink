@@ -18,16 +18,16 @@ defmodule AgentLink.OwnedStopTest do
     unrelated = start_unrelated!()
 
     System.cmd("kill", ["-TERM", Integer.to_string(fixture.parent)], stderr_to_stdout: true)
-    await_dead!(fixture.parent)
+    await_dead!(fixture.parent, starttime!(fixture.owned, fixture.parent))
     assert AgentLink.OwnedStop.descendants(fixture.parent) == []
-    assert running?(fixture.child)
+    assert recorded_running?(fixture.child, starttime!(fixture.owned, fixture.child))
 
     signaled = AgentLink.OwnedStop.stop(fixture.owned)
     assert Enum.any?(signaled, &(&1.pid == fixture.child))
     refute Enum.any?(signaled, &(&1.pid == unrelated.pid))
-    refute running?(fixture.child)
+    refute recorded_running?(fixture.child, starttime!(fixture.owned, fixture.child))
     assert AgentLink.OwnedStop.stop(fixture.owned) == []
-    assert running?(unrelated.pid)
+    assert recorded_running?(unrelated.pid, starttime!(unrelated.owned, unrelated.pid))
   end
 
   @tag skip: @linux_skip
@@ -44,16 +44,16 @@ defmodule AgentLink.OwnedStopTest do
     end
 
     assert Port.info(fixture.port, :os_pid) == nil
-    assert running?(fixture.child)
+    assert recorded_running?(fixture.child, starttime!(fixture.owned, fixture.child))
 
     signaled = AgentLink.OwnedStop.stop(fixture.owned)
     assert Enum.any?(signaled, &(&1.pid == fixture.launcher))
     assert Enum.any?(signaled, &(&1.pid == fixture.child))
     refute Enum.any?(signaled, &(&1.pid == unrelated.pid))
-    refute running?(fixture.launcher)
-    refute running?(fixture.child)
+    refute recorded_running?(fixture.launcher, starttime!(fixture.owned, fixture.launcher))
+    refute recorded_running?(fixture.child, starttime!(fixture.owned, fixture.child))
     assert AgentLink.OwnedStop.stop(fixture.owned) == []
-    assert running?(unrelated.pid)
+    assert recorded_running?(unrelated.pid, starttime!(unrelated.owned, unrelated.pid))
   end
 
   @tag skip: @linux_skip
@@ -62,13 +62,13 @@ defmodule AgentLink.OwnedStopTest do
     fixture = start_owner!()
 
     assert Process.alive?(fixture.owner)
-    assert running?(fixture.child)
+    assert recorded_running?(fixture.child, starttime!(fixture.owned, fixture.child))
 
     release(fixture)
     refute Process.alive?(fixture.owner)
-    refute running?(fixture.child)
+    refute recorded_running?(fixture.child, starttime!(fixture.owned, fixture.child))
     assert AgentLink.OwnedStop.stop(fixture.owned) == []
-    assert running?(unrelated.pid)
+    assert recorded_running?(unrelated.pid, starttime!(unrelated.owned, unrelated.pid))
   end
 
   test "parse_stat reads starttime from field 22" do
@@ -221,7 +221,7 @@ defmodule AgentLink.OwnedStopTest do
     end
 
     AgentLink.OwnedStop.stop(fixture.owned)
-    await_dead!(fixture.child)
+    await_dead!(fixture.child, starttime!(fixture.owned, fixture.child))
     File.rm_rf(fixture.dir)
   end
 
@@ -336,21 +336,28 @@ defmodule AgentLink.OwnedStopTest do
     end
   end
 
-  defp await_dead!(pid) do
+  defp await_dead!(pid, starttime) do
     receive do
     after
       0 ->
-        if running?(pid), do: await_dead!(pid), else: :ok
+        if recorded_running?(pid, starttime), do: await_dead!(pid, starttime), else: :ok
     end
   end
 
-  defp running?(pid) do
+  defp starttime!(owned, pid) do
+    case Enum.find(owned, &(&1.pid == pid)) do
+      %{starttime: starttime} -> starttime
+      nil -> flunk("no OwnedStop record for #{pid}")
+    end
+  end
+
+  # A reused pid is a different process. Match the start time captured with the pid.
+  defp recorded_running?(pid, starttime) do
     case File.read("/proc/#{pid}/stat") do
       {:ok, stat} ->
         case AgentLink.OwnedStop.parse_stat(stat) do
-          {:ok, %{state: "Z"}} -> false
-          {:ok, _} -> true
-          :error -> true
+          {:ok, %{starttime: ^starttime, state: state}} -> state != "Z"
+          _ -> false
         end
 
       _ ->
