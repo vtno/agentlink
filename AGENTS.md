@@ -1,6 +1,6 @@
 # AgentLink
 
-AgentLink is the control plane and the agent relay. It proxies ACP between apps and agent runtimes. The web UI is not in this directory.
+AgentLink is the control plane and the agent relay. It proxies ACP between apps and agent runtimes.
 
 Mix. `mix test` skips `:wrapped` and `:release`. The OpenCode test is `AGENTLINK_BIN=./_build/prod/rel/agentlink/bin/agentlink OPENCODE_BIN=/path/to/opencode mix test --only wrapped`.
 

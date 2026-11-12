@@ -176,9 +176,6 @@ defmodule AgentLink.Application do
 
       {:stop, reason} ->
         exit(reason)
-
-      other ->
-        exit({:bad_return_value, other})
     end
   end
 
@@ -249,8 +246,6 @@ defmodule AgentLink.Application do
         error
     end
   end
-
-  defp watch_connect(other), do: other
 
   defp start_failure(reason) do
     case shutdown_message(reason) do
