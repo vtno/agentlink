@@ -309,4 +309,4 @@ The wrapped test starts that release. The test asks OpenCode to write an HTML pa
 
 ## License
 
-Copyright 2026 Tino Thamjarat. AgentLink is licensed under the Apache License, Version 2.0. The license identifier in `mix.exs` is `Apache-2.0`. The full text is in `LICENSE`.
+Copyright 2026 Tino Thamjarat and Thamtech Co., Ltd. AgentLink is licensed under the Apache License, Version 2.0. The license identifier in `mix.exs` is `Apache-2.0`. The full text is in `LICENSE`.
