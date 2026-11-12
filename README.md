@@ -89,7 +89,7 @@ Verify the archives with `SHA256SUMS` before you unpack one. Run `sha256sum -c S
 sha256sum -c SHA256SUMS
 ```
 
-On Windows, run `Get-FileHash -Algorithm SHA256` on the zip. Compare that hash with the matching line in `SHA256SUMS`.
+On Windows, run `(Get-FileHash -Algorithm SHA256 agentlink-windows-x86_64.zip).Hash.ToLower()`. Compare that hex with the hex at the start of the matching line in `SHA256SUMS`.
 
 Unpack the archive in an empty directory. Run `bin/agentlink`. On Windows, run `bin/agentlink.bat`.
 
