@@ -51,7 +51,7 @@ A plane with no token creates one for that process and prints it. Look for `Agen
 
 ## Build a release
 
-Build the release with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`. The machine that runs the release does not need Elixir. The release includes its own ERTS.
+This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`. The machine that runs the release does not need Elixir. The release includes its own ERTS.
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
@@ -81,13 +81,15 @@ agentlink connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 
 ## Download a release
 
-A release for a tag that starts with `v` includes one archive for each target and a `SHA256SUMS` file. Each Linux and macOS target is a gzip tarball named `agentlink-<target>.tar.gz`. The Windows target is a zip file named `agentlink-<target>.zip`. Two of those names are `agentlink-linux-x86_64.tar.gz` and `agentlink-windows-x86_64.zip`.
+A release for a tag that starts with `v` includes one archive for each target and a `SHA256SUMS` file. Each Linux target is a gzip tarball named `agentlink-<target>.tar.gz`. Each macOS target is a gzip tarball named `agentlink-<target>.tar.gz`. The Windows target is a zip file named `agentlink-<target>.zip`. Two of those names are `agentlink-linux-x86_64.tar.gz` and `agentlink-windows-x86_64.zip`.
 
-Verify the archives with `SHA256SUMS` before you unpack one. Run this command in the directory that contains `SHA256SUMS` and the archives that file names.
+Verify the archives with `SHA256SUMS` before you unpack one. Run `sha256sum -c SHA256SUMS` in the directory that contains `SHA256SUMS` and every archive listed in `SHA256SUMS`.
 
 ```sh
 sha256sum -c SHA256SUMS
 ```
+
+On Windows, run `Get-FileHash -Algorithm SHA256` on the zip. Compare that hash with the matching line in `SHA256SUMS`.
 
 Unpack the archive in an empty directory. Run `bin/agentlink`. On Windows, run `bin/agentlink.bat`.
 

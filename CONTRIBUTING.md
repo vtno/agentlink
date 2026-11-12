@@ -1,6 +1,6 @@
 # Contributing
 
-Use Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`.
+This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`.
 
 ## Format the code
 
