@@ -71,11 +71,19 @@ defmodule AgentLink.Application do
     if Application.fetch_env!(:agent_link, :mode) == :relay do
       root = Application.get_env(:agent_link, :config_root, AgentLink.Paths.root())
 
-      case AgentLink.Config.token(
-             token: Application.get_env(:agent_link, :relay_token),
-             root: root,
-             env: Application.get_env(:agent_link, :config_env, System.get_env())
-           ) do
+      result =
+        case Application.get_env(:agent_link, :relay_token) do
+          nil ->
+            AgentLink.Config.token(
+              root: root,
+              env: Application.get_env(:agent_link, :config_env, System.get_env())
+            )
+
+          token ->
+            {:ok, token}
+        end
+
+      case result do
         {:ok, token} when is_binary(token) ->
           Application.put_env(:agent_link, :master_token, token)
           :ok

@@ -187,6 +187,14 @@ defmodule AgentLink.ApplicationTest do
     :ok
   end
 
+  test "relay preserves the explicit token bytes" do
+    write_link()
+    assert :ok = AgentLink.CLI.apply(["relay", "--token", " fixture "])
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == " fixture "
+    Supervisor.stop(sup)
+  end
+
   test "relay resolves a token before starting the agent" do
     root = connect_root()
     write_link()
