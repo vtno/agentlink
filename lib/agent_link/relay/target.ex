@@ -42,7 +42,7 @@ defmodule AgentLink.Relay.Target do
       {:ok, wanted}
     else
       {:error,
-       "#{inspect(wanted)} is not online. Online agents: #{show(names)}. Pass --target.\n"}
+       "#{inspect(wanted)} is not online. Online agents: #{show(names)}. Pass --target NAME.\n"}
     end
   end
 

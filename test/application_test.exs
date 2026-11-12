@@ -237,6 +237,7 @@ defmodule AgentLink.ApplicationTest do
 
   test "relay mode stops when the link file is missing" do
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
 
     Application.put_env(
       :agent_link,
@@ -293,6 +294,7 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :agent_module, AgentLink.ApplicationTest.OnceAgent)
     on_exit(fn -> AgentLink.TestHelpers.restore(:agent_module, previous) end)
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     write_link()
 
     stderr =
@@ -315,6 +317,7 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :agent_module, AgentLink.ApplicationTest.CrashAgent)
     on_exit(fn -> AgentLink.TestHelpers.restore(:agent_module, previous) end)
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     write_link()
 
     assert {:error, reason} = AgentLink.Application.start(:normal, [])
@@ -329,6 +332,7 @@ defmodule AgentLink.ApplicationTest do
 
     write_link()
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _launch, _cwd}
     assert Process.whereis(AgentLink.Relay.Agent)
@@ -450,7 +454,7 @@ defmodule AgentLink.ApplicationTest do
 
     deliver_runtimes(transport, ["lab"])
 
-    assert {:shutdown, "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"} =
+    assert {:shutdown, "\"missing\" is not online. Online agents: \"lab\". Pass --target NAME.\n"} =
              await_down(ref, client)
 
     assert await_connect_exit() == 1
@@ -554,6 +558,7 @@ defmodule AgentLink.ApplicationTest do
 
     write_link()
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _launch, _cwd}
     File.write!(Application.fetch_env!(:agent_link, :link_path), ~s({"name":"opencode"}))

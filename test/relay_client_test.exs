@@ -102,7 +102,7 @@ defmodule AgentLink.Relay.ClientTest do
     assert_stops(
       [target: "missing"],
       ["lab"],
-      "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"
+      "\"missing\" is not online. Online agents: \"lab\". Pass --target NAME.\n"
     )
   end
 
