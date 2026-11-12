@@ -184,7 +184,7 @@ def smoke(release, home):
                 for key in ["INSTALL_DIR_FOR_OTP", "INSTALL_DIR_FOR_ELIXIR"]]
     env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep)
                                  if not any(root and p.casefold().startswith(root) for root in installs))
-    env.update(HOME=str(home), USERPROFILE=str(home), RELEASE_DISTRIBUTION="none")
+    env.update(HOME=str(home), USERPROFILE=str(home))
     binary = release / "bin" / ("agentlink.bat" if os.name == "nt" else "agentlink")
     for args in [("--help",), ("start", "--help")]:
         result = subprocess.run(command(binary, *args), env=env, capture_output=True, text=True)

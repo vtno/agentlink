@@ -74,7 +74,7 @@ _build/prod/rel/agentlink/
 
 `bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink start` also boots the release and passes any words after `start`.
 
-Distribution is off by default, so release processes do not need unique Erlang node names. To use `stop`, `remote`, `rpc`, or `pid`, set `RELEASE_DISTRIBUTION=sname` and a unique `RELEASE_NODE` on both the running release and the command. This also applies to `bin/agentlink.bat stop` on Windows. Without distribution, stop a release with a process signal. On Windows, press Ctrl+C in the foreground release console window.
+Distribution is off by default, so release processes do not need unique Erlang node names. To use `stop`, `remote`, `rpc`, or `pid`, set `RELEASE_DISTRIBUTION=sname` and a unique `RELEASE_NODE` on both the running release and the command. This also applies to `bin/agentlink.bat stop` on Windows. Without distribution, stop a release with a process signal. On Windows, press Ctrl+C in the release's console window, then `a` at the BREAK prompt.
 
 `bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. On a release boot, the CLI keeps the words after the first bare `--`. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI then drops one leading `start` on Windows. A direct `plane`, `relay`, or `connect` does not set that variable. The Mix suite checks the script as text. The release workflow also runs both launchers and a plane startup and shutdown on native runners.
 
@@ -223,7 +223,7 @@ A Codex link file can use this shape. Replace `<install dir>` with the adapter's
 }
 ```
 
-To run two relays on one machine, create two link files with different names and the same plane URL. Set `AGENTLINK_TOKEN` in the environment, or put the token in `$HOME/.agentlink/token` with mode 0600. Then start each relay in its own terminal.
+To run two relays on one machine, create two link files with distinct `name` values and the same plane URL. Set `AGENTLINK_TOKEN` in the environment, or put the token in `$HOME/.agentlink/token` with mode 0600. Then start each relay in its own terminal.
 
 ```sh
 agentlink relay --link /path/to/first.link.json
