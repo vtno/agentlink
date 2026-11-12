@@ -6,8 +6,9 @@ defmodule AgentLink.Agent.Process do
   start a GenServer.   `open/3` is the `AgentLink.Agent` callback. The relay
   calls `open/5` and passes `:agent_open_listener`. The handle is the port. `open/3` does not read the link file,
   does not call `AgentLink.Agent.Launch.load/1`, and does not read application
-  config. `close/1` reads `:agent_stop_timeout`. `open/4` takes a finder and
-  is not a callback.
+  config. `open/4` takes a finder and is not a callback.
+
+  See [Agent process](../../../docs/agent.md#agent-process).
   """
 
   @behaviour AgentLink.Agent
@@ -16,9 +17,7 @@ defmodule AgentLink.Agent.Process do
 
   require Logger
 
-  # One `kill` invocation and the `/proc` scan that precedes it.
-  # `AgentLink.Relay.Agent` reserves the same amount, twice, in the shutdown.
-  # `allowance_ms/0` is that shared number.
+  # See [Agent process](../../../docs/agent.md#agent-process).
   @stop_step_ms 1_000
 
   @doc false
@@ -80,13 +79,6 @@ defmodule AgentLink.Agent.Process do
   is omitted. `ErlangError` and `ArgumentError` from `Port.open/2` are
   returned as an error that names the path and the reason from the spawn.
   The OS decides that reason.
-
-  On Linux the VM's port spawn makes the command a session leader. That pid
-  is the process group leader. On Linux, `close/1` also records each
-  descendant, including one that called `setsid`. On macOS, `close/1` closes
-  stdin and does not signal a process group, does not walk descendants, and
-  does not create a Job Object. On Windows, `close/1` closes stdin and does
-  not signal a process group and does not create a Job Object.
   """
   @impl true
   @spec open(pid, Launch.t(), String.t()) :: {:ok, port} | {:error, String.t()}
@@ -137,40 +129,7 @@ defmodule AgentLink.Agent.Process do
   @doc """
   Stop the process `open/3` started and close `port`.
 
-  Returns `:ok` when every recorded process is gone. A second call, with no
-  record left, also returns `:ok`. Returns `{:error, :timeout}` when a
-  recorded process is still present after `SIGKILL`. Returns
-  `{:error, :no_kill}` when `kill` is not on `PATH`.
-
-  On Linux, when `open/3` recorded an OS pid, `close/1` reads `/proc` and
-  records that pid and each descendant, including a descendant that called
-  `setsid`. It signals a pid only when `/proc/<pid>/stat` still has the
-  recorded start time. A process group leader is signaled with the group id,
-  which is the negative pid. A descendant whose process group is not that
-  pid is signaled by its own pid. The first signal is `SIGTERM`. `close/1`
-  then closes the port, which closes the child's stdin, and waits until
-  every recorded start time no longer matches.
-
-  The `SIGTERM` wait is `:agent_stop_timeout` milliseconds.
-  `Application.get_env/3` reads `:agent_link, :agent_stop_timeout`. The
-  default is `5000`. When a recorded start time still matches at that
-  deadline, `close/1` signals `SIGKILL` the same way and waits again. That
-  confirmation wait is `:agent_stop_timeout`, or `1000` milliseconds when
-  that value is shorter, so a timeout of `0` still observes the reap.
-  `close/1` reads `/proc` again immediately before `SIGKILL` and refreshes
-  each recorded process group. `close/1` does not return `:ok` while a
-  recorded process remains. A remaining `{pid, starttime}` is passed to
-  `AgentLink.Agent.Reaper.retain/1`. When that process is not running,
-  `retain/1` writes the pairs into this VM's record file and returns
-  `{:error, :noproc}`. `close/1` returns that error. The next `reap/0`
-  reads the file before `open/5`. `AgentLink.Relay.Agent`
-  sizes its shutdown to hold both waits and both `kill` commands.
-
-  A pid whose start time changed is left alone. `close/1` does not signal
-  the VM's own OS pid. On macOS, `close/1` closes stdin and does not signal
-  a process group, does not walk descendants, and does not create a Job
-  Object. On Windows, `close/1` closes stdin and does not signal a process
-  group and does not create a Job Object.
+  See [Agent process](../../../docs/agent.md#agent-process).
   """
   @impl true
   @spec close(term) ::
@@ -213,14 +172,9 @@ defmodule AgentLink.Agent.Process do
   end
 
   @doc """
-  Signal `SIGKILL` to each `{pid, starttime}` whose start time still matches.
+  Stop processes `AgentLink.Agent.Reaper` still holds.
 
-  Waits `1000` milliseconds. Returns `:ok` when every start time is gone.
-  Returns `{:error, :no_kill}` when `kill` is not on `PATH` and a pid remains.
-  Returns `{:error, :kill_failed}` when `kill` exits non-zero and that start
-  time still matches. Returns `{:error, :timeout}` when a start time still
-  matches after the wait. Does not signal pid 1 or this VM's OS pid.
-  `AgentLink.Agent.Reaper` calls this. `close/1` does not.
+  See [Reaper](../../../docs/agent.md#reaper).
   """
   @spec force([{integer(), String.t()}]) ::
           :ok | {:error, :timeout} | {:error, :no_kill} | {:error, :kill_failed}

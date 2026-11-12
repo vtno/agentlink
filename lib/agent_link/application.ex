@@ -7,9 +7,7 @@ defmodule AgentLink.Application do
 
   `start/2` starts `AgentLink.Supervisor` with `Supervisor.start_link/2` in the
   calling process. That process is the supervisor's parent and stays linked to
-  it. In a release, the caller is the process `application_master` uses to stop
-  the application, so `Application.stop/1`, `bin/agentlink stop`, and `SIGTERM`
-  shut the tree down.
+  it. See [Release stop](../../docs/agent.md#release-stop).
 
   `agentlink plane` and `agentlink connect` do not read the link file. `agentlink`
   and `agentlink relay` read it in `AgentLink.Relay.Agent.init/1`. When that start
@@ -42,12 +40,8 @@ defmodule AgentLink.Application do
   Any other `{:shutdown, message}` exits with status 1. The
   supervisor starts the client relay again after a crash because
   `AgentLink.Relay.Client.child_spec/1` sets `restart: :transient`. The
-  supervisor's own stop exits with status 1. `agentlink connect` replaces
-  `:erl_signal_handler` with `AgentLink.ConnectStop`. That handler logs the
-  `SIGTERM` notice and calls `:init.stop/1`. The watcher does not call
-  `System.halt/1` once `:init.get_status/0` is `:stopping`, so the status
-  stays 1. A stop that is not a signal flushes the log and halts. The test
-  environment does not install the handler.
+  supervisor's own stop exits with status 1. A stop that is not a signal
+  flushes the log and halts. See [Release stop](../../docs/agent.md#release-stop).
   In the test environment,
   `:halt_listener` receives `{:connect_watching, pid}` after the watcher
   monitors the client relay, `{:connect_supervisor, pid}` after the watcher

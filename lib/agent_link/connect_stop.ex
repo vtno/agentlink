@@ -2,12 +2,7 @@ defmodule AgentLink.ConnectStop do
   @moduledoc """
   `SIGTERM` handling for `agentlink connect`.
 
-  `:erl_signal_handler` calls `:init.stop/0`, and that halt uses status 0.
-  This handler logs the same notice and calls `:init.stop/1`, so the status
-  is 1 in the process that is already stopping. The connect watcher leaves
-  that halt alone once `:init.get_status/0` is `:stopping`. `SIGINT` opens
-  the Erlang BREAK prompt in this mode, the same as a plain release. The
-  catch-all does not stop that prompt.
+  See [Release stop](../../docs/agent.md#release-stop).
   """
 
   @behaviour :gen_event

@@ -20,17 +20,9 @@ defmodule AgentLink.Relay.Agent do
   in params is filled with `AgentLink.Paths.workdir()` before the message is
   written to the agent. An explicit `cwd` passes through unchanged.
 
-  The child shutdown is the `SIGTERM` wait, the confirmation wait, and two
-  allowances of `1000` milliseconds for the `kill` commands, read when the
-  child spec is built. The allowance is `AgentLink.Agent.Process.allowance_ms/0`.
-  The `SIGTERM` wait is `:agent_stop_timeout`. The confirmation wait is
-  `:agent_stop_timeout`, or `1000` when that is shorter. The default
-  `:agent_stop_timeout` is `5000`, so the shutdown is `12000`.
-  `terminate/2` calls `close/1` and does not return until that call returns.
-  `init/1` calls `AgentLink.Agent.Reaper.reap/0` before `open/5` for
-  `AgentLink.Agent.Process`. A failed
-  reap stops this start, so no replacement agent is spawned while a retained
-  start time is still alive.
+  `init/1` calls `AgentLink.Agent.Reaper.reap/0` before `open/5`, and `child_spec/1` sizes the shutdown from `:agent_stop_timeout`.
+
+  See [Agent process](../../../docs/agent.md#agent-process) and [Reaper](../../../docs/agent.md#reaper).
   """
 
   use GenServer
