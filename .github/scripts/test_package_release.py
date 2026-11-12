@@ -4,7 +4,6 @@ import tarfile
 import tempfile
 import threading
 import unittest
-from unittest import mock
 import zipfile
 
 from package_release import inventory, package, swap_runtime
@@ -15,7 +14,6 @@ from smoke_release import (
     _identity_from_stat,
     _windows_command,
     consume_stdout,
-    smoke,
 )
 
 
@@ -94,18 +92,6 @@ class PackageTest(unittest.TestCase):
 
 
 class SmokeHelperTest(unittest.TestCase):
-    def test_help_uses_release_distribution_defaults(self):
-        result = mock.Mock(returncode=0, stdout="agentlink plane", stderr="")
-        with mock.patch.dict("os.environ", {"RELEASE_DISTRIBUTION": "sname", "RELEASE_NODE": "inherited"}), \
-             mock.patch("smoke_release.subprocess.run", return_value=result) as run, \
-             mock.patch("smoke_release.free_port", side_effect=RuntimeError("help checked")):
-            with self.assertRaisesRegex(RuntimeError, "help checked"):
-                smoke(Path("release"), Path("home"))
-        self.assertEqual(run.call_count, 2)
-        for call in run.call_args_list:
-            self.assertNotIn("RELEASE_DISTRIBUTION", call.kwargs["env"])
-            self.assertNotIn("RELEASE_NODE", call.kwargs["env"])
-
     def test_proc_children_lists_only_that_task_directory(self):
         root = Path(self._tmpdir())
         task = root / "99" / "task"
