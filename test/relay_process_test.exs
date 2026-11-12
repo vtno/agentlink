@@ -67,9 +67,14 @@ defmodule AgentLink.Relay.ProcessTest do
       Agent.stop(tracker)
       restore_env(previous)
       File.rm_rf(root)
-      if pid = Process.whereis(AgentLink.Relay.Agent), do: Process.exit(pid, :kill)
-      if pid = Process.whereis(AgentLink.Uplink), do: Process.exit(pid, :kill)
-      if pid = Process.whereis(AgentLink.Agent.Reaper), do: Process.exit(pid, :kill)
+
+      if pid = Process.whereis(AgentLink.Relay.Agent),
+        do: AgentLink.TestHelpers.kill_and_wait(pid)
+
+      if pid = Process.whereis(AgentLink.Uplink), do: AgentLink.TestHelpers.kill_and_wait(pid)
+
+      if pid = Process.whereis(AgentLink.Agent.Reaper),
+        do: AgentLink.TestHelpers.kill_and_wait(pid)
     end)
 
     %{

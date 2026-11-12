@@ -70,7 +70,11 @@ _build/prod/rel/agentlink/
 
 `bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink stop` stops the running node. `bin/agentlink start` also boots the release and passes any words after `start`.
 
-`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI drops one leading `start`. A direct `plane`, `relay`, or `connect` does not set that variable.
+`bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. On a release boot, the CLI keeps the words after the first bare `--`. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI then drops one leading `start` on Windows. A direct `plane`, `relay`, or `connect` does not set that variable. The Mix suite checks the script as text. The release workflow also runs both launchers and a plane startup and shutdown on native runners.
+
+The release workflow builds the Mix release once on Linux. Each target replaces ERTS and the matching OTP applications with the prebuilt runtime installed by `erlef/setup-beam`. Project and dependency code stays compiled once. The packager preserves Mix's relocatable `erl` script and removes the installation-specific `erl.ini`. The published archive does not include `runtime.json`.
+
+`.tool-versions` pins OTP and Elixir for both workflows. `.github/release-targets.json` defines the targets and their native runners once. Each matrix job packages its target, downloads the uploaded artifact, and smoke-tests it. A pushed `v*` tag publishes those archives and `SHA256SUMS` only after all matrix jobs pass. Pushes to `main`, manual runs, and pull requests that change release files build and smoke-test without publishing. The archive names are listed in [Download a release](#download-a-release).
 
 ```sh
 agentlink
@@ -81,7 +85,7 @@ agentlink connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 
 ## Download a release
 
-A release for a tag that starts with `v` includes one archive for each target and a `SHA256SUMS` file. Each Linux target is a gzip tarball named `agentlink-<target>.tar.gz`. Each macOS target is a gzip tarball named `agentlink-<target>.tar.gz`. The Windows target is a zip file named `agentlink-<target>.zip`. Two of those names are `agentlink-linux-x86_64.tar.gz` and `agentlink-windows-x86_64.zip`.
+A release for a tag that starts with `v` includes one archive for each target and a `SHA256SUMS` file. Linux and macOS archives are gzip tarballs. The Windows archive is a zip file. The file names are `agentlink-linux-x86_64.tar.gz`, `agentlink-linux-aarch64.tar.gz`, `agentlink-macos-x86_64.tar.gz`, `agentlink-macos-arm64.tar.gz`, and `agentlink-windows-x86_64.zip`. `SHA256SUMS` lists the SHA-256 digest of each of those archives, one archive per line, in the format `sha256sum` writes.
 
 Verify the archives with `SHA256SUMS` before you unpack one. Run `sha256sum -c SHA256SUMS` in the directory that contains `SHA256SUMS` and every archive listed in `SHA256SUMS`.
 
@@ -296,6 +300,8 @@ The relay reads one JSON object per line from the agent's standard output. The r
 ## Run the tests
 
 `mix test` does not start a provider. `mix test` excludes tests tagged `:wrapped` and `:release`.
+
+`python3 -m unittest discover -s .github/scripts -p 'test_*.py'` checks runtime replacement, version mismatches, and archive contents using temporary fixture directories without starting processes.
 
 `mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. These release tests are written for Linux. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
 

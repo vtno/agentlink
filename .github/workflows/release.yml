@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches: [main]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/release-targets.json
+      - .github/scripts/**
+      - .tool-versions
+      - mix.exs
+      - mix.lock
+      - lib/agent_link/release.ex
+      - config/config.exs
+      - config/runtime.exs
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: targets
+        run: echo "matrix=$(jq -c . .github/release-targets.json)" >> "$GITHUB_OUTPUT"
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+      - run: mix deps.get --check-locked
+      - run: mix release
+        env:
+          MIX_ENV: prod
+      - name: Record OTP applications and archive the shared release
+        run: |
+          python3 .github/scripts/package_release.py inventory _build/prod/rel/agentlink "$INSTALL_DIR_FOR_OTP"
+          tar -C _build/prod/rel/agentlink -czf base-release.tar.gz .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: base-release
+          path: base-release.tar.gz
+          if-no-files-found: error
+
+  package-and-smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # setup-beam downloads the native prebuilt OTP, not a second Mix build.
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: base-release
+      - name: Swap the target runtime and pack the release
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        run: |
+          "$PYTHON" -m unittest discover -s .github/scripts -p 'test_*.py'
+          mkdir base
+          tar -xzf base-release.tar.gz -C base
+          "$PYTHON" .github/scripts/package_release.py package base "$INSTALL_DIR_FOR_OTP" "$TARGET" dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agentlink-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agentlink-${{ matrix.target }}
+          path: downloaded
+      - name: Smoke-test the downloaded archive
+        timeout-minutes: 3
+        shell: bash
+        env:
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        run: '"$PYTHON" .github/scripts/smoke_release.py downloaded'
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package-and-smoke
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agentlink-*
+          merge-multiple: true
+      - name: Publish release with checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum agentlink-*.tar.gz agentlink-*.zip > SHA256SUMS
+          gh release create "$TAG" agentlink-*.tar.gz agentlink-*.zip SHA256SUMS --verify-tag --title "$TAG" --generate-notes

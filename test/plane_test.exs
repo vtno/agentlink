@@ -618,7 +618,7 @@ defmodule AgentLink.PlaneTest do
     send(AgentLink.Plane, {:DOWN, make_ref(), :process, self(), :normal})
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert AgentLink.TestHelpers.await_down(ref, pid) == :killed
 
     AgentLink.Plane.agent_frame(
       "lab",
@@ -629,7 +629,8 @@ defmodule AgentLink.PlaneTest do
       })
     )
 
-    refute_receive {^pid, {:send, _}}, 50
+    :sys.get_state(AgentLink.Plane)
+    refute_received {^pid, {:send, _}}
   end
 
   test "a prompt queued for a client that then leaves the runtime is skipped" do
@@ -682,8 +683,8 @@ defmodule AgentLink.PlaneTest do
     pid = agent!("lab")
     call(id, "runtime/select", %{"name" => "lab"}, 1)
     reply!()
-    Process.exit(pid, :kill)
-    Process.sleep(30)
+    AgentLink.TestHelpers.kill_and_wait(pid)
+    AgentLink.TestHelpers.await(fn -> AgentLink.Registry.pid("lab") == nil end)
     call(id, "session/new", %{"cwd" => "/tmp", "mcpServers" => []}, 2)
     assert %{"error" => %{"message" => "runtime is down"}} = reply!()
   end
@@ -711,12 +712,13 @@ defmodule AgentLink.PlaneTest do
             %{
               "id" => "perm",
               "error" => %{"code" => -32000, "message" => "no app is attached to this session"}
-            }} = from_agent!()
+            }} = await_agent_event()
 
     assert [%{client_id: ^survivor}] =
              :queue.to_list(:sys.get_state(AgentLink.Plane).slots["lab"].prompt_queue)
 
-    refute_receive {:agent, %{"method" => "session/prompt"}}, 50
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/prompt"}}
 
     AgentLink.Plane.agent_frame(
       "lab",
@@ -764,17 +766,20 @@ defmodule AgentLink.PlaneTest do
           AgentLink.Plane.client_frame(id, response)
           assert :sys.get_state(AgentLink.Plane).slots["lab"].fan_pending == %{}
           disconnect_client!(pid, id)
-          assert {:agent, %{"id" => "perm", "result" => %{"outcome" => "allow"}}} = from_agent!()
+
+          assert {:agent, %{"id" => "perm", "result" => %{"outcome" => "allow"}}} =
+                   await_agent_event()
 
         :down_first ->
           disconnect_client!(pid, id)
           AgentLink.Plane.client_frame(id, response)
           assert :sys.get_state(AgentLink.Plane).slots["lab"].fan_pending == %{}
-          assert {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}} = from_agent!()
+          assert {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}} = await_agent_event()
       end
 
       assert Process.alive?(Process.whereis(AgentLink.Plane))
-      refute_receive {:agent, _}, 50
+      sync_agent()
+      refute_received {:agent, _}
     end
   end
 
@@ -840,7 +845,8 @@ defmodule AgentLink.PlaneTest do
     assert state.clients[survivor].session_id == "ses_1"
     assert state.slots["lab"].agent_pending == %{}
     refute state.slots["lab"].prompt_inflight
-    refute_receive {:agent, _}, 50
+    sync_agent()
+    refute_received {:agent, _}
   end
 
   for leaving <- [:issuer, :waiter] do
@@ -873,7 +879,8 @@ defmodule AgentLink.PlaneTest do
       call(survivor, "initialize", %{}, 4)
       assert %{"id" => 4, "result" => %{"ok" => true}} = reply!()
       assert :sys.get_state(AgentLink.Plane).slots["lab"].init_waiters == []
-      refute_receive {:agent, _}, 50
+      sync_agent()
+      refute_received {:agent, _}
     end
   end
 
@@ -913,13 +920,21 @@ defmodule AgentLink.PlaneTest do
 
         :down_first ->
           disconnect_client!(pid, id)
-          refute_receive {:agent, %{"method" => "session/prompt"}}, 50
+          sync_agent()
+          refute_received {:agent, %{"method" => "session/prompt"}}
           AgentLink.Plane.agent_frame("lab", cancelled)
       end
 
       # The two agent writes can arrive in either order relative to one another.
-      assert_receive {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}}, 500
-      assert_receive {:agent, %{"method" => "session/prompt", "id" => next_id}}, 500
+      receive do
+        {:agent, %{"id" => "perm", "error" => %{"code" => -32000}}} -> :ok
+      end
+
+      next_id =
+        receive do
+          {:agent, %{"method" => "session/prompt", "id" => next_id}} -> next_id
+        end
+
       slot = :sys.get_state(AgentLink.Plane).slots["lab"]
       assert slot.prompt_inflight
       refute Map.has_key?(slot.agent_pending, prompt_id)
@@ -937,7 +952,8 @@ defmodule AgentLink.PlaneTest do
 
       assert %{"id" => 2, "result" => _} = reply!()
       refute :sys.get_state(AgentLink.Plane).slots["lab"].prompt_inflight
-      refute_receive {:agent, _}, 50
+      sync_agent()
+      refute_received {:agent, _}
     end
   end
 
@@ -970,7 +986,9 @@ defmodule AgentLink.PlaneTest do
     disconnect_client!(pid, id)
 
     for name <- ["lab", "other"] do
-      assert_receive {:agent, %{"id" => ^name, "error" => %{"code" => -32000}}}, 500
+      receive do
+        {:agent, %{"id" => ^name, "error" => %{"code" => -32000}}} -> :ok
+      end
     end
 
     for {name, slot} <- :sys.get_state(AgentLink.Plane).slots do
@@ -1020,8 +1038,7 @@ defmodule AgentLink.PlaneTest do
     assert %{"method" => "session/update"} = client_reply!(pid)
     assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
 
-    Process.exit(pid, :kill)
-    Process.sleep(30)
+    disconnect_client!(pid, id)
 
     AgentLink.Plane.agent_frame(
       "lab",
@@ -1377,16 +1394,11 @@ defmodule AgentLink.PlaneTest do
   defp disconnect_client!(pid, id) do
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
-    await_client_down!(id, System.monotonic_time(:millisecond) + 500)
-  end
+    assert AgentLink.TestHelpers.await_down(ref, pid) == :killed
 
-  defp await_client_down!(id, deadline) do
-    if Map.has_key?(:sys.get_state(AgentLink.Plane).clients, id) do
-      assert System.monotonic_time(:millisecond) < deadline, "plane did not process client DOWN"
-      Process.sleep(1)
-      await_client_down!(id, deadline)
-    end
+    AgentLink.TestHelpers.await(fn ->
+      not Map.has_key?(:sys.get_state(AgentLink.Plane).clients, id)
+    end)
   end
 
   defp agent!(name) do
@@ -1421,7 +1433,10 @@ defmodule AgentLink.PlaneTest do
     _ = :sys.get_state(AgentLink.Plane)
     pid = AgentLink.Registry.pid(name)
     send(pid, {:sync, self()})
-    assert_receive {:synced, ^pid}, 500
+
+    receive do
+      {:synced, ^pid} -> :ok
+    end
   end
 
   defp spawn_client do
@@ -1472,6 +1487,12 @@ defmodule AgentLink.PlaneTest do
   defp from_agent! do
     assert_receive {:agent, message}, 500
     {:agent, message}
+  end
+
+  defp await_agent_event do
+    receive do
+      {:agent, message} -> {:agent, message}
+    end
   end
 
   defp client_reply!(pid) do

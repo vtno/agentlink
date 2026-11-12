@@ -66,8 +66,7 @@ defmodule AgentLink.RouterTest do
     {:ok, _websocket, data} = Mint.WebSocket.encode(websocket, {:text, hello})
     {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)
     {:ok, _conn} = Mint.HTTP.set_mode(conn, :active)
-    Process.sleep(100)
-    assert AgentLink.Registry.pid("lab")
+    assert AgentLink.TestHelpers.await_pid("lab")
     Mint.HTTP.close(conn)
   end
 
@@ -94,7 +93,7 @@ defmodule AgentLink.RouterTest do
     assert log =~
              "uplink rejected name=opencode another uplink is already connected with this name"
 
-    holder_frames = collect_frames(conn1, websocket1, 200)
+    holder_frames = collect_frames(conn1, ref1, websocket1)
     refute Enum.any?(holder_frames, &match?({:close, _, _}, &1))
     assert AgentLink.Registry.pid("opencode") == first
     assert Process.alive?(first)
@@ -102,7 +101,7 @@ defmodule AgentLink.RouterTest do
     frame = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "session/update", "params" => %{}})
     {:ok, _websocket1, data} = Mint.WebSocket.encode(websocket1, {:text, frame})
     assert {:ok, _conn1} = Mint.WebSocket.stream_request_body(conn1, ref1, data)
-    Process.sleep(30)
+    refute Enum.any?(collect_frames(conn1, ref1, websocket1), &match?({:close, _, _}, &1))
     assert AgentLink.Registry.pid("opencode") == first
     assert Process.alive?(first)
     Mint.HTTP.close(conn1)
@@ -226,42 +225,33 @@ defmodule AgentLink.RouterTest do
     end
   end
 
-  defp collect_frames(conn, websocket, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    {_, _, frames} = collect_frames(conn, websocket, [], deadline)
-    frames
+  defp collect_frames(conn, ref, websocket) do
+    {:ok, websocket, data} = Mint.WebSocket.encode(websocket, {:ping, "holder-ready"})
+    {:ok, conn} = Mint.WebSocket.stream_request_body(conn, ref, data)
+    collect_until_pong(conn, websocket, [])
   end
 
-  defp collect_frames(conn, websocket, frames, deadline) do
-    wait = deadline - System.monotonic_time(:millisecond)
+  defp collect_until_pong(conn, websocket, frames) do
+    receive do
+      message ->
+        case Mint.WebSocket.stream(conn, message) do
+          {:ok, conn, responses} ->
+            {websocket, extra} = decode_frames(websocket, responses)
+            frames = frames ++ extra
 
-    if wait <= 0 do
-      {conn, websocket, frames}
-    else
-      receive do
-        message ->
-          case Mint.WebSocket.stream(conn, message) do
-            {:ok, conn, responses} ->
-              {websocket, extra} = decode_frames(websocket, responses)
-              frames = frames ++ extra
+            if Enum.any?(frames, &match?({:close, _, _}, &1)) or
+                 {:pong, "holder-ready"} in frames do
+              frames
+            else
+              collect_until_pong(conn, websocket, frames)
+            end
 
-              if Enum.any?(frames, &match?({:close, _, _}, &1)) do
-                {conn, websocket, frames}
-              else
-                collect_frames(conn, websocket, frames, deadline)
-              end
+          {:error, _conn, reason, _responses} ->
+            flunk("holder socket closed before pong: #{inspect(reason)}")
 
-            {:error, conn, _reason, responses} ->
-              {_websocket, extra} = decode_frames(websocket, responses)
-              {conn, websocket, frames ++ extra}
-
-            :unknown ->
-              collect_frames(conn, websocket, frames, deadline)
-          end
-      after
-        wait ->
-          {conn, websocket, frames}
-      end
+          :unknown ->
+            collect_until_pong(conn, websocket, frames)
+        end
     end
   end
 

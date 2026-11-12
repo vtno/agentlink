@@ -190,7 +190,7 @@ defmodule AgentLink.Relay.AgentTest do
     ref = Process.monitor(relay)
     AgentLink.FakeAgent.refuse(agent)
     AgentLink.Relay.Agent.send_message(%{"method" => "x"})
-    assert_receive {:DOWN, ^ref, :process, ^relay, :port_closed}
+    assert AgentLink.TestHelpers.await_down(ref, relay) == :port_closed
   end
 
   test "an exit status stops the agent relay" do
@@ -198,7 +198,7 @@ defmodule AgentLink.Relay.AgentTest do
     relay = Process.whereis(AgentLink.Relay.Agent)
     ref = Process.monitor(relay)
     AgentLink.FakeAgent.exit_status(agent, 3)
-    assert_receive {:DOWN, ^ref, :process, ^relay, {:agent_exit, 3}}
+    assert AgentLink.TestHelpers.await_down(ref, relay) == {:agent_exit, 3}
   end
 
   test "the agent process dying stops the agent relay" do
@@ -206,7 +206,7 @@ defmodule AgentLink.Relay.AgentTest do
     relay = Process.whereis(AgentLink.Relay.Agent)
     ref = Process.monitor(relay)
     Process.exit(agent, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^relay, {:agent_exit, :killed}}
+    assert AgentLink.TestHelpers.await_down(ref, relay) == {:agent_exit, :killed}
   end
 
   test "a missing link file stops the agent relay before the agent opens" do
@@ -329,16 +329,21 @@ defmodule AgentLink.Relay.AgentTest do
     uplink = Process.whereis(AgentLink.Uplink)
     ref = Process.monitor(relay)
     send(relay, {:EXIT, uplink, {:shutdown, "No link file at /tmp/gone.json"}})
-    assert_receive {:DOWN, ^ref, :process, ^relay, {:shutdown, "No link file" <> _}}
+    assert {:shutdown, "No link file" <> _} = AgentLink.TestHelpers.await_down(ref, relay)
     refute Process.whereis(AgentLink.Relay.Agent)
   end
 
   test "an uplink crash starts another uplink" do
     _agent = start_relay!()
     first = Process.whereis(AgentLink.Uplink)
-    Process.exit(first, :kill)
-    Process.sleep(50)
-    second = Process.whereis(AgentLink.Uplink)
+    AgentLink.TestHelpers.kill_and_wait(first)
+
+    second =
+      AgentLink.TestHelpers.await(fn ->
+        pid = Process.whereis(AgentLink.Uplink)
+        if is_pid(pid) and pid != first, do: pid
+      end)
+
     assert is_pid(second)
     assert second != first
     assert Process.alive?(Process.whereis(AgentLink.Relay.Agent))
@@ -348,13 +353,13 @@ defmodule AgentLink.Relay.AgentTest do
     agent = start_relay!()
     ref = Process.monitor(agent)
     GenServer.stop(AgentLink.Relay.Agent)
-    assert_receive {:DOWN, ^ref, :process, ^agent, _}
+    AgentLink.TestHelpers.await_down(ref, agent)
   end
 
   test "an unknown message is ignored" do
     _agent = start_relay!()
     send(AgentLink.Relay.Agent, :nope)
-    Process.sleep(20)
+    :sys.get_state(AgentLink.Relay.Agent)
     assert Process.alive?(Process.whereis(AgentLink.Relay.Agent))
   end
 
@@ -387,9 +392,7 @@ defmodule AgentLink.Relay.AgentTest do
   end
 
   defp wait_for(fun) do
-    Enum.reduce_while(1..20, false, fn _, _ ->
-      if fun.(), do: {:halt, true}, else: Process.sleep(10) && {:cont, false}
-    end)
+    AgentLink.TestHelpers.await(fun)
   end
 
   defp uplink_outbox do
@@ -416,6 +419,6 @@ defmodule AgentLink.Relay.AgentTest do
   end
 
   defp stop(name) do
-    if pid = Process.whereis(name), do: Process.exit(pid, :kill)
+    if pid = Process.whereis(name), do: AgentLink.TestHelpers.kill_and_wait(pid)
   end
 end

@@ -112,8 +112,7 @@ defmodule AgentLink.RegistryTest do
     assert [%{"label" => "b"}] = AgentLink.Registry.list()
     assert Process.info(first, :messages) == {:messages, [:superseded]}
 
-    Process.exit(first, :kill)
-    Process.sleep(50)
+    AgentLink.TestHelpers.kill_and_wait(first)
     assert AgentLink.Registry.pid("lab") == second
     assert Process.alive?(second)
   end
@@ -258,9 +257,8 @@ defmodule AgentLink.RegistryTest do
   test "a dead socket is removed, and an unknown down is ignored" do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     {:ok, "lab"} = hello(pid, "lab", "a")
-    Process.exit(pid, :kill)
-    Process.sleep(30)
-    assert AgentLink.Registry.list() == []
+    AgentLink.TestHelpers.kill_and_wait(pid)
+    AgentLink.TestHelpers.await(fn -> AgentLink.Registry.list() == [] end)
 
     send(AgentLink.Registry, {:DOWN, make_ref(), :process, pid, :killed})
     other = spawn(fn -> Process.sleep(:infinity) end)
@@ -276,7 +274,7 @@ defmodule AgentLink.RegistryTest do
 
     dead = spawn(fn -> :ok end)
     ref = Process.monitor(dead)
-    assert_receive {:DOWN, ^ref, :process, ^dead, _}
+    AgentLink.TestHelpers.await_down(ref, dead)
     :ets.insert(:agent_link_runtimes, {"lab", %{uplink | pid: dead}})
 
     next = spawn(fn -> Process.sleep(:infinity) end)
@@ -289,8 +287,7 @@ defmodule AgentLink.RegistryTest do
     assert log =~ "uplink stale name=lab the previous holder was already dead"
     assert AgentLink.Registry.pid("lab") == next
 
-    Process.exit(holder, :kill)
-    Process.sleep(50)
+    AgentLink.TestHelpers.kill_and_wait(holder)
     assert AgentLink.Registry.pid("lab") == next
     assert Process.alive?(next)
   end

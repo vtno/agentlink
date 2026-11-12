@@ -15,7 +15,7 @@ defmodule AgentLink.UplinkTest do
     on_exit(fn ->
       restore_link(link_path)
       File.rm(path)
-      if pid = Process.whereis(AgentLink.Uplink), do: Process.exit(pid, :kill)
+      if pid = Process.whereis(AgentLink.Uplink), do: AgentLink.TestHelpers.kill_and_wait(pid)
     end)
 
     :ok
@@ -46,7 +46,7 @@ defmodule AgentLink.UplinkTest do
     ref = Process.monitor(uplink)
     send(uplink, :watch)
 
-    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 1_000
+    assert {:shutdown, message} = AgentLink.TestHelpers.await_down(ref, uplink)
     assert message =~ "No link file"
   end
 
@@ -66,7 +66,7 @@ defmodule AgentLink.UplinkTest do
     ref = Process.monitor(uplink)
     send(uplink, :watch)
 
-    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 1_000
+    assert {:shutdown, message} = AgentLink.TestHelpers.await_down(ref, uplink)
     assert message =~ "No link file"
     refute Process.whereis(AgentLink.Uplink)
   end
@@ -78,7 +78,7 @@ defmodule AgentLink.UplinkTest do
     ref = Process.monitor(uplink)
     :ok = FakeTransport.disconnect(transport_pid(uplink), 1001, "going away")
 
-    assert_receive {:DOWN, ^ref, :process, ^uplink, {:shutdown, message}}, 200
+    assert {:shutdown, message} = AgentLink.TestHelpers.await_down(ref, uplink)
     assert message =~ "No link file"
     refute Process.whereis(AgentLink.Uplink)
   end

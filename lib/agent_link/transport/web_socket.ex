@@ -27,6 +27,7 @@ defmodule AgentLink.Transport.WebSocket do
     :ref,
     :timer,
     :connect_token,
+    scheduler: Process,
     outbox: [],
     held: false
   ]
@@ -38,6 +39,8 @@ defmodule AgentLink.Transport.WebSocket do
   `:owner` and `:url` are required. `:headers` defaults to
   `AgentLink.Auth.headers/0`. `:default_path` is used when `url` has no path,
   default `/agent`. `:preface` is sent before the outbox on every dial.
+  `:scheduler` defaults to `Process`. It implements `send_after/3` and
+  `cancel_timer/1` for delayed reconnects. The cancellation return value is ignored.
   """
   @impl true
   def start_link(opts) do
@@ -51,6 +54,7 @@ defmodule AgentLink.Transport.WebSocket do
       url: Keyword.fetch!(opts, :url),
       headers: Keyword.get_lazy(opts, :headers, &AgentLink.Auth.headers/0),
       backoff: retry_delay(Keyword.get(opts, :backoff, 500)),
+      scheduler: Keyword.get(opts, :scheduler, Process),
       default_path: Keyword.get(opts, :default_path, "/agent"),
       preface: Keyword.get(opts, :preface)
     }
@@ -424,14 +428,14 @@ defmodule AgentLink.Transport.WebSocket do
   defp request_connect(state, delay) do
     state = cancel_timer(state)
     token = make_ref()
-    timer = Process.send_after(self(), {:connect, token}, delay)
+    timer = state.scheduler.send_after(self(), {:connect, token}, delay)
     %{state | timer: timer, connect_token: token}
   end
 
   defp cancel_timer(%{timer: nil} = state), do: state
 
   defp cancel_timer(%{timer: timer} = state) do
-    Process.cancel_timer(timer)
+    state.scheduler.cancel_timer(timer)
     %{state | timer: nil}
   end
 

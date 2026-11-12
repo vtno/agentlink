@@ -20,8 +20,27 @@ defmodule AgentLink.CLITest do
     assert AgentLink.CLI.drop_launcher_prefix(["--no-halt", "--", "plane", "--port", "9000"]) ==
              ["plane", "--port", "9000"]
 
-    assert AgentLink.CLI.drop_launcher_prefix(["--", "plane"]) == ["--", "plane"]
+    assert AgentLink.CLI.drop_launcher_prefix(["--", "plane"]) == ["plane"]
     assert AgentLink.CLI.drop_launcher_prefix(["plane"]) == ["plane"]
+    assert AgentLink.CLI.drop_launcher_prefix(["--no-halt", "--", "--"]) == ["--"]
+  end
+
+  test "Windows release words after the first separator reach help parsing" do
+    System.put_env("RELEASE_ROOT", "/tmp")
+    System.delete_env("AGENTLINK_WINDOWS_START")
+    on_exit(fn -> System.delete_env("RELEASE_ROOT") end)
+    prefix = ["--no-halt", "--cookie", "fixture", "--boot", "start", "--"]
+
+    assert AgentLink.CLI.argv_from_launch(prefix ++ ["--help"]) == ["--help"]
+
+    assert AgentLink.CLI.parse(AgentLink.CLI.argv_from_launch(prefix ++ ["--help"])) ==
+             {:ok, :help}
+
+    argv = AgentLink.CLI.argv_from_launch(prefix ++ ["start", "--help"])
+    assert argv == ["start", "--help"]
+    argv = AgentLink.CLI.drop_windows_script_start(argv, {:win32, :nt}, "1")
+    assert argv == ["--help"]
+    assert AgentLink.CLI.parse(argv) == {:ok, :help}
   end
 
   test "no arguments run the plane and the relay" do
@@ -168,6 +187,28 @@ defmodule AgentLink.CLITest do
 
   test "a release boot reads plain arguments and those words replace the mode" do
     assert release_mode(["-extra", "--no-halt", "--", "relay", "--token", "sekret"]) == "relay"
+
+    assert release_mode([
+             "-extra",
+             "--no-halt",
+             "--cookie",
+             "fixture",
+             "--",
+             "relay",
+             "--token",
+             "sekret"
+           ]) == "relay"
+  end
+
+  test "a release boot with Windows launcher words returns help with status zero" do
+    eval = ~S"""
+    application:ensure_all_started(elixir),
+    {halt, 0} = 'Elixir.AgentLink.CLI':apply(),
+    halt(0).
+    """
+
+    output = release_output(["-extra", "--no-halt", "--cookie", "fixture", "--", "--help"], eval)
+    assert output =~ "agentlink plane"
   end
 
   test "a leading start is a usage error" do
@@ -242,6 +283,15 @@ defmodule AgentLink.CLITest do
     halt().
     """
 
+    output = release_output(extra, eval)
+
+    [line] =
+      output |> String.split("\n", trim: true) |> Enum.filter(&String.starts_with?(&1, "mode="))
+
+    String.trim_leading(line, "mode=")
+  end
+
+  defp release_output(extra, eval) do
     ebin = Path.expand("_build/test/lib/agent_link/ebin")
     lib = :code.lib_dir(:elixir) |> to_string() |> Path.dirname()
 
@@ -255,9 +305,6 @@ defmodule AgentLink.CLITest do
 
     assert status == 0, output
 
-    [line] =
-      output |> String.split("\n", trim: true) |> Enum.filter(&String.starts_with?(&1, "mode="))
-
-    String.trim_leading(line, "mode=")
+    output
   end
 end
