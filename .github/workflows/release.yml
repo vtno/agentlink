@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:
@@ -11,9 +12,11 @@ on:
       - .github/release-targets.json
       - .github/scripts/**
       - .tool-versions
-      - lib/**
       - mix.exs
       - mix.lock
+      - lib/agent_link/release.ex
+      - config/config.exs
+      - config/runtime.exs
 
 permissions:
   contents: read

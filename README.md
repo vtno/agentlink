@@ -74,7 +74,7 @@ _build/prod/rel/agentlink/
 
 The release workflow builds the Mix release once on Linux. Each target replaces ERTS and the matching OTP applications with the prebuilt runtime installed by `erlef/setup-beam`. Project and dependency code stays compiled once. The packager preserves Mix's relocatable `erl` script and removes the installation-specific `erl.ini`. The published archive does not include `runtime.json`.
 
-`.tool-versions` pins OTP and Elixir for both workflows. `.github/release-targets.json` defines the targets and their native runners once. Each matrix job packages its target, downloads the uploaded artifact, and smoke-tests it. A pushed `v*` tag publishes those archives and `SHA256SUMS` only after all matrix jobs pass. Manual runs and matching pull requests build and test without publishing. The archive names are listed in [Download a release](#download-a-release).
+`.tool-versions` pins OTP and Elixir for both workflows. `.github/release-targets.json` defines the targets and their native runners once. Each matrix job packages its target, downloads the uploaded artifact, and smoke-tests it. A pushed `v*` tag publishes those archives and `SHA256SUMS` only after all matrix jobs pass. Pushes to `main`, manual runs, and pull requests that change release files build and smoke-test without publishing. The archive names are listed in [Download a release](#download-a-release).
 
 ```sh
 agentlink
