@@ -17,7 +17,7 @@ defmodule AgentLink.Relay.TargetTest do
     assert Target.select(nil, ["alice", "alice"]) == {:ok, "alice"}
 
     assert Target.select(nil, ["c", "a", "b", "a"]) ==
-             {:error, "Several agents are online: \"c\", \"a\", \"b\". Pass --target.\n"}
+             {:error, "Several agents are online: \"c\", \"a\", \"b\". Pass --target NAME.\n"}
   end
 
   test "no online agent says that no agent is online" do
@@ -28,7 +28,7 @@ defmodule AgentLink.Relay.TargetTest do
 
   test "nil wanted with several agents lists the names and says to pass --target" do
     assert Target.select(nil, ["bob", "alice"]) ==
-             {:error, "Several agents are online: \"bob\", \"alice\". Pass --target.\n"}
+             {:error, "Several agents are online: \"bob\", \"alice\". Pass --target NAME.\n"}
   end
 
   test "a wanted name that is not online lists the online names and says to pass --target" do
@@ -54,7 +54,7 @@ defmodule AgentLink.Relay.TargetTest do
              {:error, "\"Alice\" is not online. Online agents: \"alice\". Pass --target.\n"}
 
     assert Target.select(nil, ["", "alice", ""]) ==
-             {:error, "Several agents are online: \"\", \"alice\". Pass --target.\n"}
+             {:error, "Several agents are online: \"\", \"alice\". Pass --target NAME.\n"}
   end
 
   test "a bad wanted or a bad online list raises ArgumentError" do

@@ -13,7 +13,7 @@ defmodule AgentLink.CLI do
   `relay`, or `connect` does not set the variable.
   """
 
-  defstruct mode: :all, port: nil, token: nil, plane: nil, target: nil
+  defstruct mode: :all, port: nil, token: nil, plane: nil, target: nil, link: nil
 
   @doc """
   Read the command and store the mode, the port, and the token.
@@ -102,7 +102,7 @@ defmodule AgentLink.CLI do
     """
     agentlink [--port PORT] [--token TOKEN]
     agentlink plane [--port PORT] [--token TOKEN]
-    agentlink relay --token TOKEN
+    agentlink relay [--link PATH] [--token TOKEN]
     agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
     """
   end
@@ -116,10 +116,11 @@ defmodule AgentLink.CLI do
   end
 
   defp relay(rest) do
-    with {:ok, opts} <- options(rest),
+    with {:ok, opts} <- strict_options(rest, port: :integer, token: :string, link: :string),
          :ok <- no_port(opts),
-         {:ok, token} <- required_token(opts[:token]) do
-      {:ok, %__MODULE__{mode: :relay, token: token}}
+         {:ok, token} <- optional_token(opts[:token]),
+         {:ok, link} <- optional_text(opts[:link]) do
+      {:ok, %__MODULE__{mode: :relay, token: token, link: link}}
     end
   end
 
@@ -153,9 +154,6 @@ defmodule AgentLink.CLI do
       else: :ok
   end
 
-  defp required_token(token) when is_binary(token) and token != "", do: {:ok, token}
-  defp required_token(_), do: {:error, "agentlink relay needs --token.\n" <> usage()}
-
   defp optional_token(token), do: optional_text(token)
 
   defp optional_text(nil), do: {:ok, nil}
@@ -173,6 +171,13 @@ defmodule AgentLink.CLI do
     Application.put_env(:agent_link, :connect_plane, plane)
     Application.put_env(:agent_link, :connect_target, target)
     Application.put_env(:agent_link, :connect_token, token)
+    :ok
+  end
+
+  defp store(%__MODULE__{mode: :relay, token: token, link: link}) do
+    Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, token)
+    if link, do: Application.put_env(:agent_link, :link_path, link)
     :ok
   end
 

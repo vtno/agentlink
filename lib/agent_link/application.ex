@@ -57,12 +57,39 @@ defmodule AgentLink.Application do
   @impl true
   def start(_type, _args) do
     with :ok <- command(),
+         :ok <- prepare_relay_token(),
          :ok <- prepare(),
          :ok <- install_connect_stop(),
          {:ok, children} <- children() do
       children
       |> start_supervisor()
       |> watch_connect()
+    end
+  end
+
+  defp prepare_relay_token do
+    if Application.fetch_env!(:agent_link, :mode) == :relay do
+      root = Application.get_env(:agent_link, :config_root, AgentLink.Paths.root())
+
+      case AgentLink.Config.token(
+             token: Application.get_env(:agent_link, :relay_token),
+             root: root,
+             env: Application.get_env(:agent_link, :config_env, System.get_env())
+           ) do
+        {:ok, token} when is_binary(token) ->
+          Application.put_env(:agent_link, :master_token, token)
+          :ok
+
+        {:ok, nil} ->
+          report_boot(
+            "agentlink relay needs a token. Pass --token, set AGENTLINK_TOKEN, or write #{token_path(root)}.\n"
+          )
+
+        {:error, message} ->
+          report_boot(message)
+      end
+    else
+      :ok
     end
   end
 

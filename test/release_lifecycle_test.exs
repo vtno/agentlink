@@ -412,6 +412,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
       {"HOME", Path.join(dir, "home")},
       {"PATH", System.get_env("PATH") || ""},
       {"LANG", "C.UTF-8"},
+      {"RELEASE_DISTRIBUTION", "sname"},
       {"RELEASE_NODE", node},
       {"RELEASE_COOKIE", "agentlinktest"},
       {"RELEASE_SYS_CONFIG", sys},

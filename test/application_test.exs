@@ -147,7 +147,9 @@ defmodule AgentLink.ApplicationTest do
       :connect_stdio,
       :connect_observer,
       :halt_listener,
-      :connect_watcher
+      :connect_watcher,
+      :relay_token,
+      :master_token
     ]
 
     connect_env = Map.new(connect_keys, &{&1, Application.get_env(:agent_link, &1)})
@@ -183,6 +185,35 @@ defmodule AgentLink.ApplicationTest do
     end)
 
     :ok
+  end
+
+  test "relay resolves a token before starting the agent" do
+    root = connect_root()
+    write_link()
+    write_connect_token!(root, "file")
+    Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :config_root, root)
+    Application.put_env(:agent_link, :config_env, %{"AGENTLINK_TOKEN" => "environment"})
+    Application.put_env(:agent_link, :relay_token, "flag")
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == "flag"
+    Supervisor.stop(sup)
+
+    Application.put_env(:agent_link, :relay_token, nil)
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == "environment"
+    Supervisor.stop(sup)
+
+    Application.put_env(:agent_link, :config_env, %{})
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == "file"
+    Supervisor.stop(sup)
+
+    File.rm!(Path.join(root, "token"))
+    assert {:error, message} = AgentLink.Application.start(:normal, [])
+    assert message =~ "--token"
+    assert message =~ "AGENTLINK_TOKEN"
+    assert message =~ Path.join(root, "token")
   end
 
   test "plane mode does not start an agent relay" do

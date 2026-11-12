@@ -13,6 +13,7 @@ defmodule AgentLink.LinkTest do
     path = write!("{")
     assert {:error, message} = AgentLink.Link.read(path)
     assert message =~ "not a JSON object"
+    assert message =~ path
   end
 
   test "a json array is not a link" do

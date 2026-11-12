@@ -30,7 +30,7 @@ defmodule AgentLink.SetupTest do
 
     assert {:ok, reused} = AgentLink.Access.Single.prepare(:relay)
     assert Application.get_env(:agent_link, :master_token) == minted
-    assert reused =~ "using the token from --token."
+    assert reused =~ "using the configured token."
   end
 
   test "an agent does not mint a token" do

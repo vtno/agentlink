@@ -3,6 +3,21 @@ defmodule AgentLink.ConfigTest do
 
   alias AgentLink.Config
 
+  test "token resolution ignores the connect config and uses option, environment, then file" do
+    root = root!()
+    File.write!(Path.join(root, "config"), "invalid")
+    write_token!(root, "file")
+
+    assert Config.token(root: root, env: %{"AGENTLINK_TOKEN" => "env"}, token: "flag") ==
+             {:ok, "flag"}
+
+    assert Config.token(root: root, env: %{"AGENTLINK_TOKEN" => "env"}) == {:ok, "env"}
+    assert Config.token(root: root, env: %{}) == {:ok, "file"}
+    File.chmod!(Path.join(root, "token"), 0o644)
+    assert {:error, message} = Config.token(root: root, env: %{})
+    assert message =~ "0600"
+  end
+
   test "an option wins over the environment, and the environment wins over the files" do
     root = root!()
     write_config!(root, %{"plane" => "from-file", "target" => "from-file"})

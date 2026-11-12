@@ -50,10 +50,19 @@ defmodule AgentLink.Config do
 
     with {:ok, plane} <- field(opts, :plane, env, "AGENTLINK_PLANE"),
          {:ok, target} <- field(opts, :target, env, "AGENTLINK_TARGET"),
-         {:ok, token} <- field(opts, :token, env, "AGENTLINK_TOKEN"),
          {:ok, file} <- read_config(config_path, token_path),
-         {:ok, token} <- resolve_token(token, token_path) do
+         {:ok, token} <- token(opts) do
       {:ok, %__MODULE__{plane: plane || file.plane, target: target || file.target, token: token}}
+    end
+  end
+
+  @doc "Resolve the token from the option, environment, or token file."
+  def token(opts) when is_list(opts) do
+    root = root!(opts)
+    env = env!(opts)
+
+    with {:ok, token} <- field(opts, :token, env, "AGENTLINK_TOKEN") do
+      resolve_token(token, child(root, &AgentLink.Paths.token/0))
     end
   end
 

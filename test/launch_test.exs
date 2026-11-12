@@ -12,6 +12,13 @@ defmodule AgentLink.LaunchTest do
 
   use ExUnit.Case, async: false
 
+  test "release env defaults distribution without overriding an explicit value" do
+    assert File.read!("rel/env.sh.eex") =~ ~s(${RELEASE_DISTRIBUTION:-none})
+
+    assert File.read!("rel/env.bat.eex") =~
+             "if not defined RELEASE_DISTRIBUTION set RELEASE_DISTRIBUTION=none"
+  end
+
   test "forward_start_args passes CLI words into the release" do
     dir = unique_dir("script")
     bin = Path.join(dir, "bin")
