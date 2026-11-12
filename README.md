@@ -1,6 +1,6 @@
 # AgentLink
 
-Agent and editor vendors each build their own walled garden to keep you on their platform. AgentLink is a neutral bridge. It proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. The link file names the command. For OpenCode, set `command` to `opencode` and `args` to `["acp"]`. Another installed adapter uses the same fields, for example `kimi` and `["acp"]`. More agents are described in [Add Claude Code and Codex agents](https://github.com/vtno/agentlink/issues/10).
+AgentLink proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. The link file names the command. For OpenCode, set `command` to `opencode` and `args` to `["acp"]`. Another installed adapter uses the same fields, for example `kimi` and `["acp"]`. More agents are described in [Add Claude Code and Codex agents](https://github.com/vtno/agentlink/issues/10).
 
 A client is a program connected to the plane.
 
@@ -10,7 +10,7 @@ ACP messages are JSON-RPC. The agent writes one JSON object per line on its stan
 
 ## Run AgentLink from source
 
-You need Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
+This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`, so Mix accepts Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
 
 `agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
 
@@ -51,7 +51,7 @@ A plane with no token creates one for that process and prints it. Look for `Agen
 
 ## Build a release
 
-The build machine needs Elixir 1.17 or a later 1.x release. The machine that runs the release does not need Elixir. The release includes its own ERTS.
+This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`. The machine that runs the release does not need Elixir. The release includes its own ERTS.
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
@@ -74,7 +74,7 @@ _build/prod/rel/agentlink/
 
 The release workflow builds the Mix release once on Linux. Each target replaces ERTS and the matching OTP applications with the prebuilt runtime installed by `erlef/setup-beam`. Project and dependency code stays compiled once. The packager preserves Mix's relocatable `erl` script and removes the installation-specific `erl.ini`. The published archive does not include `runtime.json`.
 
-`.tool-versions` pins OTP and Elixir for both workflows. `.github/release-targets.json` defines the targets and their native runners once. Each matrix job packages its target, downloads the uploaded artifact, and smoke-tests it. Linux x86_64 and aarch64 and macOS x86_64 and arm64 use tarballs. Windows x86_64 uses a zip. A pushed `v*` tag publishes the archives and `SHA256SUMS` only after all matrix jobs pass. Manual runs and matching pull requests build and test without publishing.
+`.tool-versions` pins OTP and Elixir for both workflows. `.github/release-targets.json` defines the targets and their native runners once. Each matrix job packages its target, downloads the uploaded artifact, and smoke-tests it. A pushed `v*` tag publishes those archives and `SHA256SUMS` only after all matrix jobs pass. Manual runs and matching pull requests build and test without publishing. The archive names are listed in [Download a release](#download-a-release).
 
 ```sh
 agentlink
@@ -82,6 +82,20 @@ agentlink plane --port 8090
 agentlink relay --token 'the-token'
 agentlink connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 ```
+
+## Download a release
+
+A release for a tag that starts with `v` includes one archive for each target and a `SHA256SUMS` file. Linux and macOS archives are gzip tarballs. The Windows archive is a zip file. The file names are `agentlink-linux-x86_64.tar.gz`, `agentlink-linux-aarch64.tar.gz`, `agentlink-macos-x86_64.tar.gz`, `agentlink-macos-arm64.tar.gz`, and `agentlink-windows-x86_64.zip`. `SHA256SUMS` lists the SHA-256 digest of each of those archives, one archive per line, in the format `sha256sum` writes.
+
+Verify the archives with `SHA256SUMS` before you unpack one. Run `sha256sum -c SHA256SUMS` in the directory that contains `SHA256SUMS` and every archive listed in `SHA256SUMS`.
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+On Windows, run `(Get-FileHash -Algorithm SHA256 agentlink-windows-x86_64.zip).Hash.ToLower()`. Compare that hex with the hex at the start of the matching line in `SHA256SUMS`.
+
+Unpack the archive in an empty directory. Run `bin/agentlink`. On Windows, run `bin/agentlink.bat`.
 
 ## Reach a plane on another machine
 
@@ -158,8 +172,6 @@ agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 
 `--token` is the token. `agentlink relay` requires `--token`. Without it, AgentLink prints `agentlink relay needs --token.` A plane with no token creates one. See [Security model](#security-model).
 
-`--opencode-bin` is rejected. The usage text does not list it. The command and the args come from the link file.
-
 `agentlink connect` starts the client relay. The editor runs that command as its ACP agent over stdio. The command does not start the plane or the agent relay, and it does not read the link file.
 
 `--plane` is the plane WebSocket URL. `--target` is the agent name. `--token` is the bearer token. For each value, a flag that has text wins over the environment variable, and an environment variable that has text wins over the file. A blank value is unset. The variables are `AGENTLINK_PLANE`, `AGENTLINK_TARGET`, and `AGENTLINK_TOKEN`. The config file is `$HOME/.agentlink/config`, a JSON object with `plane` and an optional `target`. The token file is `$HOME/.agentlink/token`. Its mode is 0600 or tighter. A `token` key in the config file is an error.
@@ -210,7 +222,7 @@ The plane accepts a hello name of 1 to 40 characters that matches `^[a-z0-9][a-z
 
 `plane_url` chooses the scheme, the host, the port, and the path. `wss` and `https` use TLS. The default port for those schemes is 443. `ws` and `http` stay plain. The default port for those schemes is 80. When the path is missing, the uplink uses `/agent`. When the host is missing, the uplink dials `127.0.0.1`. The uplink ignores the query string. For `wss` and `https`, Mint verifies the server certificate against the system CA store from `:public_key.cacerts_get/0`.
 
-`label` is the display name. `program` is metadata, such as `opencode`. It does not select `command`. When `program` is missing, `AgentLink.Link` uses `opencode`.
+`label` is the display name. `program` is metadata, such as `opencode`. It does not select `command`.
 
 `command` is a bare name or an absolute path. `AgentLink.Agent.Launch.load/1` trims it. `args` is a list of strings. `[]` is valid. Each string is kept as written. An `env` key is an error. OpenCode uses `"command": "opencode"` and `"args": ["acp"]`. `kimi` with `["acp"]` is the same shape. AgentLink does not add `acp`, and it does not set `OPENCODE_DISABLE_AUTOUPDATE`.
 
@@ -279,7 +291,9 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 The default workspace is `$HOME/.agentlink/workspace`. The relay creates that directory.
 
-`AgentLink.Agent.Process` runs `command` and `args` in that workspace. The child receives the VM environment without `AGENTLINK_WINDOWS_START`. Stderr stays off the ACP stream. On Linux the VM's port spawn makes the command a session leader, so it is a process group leader. On Linux, `close/1` signals `SIGTERM` to that group, and to any descendant that left the group, when the recorded start time still matches. It closes stdin and waits up to `:agent_stop_timeout` milliseconds. The default is `5000`. It then signals `SIGKILL` the same way and returns `:ok` only when those processes are gone. A start time that remains is kept by `AgentLink.Agent.Reaper` in `agent-reaper-<pid>-<starttime>.bin`, named for this VM. That process starts before the relay. `init/1` reloads that file and drops a pid whose start time no longer matches, so a Reaper restart still blocks the next open. Another VM's file is removed only when its pid does not exist, or when that pid exists and its readable start time differs from the real start time in the name. A stored start time of `0`, or a start time that cannot be read, stays in the directory. `init/1` removes this VM's `.bad-*` and `.tmp` files. A load, modify, and save of this VM's file is `:global.trans/3` on `{{:agentlink_reaper, vm}, self()}` for this node, so a `retain/1` during `init/1` waits and still leaves its pairs. `retain/1` writes the pairs into that file even when the Reaper is not running, and the call still fails. `reap/0` fails when the Reaper is not running. The next relay signals `SIGKILL` and opens a replacement only after every retained start time is gone. `AgentLink.Relay.Agent` waits `12000` milliseconds at that default before the supervisor kills the relay. On macOS, `close/1` closes stdin and does not signal a process group, does not walk descendants, and does not create a Job Object. On Windows, `close/1` closes stdin and does not signal a process group and does not create a Job Object.
+`AgentLink.Agent.Process` runs `command` and `args` in that workspace.
+
+See [Agent process](docs/agent.md#agent-process).
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
 
@@ -289,7 +303,7 @@ The relay reads one JSON object per line from the agent's standard output. The r
 
 `python3 -m unittest discover -s .github/scripts -p 'test_*.py'` checks runtime replacement, version mismatches, and archive contents using temporary fixture directories without starting processes.
 
-`mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
+`mix test --only release` runs `MIX_ENV=prod mix release` and checks `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect`, plus pid and process-group `SIGTERM`. The Windows script passes `%*` with delayed expansion off. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`. The suite checks that script as text and does not run it on Windows. These release tests are written for Linux. `argv_from_launch/1` drops one leading `start` only when `:os.type/0` is `{:win32, _}` and that variable is `1`. `start start` is a usage error.
 
 Set `AGENTLINK_BIN` to `bin/agentlink` in the release. When `opencode` is not on `PATH`, also set `OPENCODE_BIN`.
 
@@ -298,3 +312,7 @@ AGENTLINK_BIN=./_build/prod/rel/agentlink/bin/agentlink OPENCODE_BIN=/path/to/op
 ```
 
 The wrapped test starts that release. The test asks OpenCode to write an HTML page, then checks the page.
+
+## License
+
+Copyright 2026 Tino Thamjarat and Thamtech Co., Ltd. AgentLink is licensed under the Apache License, Version 2.0. The license identifier in `mix.exs` is `Apache-2.0`. The full text is in `LICENSE`.
