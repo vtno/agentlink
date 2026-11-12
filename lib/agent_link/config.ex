@@ -1,8 +1,9 @@
 defmodule AgentLink.Config do
   @moduledoc """
   The plane URL, the optional target, and the token. `load/1` reads them.
-  `agentlink connect` calls `load/1`. A missing token is an error in that
-  command. `load/1` still returns a nil token when the token is unset.
+  `agentlink connect` calls `load/1`. `agentlink relay` calls `token/1`.
+  Both commands reject a missing token. `load/1` still returns a nil token
+  when the token is unset.
   """
 
   # Subsets of 0600. Any other permission bit is too open.

@@ -14,7 +14,7 @@ ACP messages are JSON-RPC. The agent writes one JSON object per line on its stan
 
 This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`, so Mix accepts Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
 
-`agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
+`agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. A standalone relay prints startup lines without the token before reading the file. The default combined plane and relay prints the token in its startup lines.
 
 Create `$HOME/.agentlink/agent.link.json` with the object below when you start a relay.
 
@@ -46,6 +46,8 @@ mix run --no-halt -- plane --port 8090
 mix run --no-halt -- relay --token 'the-token'
 mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 ```
+
+For a relay, set `AGENTLINK_TOKEN` or use `$HOME/.agentlink/token` with mode 0600 to keep the token out of the process list.
 
 `plane` starts the plane alone. `relay` starts the relay alone. `connect` starts the client relay alone. See [Command line](#command-line) for the flags.
 
@@ -212,7 +214,7 @@ A Codex link file can use this shape. Replace `<install dir>` with the adapter's
 
 ```json
 {
-  "name": "omarchy-codex",
+  "name": "codex",
   "label": "Codex",
   "program": "codex",
   "plane_url": "ws://127.0.0.1:8090/agent",

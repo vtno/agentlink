@@ -249,6 +249,19 @@ defmodule AgentLink.ApplicationTest do
     refute Process.whereis(AgentLink.Relay.Agent)
   end
 
+  test "relay reports its chosen link path when the file is missing or invalid" do
+    root = connect_root()
+    path = Path.join(root, "custom-link.json")
+    assert :ok = AgentLink.CLI.apply(["relay", "--link", path, "--token", "fixture"])
+
+    assert {:error, missing} = AgentLink.Application.start(:normal, [])
+    assert missing =~ "No link file at #{path}"
+
+    File.write!(path, "not json")
+    assert {:error, invalid} = AgentLink.Application.start(:normal, [])
+    assert invalid =~ "#{path} is not a JSON object"
+  end
+
   test "all mode prints a missing launch once and does not stay up" do
     Application.put_env(:agent_link, :mode, :all)
     Application.put_env(:agent_link, :port, 18_100)

@@ -61,6 +61,31 @@ defmodule AgentLink.ReleaseLifecycleTest do
     await_gone!(os_pid, started)
   end
 
+  test "two releases start with distribution and node unset", %{bin: bin, dir: dir} do
+    sys = write_sys!(dir, plane_config(18_481))
+
+    env =
+      env(dir, "unused", sys)
+      |> Enum.reject(fn {key, _} -> key in ["RELEASE_DISTRIBUTION", "RELEASE_NODE"] end)
+      |> Kernel.++([{"RELEASE_DISTRIBUTION", false}, {"RELEASE_NODE", false}])
+
+    {first, first_pid, first_started} = boot!(bin, ["plane", "--port", "18481"], env)
+    first_log = await_listen!(first, 18_481, "")
+    {second, second_pid, second_started} = boot!(bin, ["plane", "--port", "18482"], env)
+    second_log = await_listen!(second, 18_482, "")
+    assert still?(first_pid, first_started)
+    assert still?(second_pid, second_started)
+    assert accept?(18_481)
+    assert accept?(18_482)
+
+    signal_if_same!(first_pid, first_started, "-TERM")
+    signal_if_same!(second_pid, second_started, "-TERM")
+    assert await_status!(first, first_log) == 0
+    assert await_status!(second, second_log) == 0
+    await_gone!(first_pid, first_started)
+    await_gone!(second_pid, second_started)
+  end
+
   test "start plane replaces a sys.config all", %{bin: bin, dir: dir} do
     port_num = 18_462
     sys = write_sys!(dir, all_config(port_num))
@@ -398,7 +423,10 @@ defmodule AgentLink.ReleaseLifecycleTest do
         :stderr_to_stdout,
         {:args, args},
         {:env,
-         Enum.map(env, fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)}
+         Enum.map(env, fn {key, value} ->
+           {String.to_charlist(key),
+            if(value == false, do: false, else: String.to_charlist(value))}
+         end)}
       ])
 
     os_pid = port_os_pid(port)
