@@ -334,6 +334,7 @@ defmodule AgentLink.UplinkTest do
 
       assert log =~ "uplink rejected name=opencode #{detail}"
       assert log =~ hint
+      if rejection in [:name_taken, :bad_name], do: assert(log =~ AgentLink.Paths.link())
       assert log =~ "will not reconnect until name or plane_url changes, or restart"
       assert parked?(uplink)
 

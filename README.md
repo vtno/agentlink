@@ -2,6 +2,8 @@
 
 AgentLink proxies [Agent Client Protocol](https://agentclientprotocol.com) (ACP) messages between editors and agents, so you choose the agent and the editor separately. You keep the agent on your own machine and reach it from wherever you can reach the plane. The link file names the command. For OpenCode, set `command` to `opencode` and `args` to `["acp"]`. Another installed adapter uses the same fields, for example `kimi` and `["acp"]`. More agents are described in [Add Claude Code and Codex agents](https://github.com/vtno/agentlink/issues/10).
 
+For Codex, install `@agentclientprotocol/codex-acp`. The `@zed-industries/codex-acp` adapter is deprecated and fails prompts.
+
 A client is a program connected to the plane.
 
 The plane accepts client connections. The relay opens one agent and starts an uplink. The uplink dials the plane. One plane keeps one live uplink for each link name.
@@ -12,7 +14,7 @@ ACP messages are JSON-RPC. The agent writes one JSON object per line on its stan
 
 This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`, so Mix accepts Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
 
-`agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
+`agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. A standalone relay prints startup lines without the token before reading the file. The default combined plane and relay prints the token in its startup lines.
 
 Create `$HOME/.agentlink/agent.link.json` with the object below when you start a relay.
 
@@ -45,6 +47,8 @@ mix run --no-halt -- relay --token 'the-token'
 mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 ```
 
+For a relay, set `AGENTLINK_TOKEN` or use `$HOME/.agentlink/token` with mode 0600 to keep the token out of the process list.
+
 `plane` starts the plane alone. `relay` starts the relay alone. `connect` starts the client relay alone. See [Command line](#command-line) for the flags.
 
 A plane with no token creates one for that process and prints it. Look for `AgentLink created a token for this process. Pass the same --token to start again.` AgentLink also prints `agentlink relay --token '…'`. AgentLink does not write the token to disk. Pass the same `--token` the next time you start the plane.
@@ -68,7 +72,9 @@ _build/prod/rel/agentlink/
   releases/
 ```
 
-`bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink stop` stops the running node. `bin/agentlink start` also boots the release and passes any words after `start`.
+`bin/agentlink` with no words uses the mode in the release config. That mode is `:all`. `bin/agentlink plane`, `bin/agentlink relay`, and `bin/agentlink connect` pass those words to the VM. `bin/agentlink start` also boots the release and passes any words after `start`.
+
+Distribution is off by default, so release processes do not need unique Erlang node names. To use `stop`, `remote`, `rpc`, or `pid`, set `RELEASE_DISTRIBUTION=sname` and a unique `RELEASE_NODE` on both the running release and the command. This also applies to `bin/agentlink.bat stop` on Windows. Without distribution, stop a release with a process signal. On Windows, press Ctrl+C in the release's console window, then `a` at the BREAK prompt to abort the VM without a graceful application shutdown.
 
 `bin/agentlink.bat` accepts the same commands. It places `%*` after `--` with delayed expansion off, so a quoted argument stays one argument. On a release boot, the CLI keeps the words after the first bare `--`. `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1`, and the CLI then drops one leading `start` on Windows. A direct `plane`, `relay`, or `connect` does not set that variable. The Mix suite checks the script as text. The release workflow also runs both launchers and a plane startup and shutdown on native runners.
 
@@ -162,7 +168,7 @@ The listener is plain `ws://` on `127.0.0.1`. The token identifies the caller. T
 ```
 agentlink [--port PORT] [--token TOKEN]
 agentlink plane [--port PORT] [--token TOKEN]
-agentlink relay --token TOKEN
+agentlink relay [--link PATH] [--token TOKEN]
 agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 ```
 
@@ -170,7 +176,7 @@ agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 
 `--port` is an integer from 1 to 65535. The default is 8090. `agentlink relay` rejects `--port` and prints `agentlink relay does not listen.`
 
-`--token` is the token. `agentlink relay` requires `--token`. Without it, AgentLink prints `agentlink relay needs --token.` A plane with no token creates one. See [Security model](#security-model).
+`--token` is the token. A relay resolves it from `--token`, then `AGENTLINK_TOKEN`, then `$HOME/.agentlink/token`. A plane with no token creates one. See [Security model](#security-model).
 
 `agentlink connect` starts the client relay. The editor runs that command as its ACP agent over stdio. The command does not start the plane or the agent relay, and it does not read the link file.
 
@@ -202,7 +208,29 @@ The plane returns status 401 and the body `unauthorized` when it rejects the tok
 
 ### Link file
 
-`AgentLink.Link` reads `$HOME/.agentlink/agent.link.json`. The relay starts when that file exists, is a JSON object, and includes `command` and `args`. `agentlink plane` does not read the file.
+`AgentLink.Link` reads `$HOME/.agentlink/agent.link.json` by default. Pass `agentlink relay --link PATH` to choose another file. The relay starts when that file exists, is a JSON object, and includes `command` and `args`. `agentlink plane` does not read the file.
+
+A Codex link file can use this shape. Replace `<install dir>` with the adapter's install directory and set `plane_url` to your plane.
+
+```json
+{
+  "name": "codex",
+  "label": "Codex",
+  "program": "codex",
+  "plane_url": "ws://127.0.0.1:8090/agent",
+  "command": "<install dir>/node_modules/.bin/codex-acp",
+  "args": []
+}
+```
+
+To run two relays on one machine, create two link files with distinct `name` values and the same plane URL. Set `AGENTLINK_TOKEN` in the environment, or put the token in `$HOME/.agentlink/token` with mode 0600. Then start each relay in its own terminal.
+
+```sh
+agentlink relay --link /path/to/first.link.json
+agentlink relay --link /path/to/second.link.json
+```
+
+When both links are online, select one with `agentlink connect --target NAME`. You can also set `AGENTLINK_TARGET` or `target` in `$HOME/.agentlink/config`.
 
 When the file is present and only `command` or `args` change, the running child and the current uplink stay as they are. The next start of the relay reads the new `command` and `args`. An automatic restart is one of those starts.
 
@@ -296,6 +324,8 @@ The default workspace is `$HOME/.agentlink/workspace`. The relay creates that di
 See [Agent process](docs/agent.md#agent-process).
 
 The relay reads one JSON object per line from the agent's standard output. The relay writes one JSON object and a newline to the agent's standard input.
+
+The agent inherits the relay's standard error. With the default Logger configuration, Logger writes to standard output. To put the agent's standard error in a file, run `agentlink relay --link PATH 2>agent.log`. Relay startup errors also go to that file. Agent output can contain account details, so restrict access to the file.
 
 ## Run the tests
 

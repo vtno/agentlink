@@ -89,7 +89,7 @@ defmodule AgentLink.Access.Single do
         """
 
       :relay ->
-        "#{origin}\nThe uplink will dial the plane_url in the link file.\n"
+        "AgentLink is using the configured token.\nThe uplink will dial the plane_url in the link file.\n"
     end
   end
 

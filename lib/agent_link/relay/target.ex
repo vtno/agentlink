@@ -42,14 +42,14 @@ defmodule AgentLink.Relay.Target do
       {:ok, wanted}
     else
       {:error,
-       "#{inspect(wanted)} is not online. Online agents: #{show(names)}. Pass --target.\n"}
+       "#{inspect(wanted)} is not online. Online agents: #{show(names)}. Pass --target NAME.\n"}
     end
   end
 
   defp choose(nil, [name]), do: {:ok, name}
 
   defp choose(nil, names) do
-    {:error, "Several agents are online: #{show(names)}. Pass --target.\n"}
+    {:error, "Several agents are online: #{show(names)}. Pass --target NAME.\n"}
   end
 
   defp names!(online) when is_list(online) do

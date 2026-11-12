@@ -147,7 +147,9 @@ defmodule AgentLink.ApplicationTest do
       :connect_stdio,
       :connect_observer,
       :halt_listener,
-      :connect_watcher
+      :connect_watcher,
+      :relay_token,
+      :master_token
     ]
 
     connect_env = Map.new(connect_keys, &{&1, Application.get_env(:agent_link, &1)})
@@ -185,6 +187,43 @@ defmodule AgentLink.ApplicationTest do
     :ok
   end
 
+  test "relay preserves the explicit token bytes" do
+    write_link()
+    assert :ok = AgentLink.CLI.apply(["relay", "--token", " fixture "])
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == " fixture "
+    Supervisor.stop(sup)
+  end
+
+  test "relay resolves a token before starting the agent" do
+    root = connect_root()
+    write_link()
+    write_connect_token!(root, "file")
+    Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :config_root, root)
+    Application.put_env(:agent_link, :config_env, %{"AGENTLINK_TOKEN" => "environment"})
+    Application.put_env(:agent_link, :relay_token, "flag")
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == "flag"
+    Supervisor.stop(sup)
+
+    Application.put_env(:agent_link, :relay_token, nil)
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == "environment"
+    Supervisor.stop(sup)
+
+    Application.put_env(:agent_link, :config_env, %{})
+    assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert Application.get_env(:agent_link, :master_token) == "file"
+    Supervisor.stop(sup)
+
+    File.rm!(Path.join(root, "token"))
+    assert {:error, message} = AgentLink.Application.start(:normal, [])
+    assert message =~ "--token"
+    assert message =~ "AGENTLINK_TOKEN"
+    assert message =~ Path.join(root, "token")
+  end
+
   test "plane mode does not start an agent relay" do
     Application.put_env(:agent_link, :mode, :plane)
     Application.put_env(:agent_link, :port, 18_096)
@@ -206,6 +245,7 @@ defmodule AgentLink.ApplicationTest do
 
   test "relay mode stops when the link file is missing" do
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
 
     Application.put_env(
       :agent_link,
@@ -216,6 +256,19 @@ defmodule AgentLink.ApplicationTest do
     assert {:error, message} = AgentLink.Application.start(:normal, [])
     assert message =~ "No link file"
     refute Process.whereis(AgentLink.Relay.Agent)
+  end
+
+  test "relay reports its chosen link path when the file is missing or invalid" do
+    root = connect_root()
+    path = Path.join(root, "custom-link.json")
+    assert :ok = AgentLink.CLI.apply(["relay", "--link", path, "--token", "fixture"])
+
+    assert {:error, missing} = AgentLink.Application.start(:normal, [])
+    assert missing =~ "No link file at #{path}"
+
+    File.write!(path, "not json")
+    assert {:error, invalid} = AgentLink.Application.start(:normal, [])
+    assert invalid =~ "#{path} is not a JSON object"
   end
 
   test "all mode prints a missing launch once and does not stay up" do
@@ -249,6 +302,7 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :agent_module, AgentLink.ApplicationTest.OnceAgent)
     on_exit(fn -> AgentLink.TestHelpers.restore(:agent_module, previous) end)
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     write_link()
 
     stderr =
@@ -271,6 +325,7 @@ defmodule AgentLink.ApplicationTest do
     Application.put_env(:agent_link, :agent_module, AgentLink.ApplicationTest.CrashAgent)
     on_exit(fn -> AgentLink.TestHelpers.restore(:agent_module, previous) end)
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     write_link()
 
     assert {:error, reason} = AgentLink.Application.start(:normal, [])
@@ -285,6 +340,7 @@ defmodule AgentLink.ApplicationTest do
 
     write_link()
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _launch, _cwd}
     assert Process.whereis(AgentLink.Relay.Agent)
@@ -406,7 +462,7 @@ defmodule AgentLink.ApplicationTest do
 
     deliver_runtimes(transport, ["lab"])
 
-    assert {:shutdown, "\"missing\" is not online. Online agents: \"lab\". Pass --target.\n"} =
+    assert {:shutdown, "\"missing\" is not online. Online agents: \"lab\". Pass --target NAME.\n"} =
              await_down(ref, client)
 
     assert await_connect_exit() == 1
@@ -510,6 +566,7 @@ defmodule AgentLink.ApplicationTest do
 
     write_link()
     Application.put_env(:agent_link, :mode, :relay)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
     assert_receive {:agent_opened, _agent, _launch, _cwd}
     File.write!(Application.fetch_env!(:agent_link, :link_path), ~s({"name":"opencode"}))

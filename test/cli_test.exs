@@ -63,8 +63,11 @@ defmodule AgentLink.CLITest do
 
     assert {:error, message} = AgentLink.CLI.parse(["relay", "--port", "1", "--token", "sekret"])
     assert message =~ "does not listen"
-    assert {:error, message} = AgentLink.CLI.parse(["relay"])
-    assert message =~ "needs --token"
+
+    assert {:ok, %AgentLink.CLI{mode: :relay, token: nil, link: "custom.json"}} =
+             AgentLink.CLI.parse(["relay", "--link", "custom.json"])
+
+    assert {:error, _} = AgentLink.CLI.parse(["plane", "--link", "custom.json"])
   end
 
   test "a bad command or port is rejected" do
@@ -73,6 +76,18 @@ defmodule AgentLink.CLITest do
     assert {:error, message} = AgentLink.CLI.parse(["plane", "--port", "0"])
     assert message =~ "1 to 65535"
     assert {:ok, :help} = AgentLink.CLI.parse(["--help"])
+  end
+
+  test "relay stores its selected link path" do
+    keys = [:mode, :relay_token, :link_path]
+    previous = Map.new(keys, &{&1, Application.get_env(:agent_link, &1)})
+
+    on_exit(fn ->
+      Enum.each(previous, fn {key, value} -> AgentLink.TestHelpers.restore(key, value) end)
+    end)
+
+    assert :ok = AgentLink.CLI.apply(["relay", "--link", "/tmp/custom-link.json"])
+    assert AgentLink.Paths.link() == "/tmp/custom-link.json"
   end
 
   test "the removed opencode bin flag is rejected" do
@@ -186,7 +201,7 @@ defmodule AgentLink.CLITest do
   end
 
   test "a release boot reads plain arguments and those words replace the mode" do
-    assert release_mode(["-extra", "--no-halt", "--", "relay", "--token", "sekret"]) == "relay"
+    assert release_mode(["-extra", "--no-halt", "--", "relay"]) == "relay"
 
     assert release_mode([
              "-extra",
@@ -194,9 +209,7 @@ defmodule AgentLink.CLITest do
              "--cookie",
              "fixture",
              "--",
-             "relay",
-             "--token",
-             "sekret"
+             "relay"
            ]) == "relay"
   end
 

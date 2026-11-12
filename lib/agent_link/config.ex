@@ -1,8 +1,9 @@
 defmodule AgentLink.Config do
   @moduledoc """
   The plane URL, the optional target, and the token. `load/1` reads them.
-  `agentlink connect` calls `load/1`. A missing token is an error in that
-  command. `load/1` still returns a nil token when the token is unset.
+  `agentlink connect` calls `load/1`. `agentlink relay` calls `token/1`.
+  Both commands reject a missing token. `load/1` still returns a nil token
+  when the token is unset.
   """
 
   # Subsets of 0600. Any other permission bit is too open.
@@ -50,10 +51,19 @@ defmodule AgentLink.Config do
 
     with {:ok, plane} <- field(opts, :plane, env, "AGENTLINK_PLANE"),
          {:ok, target} <- field(opts, :target, env, "AGENTLINK_TARGET"),
-         {:ok, token} <- field(opts, :token, env, "AGENTLINK_TOKEN"),
          {:ok, file} <- read_config(config_path, token_path),
-         {:ok, token} <- resolve_token(token, token_path) do
+         {:ok, token} <- token(opts) do
       {:ok, %__MODULE__{plane: plane || file.plane, target: target || file.target, token: token}}
+    end
+  end
+
+  @doc "Resolve the token from the option, environment, or token file."
+  def token(opts) when is_list(opts) do
+    root = root!(opts)
+    env = env!(opts)
+
+    with {:ok, token} <- field(opts, :token, env, "AGENTLINK_TOKEN") do
+      resolve_token(token, child(root, &AgentLink.Paths.token/0))
     end
   end
 
