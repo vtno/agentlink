@@ -10,7 +10,7 @@ ACP messages are JSON-RPC. The agent writes one JSON object per line on its stan
 
 ## Run AgentLink from source
 
-You need Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
+This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`, so Mix accepts Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
 
 `agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. AgentLink prints the startup lines before it reads the link file. Those lines include the token. When the file is missing, AgentLink then prints the error and exits.
 
@@ -51,7 +51,7 @@ A plane with no token creates one for that process and prints it. Look for `Agen
 
 ## Build a release
 
-The build machine needs Elixir 1.17 or a later 1.x release. The machine that runs the release does not need Elixir. The release includes its own ERTS.
+This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`. The machine that runs the release does not need Elixir. The release includes its own ERTS.
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
@@ -78,6 +78,20 @@ agentlink plane --port 8090
 agentlink relay --token 'the-token'
 agentlink connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
 ```
+
+## Download a release
+
+A release for a tag that starts with `v` includes one archive for each target and a `SHA256SUMS` file. Each Linux target is a gzip tarball named `agentlink-<target>.tar.gz`. Each macOS target is a gzip tarball named `agentlink-<target>.tar.gz`. The Windows target is a zip file named `agentlink-<target>.zip`. Two of those names are `agentlink-linux-x86_64.tar.gz` and `agentlink-windows-x86_64.zip`.
+
+Verify the archives with `SHA256SUMS` before you unpack one. Run `sha256sum -c SHA256SUMS` in the directory that contains `SHA256SUMS` and every archive listed in `SHA256SUMS`.
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+On Windows, run `(Get-FileHash -Algorithm SHA256 agentlink-windows-x86_64.zip).Hash.ToLower()`. Compare that hex with the hex at the start of the matching line in `SHA256SUMS`.
+
+Unpack the archive in an empty directory. Run `bin/agentlink`. On Windows, run `bin/agentlink.bat`.
 
 ## Reach a plane on another machine
 
@@ -292,3 +306,7 @@ AGENTLINK_BIN=./_build/prod/rel/agentlink/bin/agentlink OPENCODE_BIN=/path/to/op
 ```
 
 The wrapped test starts that release. The test asks OpenCode to write an HTML page, then checks the page.
+
+## License
+
+Copyright 2026 Tino Thamjarat and Thamtech Co., Ltd. AgentLink is licensed under the Apache License, Version 2.0. The license identifier in `mix.exs` is `Apache-2.0`. The full text is in `LICENSE`.

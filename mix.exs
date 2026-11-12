@@ -9,7 +9,8 @@ defmodule AgentLink.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
-      releases: releases()
+      releases: releases(),
+      package: package()
     ]
   end
 
@@ -43,6 +44,12 @@ defmodule AgentLink.MixProject do
       agentlink: [
         steps: [:assemble, &AgentLink.Release.forward_start_args/1]
       ]
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
     ]
   end
 end
