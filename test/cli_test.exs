@@ -79,7 +79,7 @@ defmodule AgentLink.CLITest do
   end
 
   test "relay stores its selected link path" do
-    keys = [:mode, :relay_token, :link_path]
+    keys = [:mode, :cli_token, :link_path]
     previous = Map.new(keys, &{&1, Application.get_env(:agent_link, &1)})
 
     on_exit(fn ->
@@ -271,19 +271,19 @@ defmodule AgentLink.CLITest do
       mode: Application.get_env(:agent_link, :mode),
       port: Application.get_env(:agent_link, :port),
       plane_url: Application.get_env(:agent_link, :plane_url),
-      token: Application.get_env(:agent_link, :relay_token)
+      token: Application.get_env(:agent_link, :cli_token)
     }
 
     assert :ok = AgentLink.CLI.apply(["plane", "--port", "9001", "--token", "sekret"])
     assert Application.get_env(:agent_link, :mode) == :plane
     assert Application.get_env(:agent_link, :port) == 9001
     assert Application.get_env(:agent_link, :plane_url) == AgentLink.Paths.plane_url(9001)
-    assert Application.get_env(:agent_link, :relay_token) == "sekret"
+    assert Application.get_env(:agent_link, :cli_token) == "sekret"
 
     AgentLink.TestHelpers.restore(:mode, previous.mode)
     AgentLink.TestHelpers.restore(:port, previous.port)
     AgentLink.TestHelpers.restore(:plane_url, previous.plane_url)
-    AgentLink.TestHelpers.restore(:relay_token, previous.token)
+    AgentLink.TestHelpers.restore(:cli_token, previous.token)
   end
 
   defp release_mode(extra) do

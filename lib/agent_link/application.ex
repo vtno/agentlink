@@ -30,7 +30,7 @@ defmodule AgentLink.Application do
   and `:connect_stdio` override the client relay defaults when they are set.
 
   The plane, combined mode, and agent relay resolve a token before setup.
-  `:relay_token` holds the flag unchanged. Otherwise `AgentLink.Config.token/1`
+  `:cli_token` holds the flag unchanged. Otherwise `AgentLink.Config.token/1`
   reads `:config_env` and `:config_root`. A missing token stops startup.
 
   When the plane URL is missing, the token is missing, or the client relay
@@ -61,7 +61,7 @@ defmodule AgentLink.Application do
   @impl true
   def start(_type, _args) do
     with :ok <- command(),
-         :ok <- prepare_relay_token(),
+         :ok <- prepare_token(),
          :ok <- prepare(),
          :ok <- install_connect_stop(),
          {:ok, children} <- children() do
@@ -71,14 +71,14 @@ defmodule AgentLink.Application do
     end
   end
 
-  defp prepare_relay_token do
+  defp prepare_token do
     mode = Application.fetch_env!(:agent_link, :mode)
 
     if mode in [:plane, :all, :relay] do
       root = Application.get_env(:agent_link, :config_root, AgentLink.Paths.root())
 
       result =
-        case Application.get_env(:agent_link, :relay_token) do
+        case Application.get_env(:agent_link, :cli_token) do
           nil ->
             AgentLink.Config.token(
               root: root,
