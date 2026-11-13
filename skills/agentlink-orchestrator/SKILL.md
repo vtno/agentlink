@@ -17,7 +17,7 @@ AgentLink does not ship an orchestrator or an ACP driver. Use an ACP client to d
 	curl -fsS http://127.0.0.1:8090/health
 	```
 
-4. Check status with the token in the `Authorization: Bearer` header. Turn off shell tracing first. This example uses the hex token from [Run AgentLink from source](../../README.md#run-agentlink-from-source).
+4. Check status with the token in the `Authorization: Bearer` header. Turn off shell tracing first. The `header` line uses curl config syntax. It works for a token without double quotes or backslashes, such as the hex token from [Run AgentLink from source](../../README.md#run-agentlink-from-source).
 
 	```sh
 	printf 'header = "Authorization: Bearer %s"\n' "$(cat "$HOME/.agentlink/token")" | curl -fsS --config - http://127.0.0.1:8090/status

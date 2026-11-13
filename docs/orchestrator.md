@@ -39,7 +39,7 @@ On the plane's machine, check `GET /health`. The endpoint needs no token.
 curl -fsS http://127.0.0.1:8090/health
 ```
 
-Check `GET /status` with the token. The example uses the hex token from [Run AgentLink from source](../README.md#run-agentlink-from-source). Turn off shell tracing before running it.
+Check `GET /status` with the token. The `header` line uses curl config syntax. It works for a token without double quotes or backslashes, such as the hex token from [Run AgentLink from source](../README.md#run-agentlink-from-source). Turn off shell tracing before running it.
 
 ```sh
 printf 'header = "Authorization: Bearer %s"\n' "$(cat "$HOME/.agentlink/token")" | curl -fsS --config - http://127.0.0.1:8090/status
