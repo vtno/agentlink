@@ -17,19 +17,19 @@ AgentLink does not ship an orchestrator or an ACP driver. Use an ACP client to d
 	curl -fsS http://127.0.0.1:8090/health
 	```
 
-4. Check status with the token in the `Authorization: Bearer` header. Turn off shell tracing first. The `header` line uses curl config syntax. It works for a token without double quotes or backslashes, such as the hex token from [Run AgentLink from source](../../README.md#run-agentlink-from-source).
+4. Check status with the token in the `Authorization: Bearer` header. Turn off shell tracing first. The `header` line uses curl config syntax and assumes a single-line token without spaces, double quotes, or backslashes, such as the hex token from [Run AgentLink from source](../../README.md#run-agentlink-from-source).
 
 	```sh
 	printf 'header = "Authorization: Bearer %s"\n' "$(cat "$HOME/.agentlink/token")" | curl -fsS --config - http://127.0.0.1:8090/status
 	```
 
-	If you use `AGENTLINK_TOKEN` instead of the token file, replace `$(cat "$HOME/.agentlink/token")` with `$AGENTLINK_TOKEN` inside the double quotes. Confirm that `runtimes` contains the target link's `name`.
+	If you use `AGENTLINK_TOKEN` instead of the token file, replace `$(cat "$HOME/.agentlink/token")` with `$AGENTLINK_TOKEN` inside the double quotes. AgentLink turns the link's `name` into a slug, and `/status` shows that slug. Confirm that `runtimes` contains the target slug. Each relay needs a distinct slug.
 
 ## Connect to the agent
 
 1. Set the plane URL with `--plane`, `AGENTLINK_PLANE`, or `plane` in `$HOME/.agentlink/config`.
 2. Run `agentlink connect --target NAME` as the ACP client's stdio command. Replace `NAME` with the online link name.
-3. Use `AGENTLINK_TARGET` or the config file's `target` field instead of `--target` if needed. See [Command line](../../README.md#command-line) for precedence.
+3. To use `AGENTLINK_TARGET` or the config file's `target` field, omit `--target`. See [Command line](../../README.md#command-line) for precedence.
 
 ## Run an ACP session
 
@@ -41,6 +41,8 @@ AgentLink does not ship an orchestrator or an ACP driver. Use an ACP client to d
 The plane also handles `session/list`, `session/load`, and `session/resume` itself. See [Client socket](../../README.md#client-socket) for their behavior.
 
 ## Protect the token and processes
+
+Follow these rules when you run AgentLink.
 
 - Never print or log the token. Never pass it on a command line.
 - Never list other processes' command lines with `ps`, `pgrep -a`, or `/proc/*/cmdline`. They can contain secrets.

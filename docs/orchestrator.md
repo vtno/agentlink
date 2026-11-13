@@ -16,10 +16,7 @@ The plane listens on `127.0.0.1:8090`. Do not publish the plane's listen port. N
 
 ## Connect the relay
 
-1. On the user's machine, set `AGENTLINK_TOKEN` or put the same token in `$HOME/.agentlink/token` with mode 0600.
-2. Create `$HOME/.agentlink/agent.link.json`. Set `name`, `command`, `args`, and `plane_url` for the agent and the route to the plane. See [Link file](../README.md#link-file) for the fields.
-3. Choose a route to the plane and set `plane_url` as described below.
-4. Run `agentlink relay` on the user's machine.
+Choose a route to the plane.
 
 For an SSH tunnel, run `ssh -L 8090:127.0.0.1:8090 plane-host` on the user's machine. Set `plane_url` to `ws://127.0.0.1:8090/agent`.
 
@@ -29,7 +26,13 @@ For Tailscale HTTPS Serve, follow [Option 2: Tailscale serve](../README.md#optio
 
 For a TLS reverse proxy, follow [Option 3: Caddy or another TLS reverse proxy](../README.md#option-3-caddy-or-another-tls-reverse-proxy). Set `plane_url` to `wss://plane.example.com/agent`, with the proxy's host in place of `plane.example.com`.
 
-For several relays, give each link file a distinct `name`. See [Link file](../README.md#link-file) for multiple relays.
+Then start the relay on the user's machine.
+
+1. Set `AGENTLINK_TOKEN` or put the same token in `$HOME/.agentlink/token` with mode 0600.
+2. Create `$HOME/.agentlink/agent.link.json`. Set `name`, `command`, `args`, and `plane_url` for the agent and the chosen route. See [Link file](../README.md#link-file) for the fields.
+3. Run `agentlink relay`.
+
+For several relays, give each link a distinct slug. AgentLink turns each `name` into a slug, so names such as `Lab Box` and `lab-box` collide. See [Link file](../README.md#link-file) for multiple relays.
 
 ## Check the link
 
@@ -39,19 +42,19 @@ On the plane's machine, check `GET /health`. The endpoint needs no token.
 curl -fsS http://127.0.0.1:8090/health
 ```
 
-Check `GET /status` with the token. The `header` line uses curl config syntax. It works for a token without double quotes or backslashes, such as the hex token from [Run AgentLink from source](../README.md#run-agentlink-from-source). Turn off shell tracing before running it.
+Check `GET /status` with the token. The `header` line uses curl config syntax and assumes a single-line token without spaces, double quotes, or backslashes, such as the hex token from [Run AgentLink from source](../README.md#run-agentlink-from-source). Turn off shell tracing before running it.
 
 ```sh
 printf 'header = "Authorization: Bearer %s"\n' "$(cat "$HOME/.agentlink/token")" | curl -fsS --config - http://127.0.0.1:8090/status
 ```
 
-If you use `AGENTLINK_TOKEN` instead of the token file, replace `$(cat "$HOME/.agentlink/token")` with `$AGENTLINK_TOKEN` inside the double quotes. Confirm that `runtimes` contains the link's `name`. The token used for this check must match the plane's token.
+If you use `AGENTLINK_TOKEN` instead of the token file, replace `$(cat "$HOME/.agentlink/token")` with `$AGENTLINK_TOKEN` inside the double quotes. AgentLink turns the link's `name` into a slug, and `/status` shows that slug. Confirm that `runtimes` contains the target slug. Each relay needs a distinct slug. The token used for this check must match the plane's token.
 
 ## Connect the orchestrator
 
 Configure your ACP client to run `agentlink connect --target NAME` over stdio. Replace `NAME` with the online link name. Set the plane URL with `--plane`, `AGENTLINK_PLANE`, or the `plane` field in `$HOME/.agentlink/config`. Set `AGENTLINK_TOKEN` or use the token file.
 
-You can select the target with `AGENTLINK_TARGET` or the config file's `target` field instead of `--target`. If several agents are online and you select none, the error says `Several agents are online: <names>. Pass --target NAME.` The error lists the actual names. See [Command line](../README.md#command-line) for precedence and configuration.
+To use `AGENTLINK_TARGET` or the config file's `target` field, omit `--target`. If several agents are online and you select none, the error says `Several agents are online: <names>. Pass --target NAME.` The error lists the actual names. See [Command line](../README.md#command-line) for precedence and configuration.
 
 ## Connect to `/acp` directly
 
