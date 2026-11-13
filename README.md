@@ -10,6 +10,8 @@ The plane accepts client connections. The relay opens one agent and starts an up
 
 ACP messages are JSON-RPC. The agent writes one JSON object per line on its standard output. The uplink sends one JSON object in each WebSocket text frame.
 
+To run an always-on agent as an orchestrator, see [Run an always-on orchestrator](docs/orchestrator.md).
+
 ## Run AgentLink from source
 
 This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`, so Mix accepts Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
