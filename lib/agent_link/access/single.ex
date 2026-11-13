@@ -34,14 +34,12 @@ defmodule AgentLink.Access.Single do
 
   defp message(mode) do
     url = Application.get_env(:agent_link, :plane_url) || AgentLink.Paths.plane_url()
-    root = Application.get_env(:agent_link, :config_root, AgentLink.Paths.root())
-    path = Path.join(root, Path.basename(AgentLink.Paths.token()))
 
     case mode do
       :plane ->
         """
         AgentLink is using the configured token.
-        On the machine that should host the agent, set AGENTLINK_TOKEN or write the same token to #{path}, then run:
+        On the machine that should host the agent, set AGENTLINK_TOKEN or write the same token to $HOME/.agentlink/token, then run:
 
         agentlink relay
 
@@ -53,7 +51,7 @@ defmodule AgentLink.Access.Single do
         """
         AgentLink is using the configured token.
         The agent relay on this machine is starting.
-        To start a relay on another machine, set AGENTLINK_TOKEN or write the same token to #{path} there, then run:
+        To start a relay on another machine, set AGENTLINK_TOKEN or write the same token to $HOME/.agentlink/token there, then run:
 
         agentlink relay
         """

@@ -4,12 +4,10 @@ defmodule AgentLink.SetupTest do
   setup do
     token = Application.get_env(:agent_link, :master_token)
     url = Application.get_env(:agent_link, :plane_url)
-    root = Application.get_env(:agent_link, :config_root)
 
     on_exit(fn ->
       AgentLink.TestHelpers.restore(:master_token, token)
       AgentLink.TestHelpers.restore(:plane_url, url)
-      AgentLink.TestHelpers.restore(:config_root, root)
     end)
 
     :ok
@@ -34,13 +32,12 @@ defmodule AgentLink.SetupTest do
   test "startup instructions never contain the token" do
     Application.put_env(:agent_link, :plane_url, "wss://plane.example/agent")
     Application.put_env(:agent_link, :master_token, "sekret")
-    Application.put_env(:agent_link, :config_root, "/tmp/agentlink-example")
 
     for mode <- [:plane, :all] do
       assert {:ok, text} = AgentLink.Access.Single.prepare(mode)
       refute text =~ "sekret"
       assert text =~ "AGENTLINK_TOKEN"
-      assert text =~ "/tmp/agentlink-example/token"
+      assert text =~ "$HOME/.agentlink/token"
       assert text =~ "agentlink relay"
     end
   end
