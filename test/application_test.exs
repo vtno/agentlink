@@ -195,6 +195,59 @@ defmodule AgentLink.ApplicationTest do
     Supervisor.stop(sup)
   end
 
+  test "plane and all resolve tokens in order and reject missing or insecure files" do
+    root = connect_root()
+    write_link()
+    write_connect_token!(root, " file \n")
+    Application.put_env(:agent_link, :config_root, root)
+    Application.put_env(:agent_link, :config_env, %{"AGENTLINK_TOKEN" => " environment "})
+    Application.put_env(:agent_link, :port, 0)
+
+    for {mode, argv, name} <- [
+          {:plane, ["plane", "--token", " flag "], "agentlink plane"},
+          {:all, ["--token", " flag "], "agentlink"}
+        ] do
+      assert :ok = AgentLink.CLI.apply(argv)
+      assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+      assert Application.get_env(:agent_link, :master_token) == " flag "
+      Supervisor.stop(sup)
+
+      Application.put_env(:agent_link, :relay_token, nil)
+      assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+      assert Application.get_env(:agent_link, :master_token) == "environment"
+      Supervisor.stop(sup)
+
+      Application.put_env(:agent_link, :config_env, %{})
+      assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+      assert Application.get_env(:agent_link, :master_token) == "file"
+      Supervisor.stop(sup)
+
+      File.chmod!(Path.join(root, "token"), 0o644)
+      assert {:error, bad_mode} = AgentLink.Application.start(:normal, [])
+      assert bad_mode =~ "0644"
+      assert bad_mode =~ Path.join(root, "token")
+      refute Process.whereis(AgentLink.Supervisor)
+
+      File.rm!(Path.join(root, "token"))
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:error, message} = AgentLink.Application.start(:normal, [])
+
+          assert message ==
+                   "#{name} needs a token. Pass --token, set AGENTLINK_TOKEN, or write #{Path.join(root, "token")}.\n"
+        end)
+
+      assert length(String.split(stderr, "#{name} needs a token.")) == 2
+      refute Process.whereis(AgentLink.Supervisor)
+      refute Process.whereis(AgentLink.Plane)
+      refute Process.whereis(AgentLink.Relay.Agent)
+      assert Application.get_env(:agent_link, :mode) == mode
+      write_connect_token!(root, " file \n")
+      Application.put_env(:agent_link, :config_env, %{"AGENTLINK_TOKEN" => " environment "})
+    end
+  end
+
   test "relay resolves a token before starting the agent" do
     root = connect_root()
     write_link()
@@ -226,6 +279,7 @@ defmodule AgentLink.ApplicationTest do
 
   test "plane mode does not start an agent relay" do
     Application.put_env(:agent_link, :mode, :plane)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     Application.put_env(:agent_link, :port, 18_096)
 
     Application.put_env(
@@ -273,6 +327,7 @@ defmodule AgentLink.ApplicationTest do
 
   test "all mode prints a missing launch once and does not stay up" do
     Application.put_env(:agent_link, :mode, :all)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     Application.put_env(:agent_link, :port, 18_100)
 
     Application.put_env(
@@ -611,6 +666,7 @@ defmodule AgentLink.ApplicationTest do
     end
 
     Application.put_env(:agent_link, :mode, :all)
+    Application.put_env(:agent_link, :relay_token, "fixture")
     Application.put_env(:agent_link, :port, port)
     write_link()
     assert {:ok, _pid} = AgentLink.Application.start(:normal, [])

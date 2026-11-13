@@ -6,6 +6,7 @@ defmodule AgentLink.CLI do
   replaces the configured mode, port, and token.
   `plane` is the plane alone. `relay` starts `AgentLink.Relay.Agent`.
   `connect` starts `AgentLink.Relay.Client`.
+  The plane, combined mode, and relay store `--token` as `:relay_token`.
   `parse/1` does not drop `start`. `start` and `start start` are usage errors.
   `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1` and leaves its
   own `start` in `%*`. `argv_from_launch/1` drops that one word only when
@@ -104,6 +105,8 @@ defmodule AgentLink.CLI do
     agentlink plane [--port PORT] [--token TOKEN]
     agentlink relay [--link PATH] [--token TOKEN]
     agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
+
+    Set AGENTLINK_TOKEN or use $HOME/.agentlink/token to keep the token out of the command line.
     """
   end
 
@@ -189,7 +192,7 @@ defmodule AgentLink.CLI do
       Application.put_env(:agent_link, :plane_url, AgentLink.Paths.plane_url(port))
     end
 
-    if token, do: Application.put_env(:agent_link, :master_token, token)
+    Application.put_env(:agent_link, :relay_token, token)
     :ok
   end
 end

@@ -29,6 +29,10 @@ defmodule AgentLink.Application do
   `:env` passed to `load/1`, default `System.get_env/0`. `:connect_transport`
   and `:connect_stdio` override the client relay defaults when they are set.
 
+  The plane, combined mode, and agent relay resolve a token before setup.
+  `:relay_token` holds the flag unchanged. Otherwise `AgentLink.Config.token/1`
+  reads `:config_env` and `:config_root`. A missing token stops startup.
+
   When the plane URL is missing, the token is missing, or the client relay
   fails to start, the command prints the error and exits with status 1.
   In the test environment, `start/2` returns `{:error, message}` instead of
@@ -68,7 +72,9 @@ defmodule AgentLink.Application do
   end
 
   defp prepare_relay_token do
-    if Application.fetch_env!(:agent_link, :mode) == :relay do
+    mode = Application.fetch_env!(:agent_link, :mode)
+
+    if mode in [:plane, :all, :relay] do
       root = Application.get_env(:agent_link, :config_root, AgentLink.Paths.root())
 
       result =
@@ -90,7 +96,7 @@ defmodule AgentLink.Application do
 
         {:ok, nil} ->
           report_boot(
-            "agentlink relay needs a token. Pass --token, set AGENTLINK_TOKEN, or write #{token_path(root)}.\n"
+            "#{command_name(mode)} needs a token. Pass --token, set AGENTLINK_TOKEN, or write #{token_path(root)}.\n"
           )
 
         {:error, message} ->
@@ -100,6 +106,9 @@ defmodule AgentLink.Application do
       :ok
     end
   end
+
+  defp command_name(:all), do: "agentlink"
+  defp command_name(mode), do: "agentlink #{mode}"
 
   defp command do
     if Application.get_env(:agent_link, :cli, true) do

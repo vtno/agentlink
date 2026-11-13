@@ -4,10 +4,12 @@ defmodule AgentLink.SetupTest do
   setup do
     token = Application.get_env(:agent_link, :master_token)
     url = Application.get_env(:agent_link, :plane_url)
+    root = Application.get_env(:agent_link, :config_root)
 
     on_exit(fn ->
       AgentLink.TestHelpers.restore(:master_token, token)
       AgentLink.TestHelpers.restore(:plane_url, url)
+      AgentLink.TestHelpers.restore(:config_root, root)
     end)
 
     :ok
@@ -16,40 +18,31 @@ defmodule AgentLink.SetupTest do
   test "an existing token is kept" do
     Application.put_env(:agent_link, :master_token, "from-env")
     assert {:ok, text} = AgentLink.Access.Single.prepare(:plane)
-    assert text =~ "using the token from --token."
+    assert text =~ "using the configured token."
     assert Application.get_env(:agent_link, :master_token) == "from-env"
   end
 
-  test "a plane mints a token for this process" do
+  test "a missing token is rejected without minting" do
     Application.delete_env(:agent_link, :master_token)
-    assert {:ok, minted_text} = AgentLink.Access.Single.prepare(:plane)
-    minted = Application.get_env(:agent_link, :master_token)
-    assert is_binary(minted)
-    assert minted_text =~ minted
-    assert minted_text =~ "Pass the same --token"
 
-    assert {:ok, reused} = AgentLink.Access.Single.prepare(:relay)
-    assert Application.get_env(:agent_link, :master_token) == minted
-    assert reused =~ "using the configured token."
+    for mode <- [:plane, :all, :relay] do
+      assert {:error, _} = AgentLink.Access.Single.prepare(mode)
+      refute Application.get_env(:agent_link, :master_token)
+    end
   end
 
-  test "an agent does not mint a token" do
-    Application.delete_env(:agent_link, :master_token)
-    assert {:error, message} = AgentLink.Access.Single.prepare(:relay)
-    assert message =~ "Pass --token"
-  end
-
-  test "standalone mode prints a command and waits" do
+  test "startup instructions never contain the token" do
     Application.put_env(:agent_link, :plane_url, "wss://plane.example/agent")
     Application.put_env(:agent_link, :master_token, "sekret")
-    assert {:ok, text} = AgentLink.Access.Single.prepare(:plane)
-    assert text =~ AgentLink.Access.Single.command("sekret")
-    assert text =~ "Waiting for the uplink to connect."
+    Application.put_env(:agent_link, :config_root, "/tmp/agentlink-example")
 
-    assert {:ok, local} = AgentLink.Access.Single.prepare(:all)
-    assert local =~ "sekret"
-    assert local =~ AgentLink.Access.Single.command("sekret")
-    assert local =~ "agent relay on this machine is starting"
+    for mode <- [:plane, :all] do
+      assert {:ok, text} = AgentLink.Access.Single.prepare(mode)
+      refute text =~ "sekret"
+      assert text =~ "AGENTLINK_TOKEN"
+      assert text =~ "/tmp/agentlink-example/token"
+      assert text =~ "agentlink relay"
+    end
   end
 
   test "the watcher reports a connection and a rejection" do

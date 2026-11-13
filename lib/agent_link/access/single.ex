@@ -1,8 +1,7 @@
 defmodule AgentLink.Access.Single do
   @moduledoc """
-  One operator. `--token` is the token. When it is unset, a plane mints one
-  for this process and prints it. That admin owns every uplink and may use
-  every uplink.
+  One operator. The configured token identifies an admin who owns and may use
+  every uplink. Startup instructions do not include the token.
   """
 
   @behaviour AgentLink.Access
@@ -26,52 +25,25 @@ defmodule AgentLink.Access.Single do
 
   @impl true
   def prepare(mode) do
-    case ensure_token(mode) do
-      {:existing, token} -> {:ok, message(mode, token, :given)}
-      {:minted, token} -> {:ok, message(mode, token, :minted)}
-      :missing -> {:error, "Pass --token. The plane prints it.\n"}
+    if AgentLink.Auth.enabled?() do
+      {:ok, message(mode)}
+    else
+      {:error, "A token is required.\n"}
     end
   end
 
-  @doc "The shell line that starts this binary as the relay."
-  def command(token) when is_binary(token) do
-    "agentlink relay --token '#{String.replace(token, "'", "'\\''")}'"
-  end
-
-  defp ensure_token(mode) do
-    case configured_token() do
-      token when is_binary(token) ->
-        {:existing, token}
-
-      _ when mode in [:plane, :all] ->
-        token = mint()
-        Application.put_env(:agent_link, :master_token, token)
-        {:minted, token}
-
-      _ ->
-        :missing
-    end
-  end
-
-  defp message(mode, token, source) do
+  defp message(mode) do
     url = Application.get_env(:agent_link, :plane_url) || AgentLink.Paths.plane_url()
-
-    origin =
-      case source do
-        :minted ->
-          "AgentLink created a token for this process. Pass the same --token to start again."
-
-        :given ->
-          "AgentLink is using the token from --token."
-      end
+    root = Application.get_env(:agent_link, :config_root, AgentLink.Paths.root())
+    path = Path.join(root, Path.basename(AgentLink.Paths.token()))
 
     case mode do
       :plane ->
         """
-        #{origin}
-        Run this on the machine that should host the agent:
+        AgentLink is using the configured token.
+        On the machine that should host the agent, set AGENTLINK_TOKEN or write the same token to #{path}, then run:
 
-        #{command(token)}
+        agentlink relay
 
         The plane listens on 127.0.0.1. On that machine, set plane_url in the link file to an address it can reach. This plane is #{url} when it is this machine.
         Waiting for the uplink to connect.
@@ -79,23 +51,15 @@ defmodule AgentLink.Access.Single do
 
       :all ->
         """
-        #{origin}
-        #{token}
-
+        AgentLink is using the configured token.
         The agent relay on this machine is starting.
-        Another machine can dial with:
+        To start a relay on another machine, set AGENTLINK_TOKEN or write the same token to #{path} there, then run:
 
-        #{command(token)}
+        agentlink relay
         """
 
       :relay ->
         "AgentLink is using the configured token.\nThe uplink will dial the plane_url in the link file.\n"
     end
-  end
-
-  defp configured_token, do: AgentLink.Auth.token()
-
-  defp mint do
-    Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
   end
 end

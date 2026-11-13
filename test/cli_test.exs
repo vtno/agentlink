@@ -271,19 +271,19 @@ defmodule AgentLink.CLITest do
       mode: Application.get_env(:agent_link, :mode),
       port: Application.get_env(:agent_link, :port),
       plane_url: Application.get_env(:agent_link, :plane_url),
-      token: Application.get_env(:agent_link, :master_token)
+      token: Application.get_env(:agent_link, :relay_token)
     }
 
     assert :ok = AgentLink.CLI.apply(["plane", "--port", "9001", "--token", "sekret"])
     assert Application.get_env(:agent_link, :mode) == :plane
     assert Application.get_env(:agent_link, :port) == 9001
     assert Application.get_env(:agent_link, :plane_url) == AgentLink.Paths.plane_url(9001)
-    assert Application.get_env(:agent_link, :master_token) == "sekret"
+    assert Application.get_env(:agent_link, :relay_token) == "sekret"
 
     AgentLink.TestHelpers.restore(:mode, previous.mode)
     AgentLink.TestHelpers.restore(:port, previous.port)
     AgentLink.TestHelpers.restore(:plane_url, previous.plane_url)
-    AgentLink.TestHelpers.restore(:master_token, previous.token)
+    AgentLink.TestHelpers.restore(:relay_token, previous.token)
   end
 
   defp release_mode(extra) do
