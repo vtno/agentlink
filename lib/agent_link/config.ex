@@ -1,8 +1,8 @@
 defmodule AgentLink.Config do
   @moduledoc """
   The plane URL, the optional target, and the token. `load/1` reads them.
-  `agentlink connect` calls `load/1`. `agentlink relay` calls `token/1`.
-  Both commands reject a missing token. `load/1` still returns a nil token
+  `agentlink connect` calls `load/1`. The plane, combined mode, and relay call
+  `token/1`. All commands reject a missing token. `load/1` still returns a nil token
   when the token is unset.
   """
 

@@ -18,7 +18,7 @@ defmodule AgentLink.Access do
   @doc "An uplink is claiming its name. `:reject` refuses the hello. A policy may omit this."
   @callback claim(Subject.t(), name :: String.t()) :: :ok | :reject
 
-  @doc "Install this policy before the sockets open. Return text for the operator, or an error."
+  @doc "Check the configured token before sockets open. Return startup instructions or an error."
   @callback prepare(mode :: atom()) :: {:ok, String.t()} | {:error, String.t()}
 
   @optional_callbacks [claim: 2]
@@ -84,7 +84,7 @@ defmodule AgentLink.Access do
     end
   end
 
-  @doc "Let the configured policy install credentials and describe how to connect."
+  @doc "Let the configured policy check the token and describe how to connect."
   def prepare do
     implementation().prepare(Application.fetch_env!(:agent_link, :mode))
   end

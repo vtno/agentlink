@@ -21,7 +21,7 @@ defmodule AgentLink.LifecycleTest do
 
     previous = %{
       mode: Application.get_env(:agent_link, :mode),
-      relay_token: Application.get_env(:agent_link, :relay_token),
+      cli_token: Application.get_env(:agent_link, :cli_token),
       master_token: Application.get_env(:agent_link, :master_token),
       port: Application.get_env(:agent_link, :port),
       link_path: Application.get_env(:agent_link, :link_path),
@@ -721,7 +721,10 @@ defmodule AgentLink.LifecycleTest do
 
   defp start!(mode, opts \\ []) do
     Application.put_env(:agent_link, :mode, mode)
-    if mode == :relay, do: Application.put_env(:agent_link, :relay_token, "fixture")
+
+    if mode in [:plane, :all, :relay],
+      do: Application.put_env(:agent_link, :cli_token, "fixture")
+
     if port = opts[:port], do: Application.put_env(:agent_link, :port, port)
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
     sup

@@ -1,12 +1,12 @@
 defmodule AgentLink.Setup do
   @moduledoc """
-  Prints the instructions from the access policy. The policy decides how a token is created.
+  Asks the access policy to check the configured token and prints its startup instructions.
   """
 
   # Mix is not in a release. Decide this when the file is compiled.
   @skip_prepare Mix.env() == :test
 
-  @doc "Ask the access policy to install credentials, and show its instructions. Tests skip this."
+  @doc "Ask the access policy to check the configured token and show its instructions. Tests skip this."
   def prepare do
     if @skip_prepare do
       :ok

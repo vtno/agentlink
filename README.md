@@ -14,7 +14,17 @@ ACP messages are JSON-RPC. The agent writes one JSON object per line on its stan
 
 This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`, so Mix accepts Elixir 1.17 or a later 1.x release. To run an agent, the `command` in the link file must name an executable `AgentLink.Agent.Process` can open. A bare name is resolved with `System.find_executable/1`. An absolute path is used as written.
 
-`agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. A standalone relay prints startup lines without the token before reading the file. The default combined plane and relay prints the token in its startup lines.
+`agentlink plane` does not read the link file. `agentlink connect` does not read the link file. A relay exits when the file is missing. The error begins `No link file at`. Startup lines do not include the token.
+
+Create a token file once before you start AgentLink. This example requires OpenSSL and refuses to overwrite an existing file.
+
+```sh
+mkdir -p "$HOME/.agentlink"
+(umask 077; set -C; openssl rand -hex 32 > "$HOME/.agentlink/token") &&
+  chmod 600 "$HOME/.agentlink/token"
+```
+
+Use the same token on each machine. Transfer it through a secure channel.
 
 Create `$HOME/.agentlink/agent.link.json` with the object below when you start a relay.
 
@@ -41,17 +51,17 @@ See [Link file](#link-file) for the field rules.
 `mix run --no-halt` starts the plane and the relay. Pass AgentLink flags after `--`.
 
 ```sh
-mix run --no-halt -- --port 8090 --token 'the-token'
+mix run --no-halt -- --port 8090
 mix run --no-halt -- plane --port 8090
-mix run --no-halt -- relay --token 'the-token'
-mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
+mix run --no-halt -- relay
+mix run --no-halt -- connect --plane ws://127.0.0.1:8090/acp
 ```
 
-For a relay, set `AGENTLINK_TOKEN` or use `$HOME/.agentlink/token` with mode 0600 to keep the token out of the process list.
+Set `AGENTLINK_TOKEN` or use `$HOME/.agentlink/token` with mode 0600 to keep the token out of the process list.
 
 `plane` starts the plane alone. `relay` starts the relay alone. `connect` starts the client relay alone. See [Command line](#command-line) for the flags.
 
-A plane with no token creates one for that process and prints it. Look for `AgentLink created a token for this process. Pass the same --token to start again.` AgentLink also prints `agentlink relay --token '…'`. AgentLink does not write the token to disk. Pass the same `--token` the next time you start the plane.
+AgentLink exits when no token is set.
 
 ## Build a release
 
@@ -85,8 +95,8 @@ The release workflow builds the Mix release once on Linux. Each target replaces 
 ```sh
 agentlink
 agentlink plane --port 8090
-agentlink relay --token 'the-token'
-agentlink connect --plane ws://127.0.0.1:8090/acp --token 'the-token'
+agentlink relay
+agentlink connect --plane ws://127.0.0.1:8090/acp
 ```
 
 ## Download a release
@@ -151,7 +161,7 @@ Do not publish the plane's listen port. A proxy can log the `?token=` query stri
 
 ## Security model
 
-AgentLink ships with one operator and one token. `AgentLink.Access.Single` is that policy. `--token` sets the token. When a plane starts with no token, AgentLink creates one for that process and prints it. AgentLink does not write the token to disk. The next start needs the same `--token`. The subject for that token is an admin. The admin may use every uplink.
+AgentLink ships with one operator and one token. `AgentLink.Access.Single` is that policy. Create the token before starting AgentLink. AgentLink does not create or print it. The subject for that token is an admin. The admin may use every uplink.
 
 A caller presents the token in the `Authorization` header or in `?token=`. The header scheme is `Bearer` or `bearer`. When `?token=` is present and not empty, AgentLink uses that value and does not read the header. The uplink sends the header. The uplink does not put the token in `plane_url`.
 
@@ -176,7 +186,7 @@ agentlink connect [--plane URL] [--target NAME] [--token TOKEN]
 
 `--port` is an integer from 1 to 65535. The default is 8090. `agentlink relay` rejects `--port` and prints `agentlink relay does not listen.`
 
-`--token` is the token. A relay resolves it from `--token`, then `AGENTLINK_TOKEN`, then `$HOME/.agentlink/token`. A plane with no token creates one. See [Security model](#security-model).
+`agentlink`, `agentlink plane`, and `agentlink relay` resolve the token from `--token`, then `AGENTLINK_TOKEN`, then `$HOME/.agentlink/token`. The file must be regular and have mode 0600 or tighter. The commands exit with status 1 when the token is missing. Prefer the file or environment variable because `--token` exposes its value in the process command line. See [Security model](#security-model).
 
 `agentlink connect` starts the client relay. The editor runs that command as its ACP agent over stdio. The command does not start the plane or the agent relay, and it does not read the link file.
 
