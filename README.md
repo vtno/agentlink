@@ -27,7 +27,7 @@ Create a token before the first start. [Set the token](docs/how-to/set-the-token
 
 ## Run from a clone
 
-This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`, so Mix accepts Elixir 1.17 or a later 1.x release.
+Compiling from a clone requires Elixir 1.20 and Erlang/OTP 29. `.tool-versions` pins Elixir 1.20.4 and OTP 29.1.2.
 
 1. Run `mix deps.get`.
 2. Run `MIX_ENV=prod mix release`.
