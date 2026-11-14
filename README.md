@@ -119,7 +119,8 @@ Each guide is one task.
 - [Connect a client](docs/how-to/connect-a-client.md) points an editor at the plane.
 - [Add an agent](docs/how-to/add-an-agent.md) sets `command` and `args` for OpenCode, Codex, Claude Code, or Kimi.
 - [Reach a plane on another machine](docs/how-to/reach-another-machine.md) uses an ssh tunnel, Tailscale, or a TLS proxy.
-- [Reconnect a relay](docs/how-to/reconnect-a-relay.md) covers a dropped dial and a parked uplink. There is no ping-interval setting.
+- [Reconnect a relay](docs/how-to/reconnect-a-relay.md) covers a dropped dial and a parked uplink.
+- [Set the keepalive](docs/how-to/set-the-keepalive.md) sets the ping interval and the pong timeout.
 - [Stop AgentLink](docs/how-to/stop-agentlink.md) stops a release when distribution is off.
 - [Run an always-on orchestrator](docs/orchestrator.md) puts the plane on one machine and the relay on another.
 
@@ -130,7 +131,7 @@ These pages describe why AgentLink is built this way.
 - [Architecture](docs/explanation/architecture.md) covers the plane, the relay, and the client.
 - [Protocol paths](docs/explanation/protocol.md) covers `/acp` and `/agent`.
 - [Lifecycle](docs/explanation/lifecycle.md) covers startup, supervision, and restarts.
-- [Reconnect and keepalive](docs/explanation/reconnect.md) covers retry, parking, and WebSocket ping frames.
+- [Reconnect and keepalive](docs/explanation/reconnect.md) covers retry, parking, and why the relay sends pings.
 - [Security model](docs/explanation/security.md) covers the single token and the localhost listener.
 - [Release packaging](docs/explanation/release.md) covers the runtime swap and why distribution is off.
 

@@ -40,6 +40,8 @@ An empty argument list is the same command as `agentlink`. A release binary with
 
 The listener binds `127.0.0.1` only. The scheme on that socket is HTTP, so the plane's own URL is `ws://127.0.0.1:<port>/agent`.
 
+There is no flag for the ping interval or the pong timeout. [Configuration](configuration.md) lists `AGENTLINK_WEBSOCKET_PING_INTERVAL` and `AGENTLINK_WEBSOCKET_PONG_TIMEOUT`. [Set the keepalive](../how-to/set-the-keepalive.md) is the procedure.
+
 ## Where values come from
 
 For `agentlink`, `agentlink plane`, and `agentlink relay`, the token comes from `--token`, then `AGENTLINK_TOKEN`, then `$HOME/.agentlink/token`. A value that is empty after trimming is unset. The file must be a regular file in mode `0600`, `0400`, `0200`, or `0000`. A missing token exits with status 1. The message names `--token`, `AGENTLINK_TOKEN`, and the token path.

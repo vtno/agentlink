@@ -29,6 +29,8 @@ A change to `label` or `program` does not dial again for code 4001, 4003, or 400
 
 Any other close, and a failed dial, retries after 500 milliseconds.
 
+Code 1006 is a local status, not a close code from the plane. The transport reports 1006 when the socket ends with no close frame. A missed pong is one case, and the reason text is then `keepalive pong timeout`. A socket error also uses 1006, and the reason is that error. Code 1006 does not park the uplink. [Reconnect and keepalive](../explanation/reconnect.md) describes the ping timer.
+
 ## Client socket
 
 A client connects to `/acp` and sends the token as `Authorization: Bearer` or as `?token=`. The default URL is `ws://127.0.0.1:8090/acp`.

@@ -1,12 +1,16 @@
 # Reconnect a relay
 
-A dropped dial retries on its own. A rejected hello does not. You do not set a ping interval or a pong timeout. AgentLink does not read `AGENTLINK_WEBSOCKET_PING_INTERVAL` or `AGENTLINK_WEBSOCKET_PONG_TIMEOUT`.
+A dropped dial retries on its own. A rejected hello does not.
 
 ## Let a dropped dial retry
 
 If the plane or the path to it is briefly down, leave the relay running. The uplink dials again after 500 milliseconds. The plane log shows `Uplink connected:` and the link name when the hello is accepted.
 
-A WebSocket ping from the peer is answered with a pong. AgentLink does not send pings on a timer. The plane does not close an idle socket for inactivity. [Reconnect and keepalive](../explanation/reconnect.md) describes those choices.
+A missed pong is one of those drops. The transport log contains `transport keepalive expired`. The socket is reported as code 1006 with the reason `keepalive pong timeout`. [Set the keepalive](set-the-keepalive.md) changes the interval and the timeout. [Reconnect and keepalive](../explanation/reconnect.md) describes the timer.
+
+The plane does not close an idle socket for inactivity. The uplink and `agentlink connect` answer a ping from the peer with a pong.
+
+After `runtime/select` succeeds, `agentlink connect` does not dial again. A closed plane socket stops that process with `plane closed`, and the status is 1. Start the command again from the editor.
 
 ## Release a parked name
 
