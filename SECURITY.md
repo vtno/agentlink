@@ -16,7 +16,7 @@ These parts of AgentLink are in scope:
 - Token handling in `AgentLink.Auth`. A caller sends the token in the `Authorization` header or in `?token=`.
 - The agent process launcher. `AgentLink.Agent.Process` opens `command` and `args` from the link file.
 
-The README section [Security model](README.md#security-model) describes the token and the listener.
+[Security model](docs/explanation/security.md) describes the token and the listener.
 
 ## Supported versions
 
