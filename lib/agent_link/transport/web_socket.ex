@@ -3,6 +3,22 @@ defmodule AgentLink.Transport.WebSocket do
   Production behaviour. Mint owns the HTTP upgrade and the WebSocket frame
   codec. A `wss` URL dials TLS. Mint checks the peer certificate against the
   system CA store.
+
+  After the upgrade this process sends a WebSocket ping every 30 seconds.
+  A pong clears the deadline. If no pong arrives within 10 seconds, the
+  socket fails with code 1006 and the backoff dials again. Each timer
+  message carries the Mint request ref of the socket that armed it. A
+  message is handled only when that ref is still the open socket.
+
+  `:ping_interval` and `:pong_timeout` are milliseconds. A positive integer
+  in those options wins. Otherwise `AGENTLINK_WEBSOCKET_PING_INTERVAL` and
+  `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` win when they are positive integers.
+  Otherwise the `:agent_link` keys `:websocket_ping_interval` and
+  `:websocket_pong_timeout` are used. The defaults are 30000 and 10000.
+
+  On Linux the dial sets `TCP_USER_TIMEOUT` to the interval plus the pong
+  timeout, so a ping write that stays unacked is aborted on that scale.
+  Other systems leave the option unset. `SO_KEEPALIVE` stays off.
   """
 
   @behaviour AgentLink.Transport
@@ -10,6 +26,14 @@ defmodule AgentLink.Transport.WebSocket do
   require Logger
 
   @connect_timeout 3_000
+  @default_ping_interval 30_000
+  @default_pong_timeout 10_000
+
+  # `Process.send_after/3` rejects a larger timeout.
+  @max_timer 4_294_967_295
+
+  # `setsockopt` takes a signed 32-bit millisecond value on the OTP we ship.
+  @max_user_timeout 2_147_483_647
 
   # Failed dials wait this long. Tests may pass a longer `:backoff`.
   # Anything under 50ms is raised so a refused dial cannot tight-loop.
@@ -20,6 +44,8 @@ defmodule AgentLink.Transport.WebSocket do
     :url,
     :headers,
     :backoff,
+    :ping_interval,
+    :pong_timeout,
     :default_path,
     :preface,
     :conn,
@@ -27,6 +53,8 @@ defmodule AgentLink.Transport.WebSocket do
     :ref,
     :timer,
     :connect_token,
+    :ping_timer,
+    :pong_timer,
     scheduler: Process,
     outbox: [],
     held: false
@@ -38,9 +66,12 @@ defmodule AgentLink.Transport.WebSocket do
 
   `:owner` and `:url` are required. `:headers` defaults to
   `AgentLink.Auth.headers/0`. `:default_path` is used when `url` has no path,
-  default `/agent`. `:preface` is sent before the outbox on every dial.
+  default `/agent`.   `:preface` is sent before the outbox on every dial.
   `:scheduler` defaults to `Process`. It implements `send_after/3` and
-  `cancel_timer/1` for delayed reconnects. The cancellation return value is ignored.
+  `cancel_timer/1`. The reconnect backoff and the keepalive timers both use
+  it. The cancellation return value is ignored. `:ping_interval` and
+  `:pong_timeout` are milliseconds. See the module doc for the order of
+  options, environment variables, and application env.
   """
   @impl true
   def start_link(opts) do
@@ -54,6 +85,22 @@ defmodule AgentLink.Transport.WebSocket do
       url: Keyword.fetch!(opts, :url),
       headers: Keyword.get_lazy(opts, :headers, &AgentLink.Auth.headers/0),
       backoff: retry_delay(Keyword.get(opts, :backoff, 500)),
+      ping_interval:
+        keepalive_ms(
+          opts,
+          :ping_interval,
+          :websocket_ping_interval,
+          "AGENTLINK_WEBSOCKET_PING_INTERVAL",
+          @default_ping_interval
+        ),
+      pong_timeout:
+        keepalive_ms(
+          opts,
+          :pong_timeout,
+          :websocket_pong_timeout,
+          "AGENTLINK_WEBSOCKET_PONG_TIMEOUT",
+          @default_pong_timeout
+        ),
       scheduler: Keyword.get(opts, :scheduler, Process),
       default_path: Keyword.get(opts, :default_path, "/agent"),
       preface: Keyword.get(opts, :preface)
@@ -118,11 +165,12 @@ defmodule AgentLink.Transport.WebSocket do
 
   def handle_call({:reconnect, url}, _from, state) do
     # Close before queueing the dial. A frame already in the mailbox then
-    # sees no socket and cannot replace this dial.
+    # sees no socket and cannot replace this dial. The keepalive timers are
+    # cancelled here too. A message already queued carries the old Mint ref.
     close_quietly(state)
 
     state = %{
-      cancel_timer(state)
+      state
       | held: false,
         url: url,
         conn: nil,
@@ -130,6 +178,7 @@ defmodule AgentLink.Transport.WebSocket do
         ref: nil
     }
 
+    state = state |> cancel_timer() |> cancel_keepalive()
     {:reply, :ok, request_connect(state, 0)}
   end
 
@@ -148,6 +197,31 @@ defmodule AgentLink.Transport.WebSocket do
 
   def handle_info({:connect, _token}, state), do: {:noreply, state}
 
+  # The ref is the Mint request ref from the socket that armed the timer.
+  # A later dial replaces that ref. This clause matches only the open socket.
+  def handle_info({:keepalive_ping, ref}, %{ref: ref} = state) when not is_nil(ref) do
+    state = %{state | ping_timer: nil}
+
+    if up?(state) do
+      state = send_ping(state)
+      if up?(state), do: {:noreply, state}, else: schedule(state)
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:keepalive_ping, _ref}, state), do: {:noreply, state}
+
+  # A pong sets `pong_timer` to nil, including when this message was already
+  # in the mailbox. The guard then leaves the open socket up.
+  def handle_info({:keepalive_expired, ref}, %{ref: ref, pong_timer: timer} = state)
+      when not is_nil(ref) and not is_nil(timer) do
+    Logger.warning("transport keepalive expired")
+    schedule(fail(state, 1006, "keepalive pong timeout"))
+  end
+
+  def handle_info({:keepalive_expired, _ref}, state), do: {:noreply, state}
+
   def handle_info(message, %{conn: conn} = state) when not is_nil(conn) do
     case Mint.WebSocket.stream(conn, message) do
       {:ok, conn, responses} ->
@@ -165,7 +239,7 @@ defmodule AgentLink.Transport.WebSocket do
             fail(state, 1006, reason)
           else
             close_quietly(state)
-            %{state | conn: nil, websocket: nil, ref: nil}
+            %{cancel_keepalive(state) | conn: nil, websocket: nil, ref: nil}
           end
 
         schedule(state)
@@ -181,18 +255,20 @@ defmodule AgentLink.Transport.WebSocket do
 
   @impl true
   def terminate(_reason, state) do
+    cancel_keepalive(state)
     close_quietly(state)
     :ok
   end
 
   defp connect(state) do
     close_quietly(state)
-    state = %{state | conn: nil, websocket: nil, ref: nil}
+    state = %{cancel_keepalive(state) | conn: nil, websocket: nil, ref: nil}
 
     case dial(state) do
       {:ok, state} ->
         state = send_preface(state)
         state = if up?(state), do: flush(state), else: state
+        state = if up?(state), do: schedule_ping(state), else: state
         if up?(state), do: {:noreply, state}, else: schedule(state)
 
       {:error, reason, state} ->
@@ -205,13 +281,36 @@ defmodule AgentLink.Transport.WebSocket do
     {ws_scheme, http_scheme, host, port, path} =
       AgentLink.Transport.endpoint(state.url, state.default_path)
 
-    case Mint.HTTP.connect(http_scheme, host, port,
-           protocols: [:http1],
-           mode: :passive,
-           timeout: @connect_timeout
-         ) do
+    case Mint.HTTP.connect(http_scheme, host, port, connect_options(state)) do
       {:ok, conn} -> upgrade(conn, ws_scheme, path, state)
       {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  defp connect_options(state) do
+    options = [
+      protocols: [:http1],
+      mode: :passive,
+      timeout: @connect_timeout
+    ]
+
+    case tcp_user_timeout(state) do
+      nil -> options
+      milliseconds -> Keyword.put(options, :transport_opts, [{:user_timeout, milliseconds}])
+    end
+  end
+
+  # Linux `TCP_USER_TIMEOUT`, the inet option `user_timeout`. The kernel
+  # aborts a write that stays unacked for this long. A ping is one write
+  # per interval, and the pong deadline is `pong_timeout`, so the limit is
+  # their sum: a path that dies just after a pong. The GenServer deadline
+  # fails a quiet socket on its own clock. The kernel limit covers a write
+  # stuck in retransmission. `SO_KEEPALIVE` stays off, because the idle
+  # time it would use is `tcp_keepalive_time`.
+  defp tcp_user_timeout(state) do
+    case :os.type() do
+      {:unix, :linux} -> min(state.ping_interval + state.pong_timeout, @max_user_timeout)
+      _other -> nil
     end
   end
 
@@ -309,7 +408,7 @@ defmodule AgentLink.Transport.WebSocket do
   defp apply_frame({:text, payload}, state), do: forward(payload, state)
   defp apply_frame({:binary, payload}, state), do: forward(payload, state)
   defp apply_frame({:ping, payload}, state), do: send_frame(state, {:pong, payload})
-  defp apply_frame({:pong, _payload}, state), do: state
+  defp apply_frame({:pong, _payload}, state), do: clear_pong_deadline(state)
 
   defp apply_frame({:close, code, reason}, state) do
     # 1005 means the frame carried no status code. A nil reason is empty.
@@ -392,13 +491,13 @@ defmodule AgentLink.Transport.WebSocket do
 
   defp fail(%{websocket: nil} = state, _code, _reason) do
     close_quietly(state)
-    %{state | conn: nil, websocket: nil, ref: nil}
+    %{cancel_keepalive(state) | conn: nil, websocket: nil, ref: nil}
   end
 
   defp fail(state, code, reason) do
     close_quietly(state)
     send(state.owner, {:transport_closed, normalize_code(code), close_reason(reason)})
-    %{state | conn: nil, websocket: nil, ref: nil}
+    %{cancel_keepalive(state) | conn: nil, websocket: nil, ref: nil}
   end
 
   defp normalize_code(code) when is_integer(code) and code >= 0, do: code
@@ -441,6 +540,112 @@ defmodule AgentLink.Transport.WebSocket do
 
   defp retry_delay(delay) when is_integer(delay) and delay >= @min_backoff, do: delay
   defp retry_delay(_delay), do: @min_backoff
+
+  # The first ping waits one interval. Each tick sends one ping and arms the
+  # next interval from that tick, so the gap stays the interval. An outstanding
+  # pong deadline is left where it is: a shorter interval must not postpone it.
+  defp send_ping(state) do
+    state = send_frame(state, {:ping, ""})
+
+    if up?(state) do
+      state
+      |> arm_pong_deadline()
+      |> schedule_ping()
+    else
+      state
+    end
+  end
+
+  defp schedule_ping(%{ref: ref} = state) when not is_nil(ref) do
+    cancel_scheduled(state, state.ping_timer)
+    timer = state.scheduler.send_after(self(), {:keepalive_ping, ref}, state.ping_interval)
+    %{state | ping_timer: timer}
+  end
+
+  defp schedule_ping(state), do: state
+
+  defp arm_pong_deadline(%{pong_timer: timer} = state) when not is_nil(timer), do: state
+
+  defp arm_pong_deadline(%{ref: ref} = state) when not is_nil(ref) do
+    timer = state.scheduler.send_after(self(), {:keepalive_expired, ref}, state.pong_timeout)
+    %{state | pong_timer: timer}
+  end
+
+  defp arm_pong_deadline(state), do: state
+
+  defp clear_pong_deadline(state) do
+    cancel_scheduled(state, state.pong_timer)
+    %{state | pong_timer: nil}
+  end
+
+  defp cancel_keepalive(state) do
+    cancel_scheduled(state, state.ping_timer)
+    cancel_scheduled(state, state.pong_timer)
+    %{state | ping_timer: nil, pong_timer: nil}
+  end
+
+  defp cancel_scheduled(_state, nil), do: :ok
+  defp cancel_scheduled(state, timer), do: state.scheduler.cancel_timer(timer)
+
+  # Option, then environment variable, then application env, then `default`.
+  # A blank value is skipped. Any other value that is not a positive integer
+  # up to `@max_timer` is logged and skipped. The log keeps a short prefix of
+  # a long binary so a mistaken paste cannot fill the line.
+  defp keepalive_ms(opts, opt_key, app_key, env_name, default) do
+    sources = [
+      {opt_key, Keyword.get(opts, opt_key, :unset)},
+      {env_name, env_setting(env_name)},
+      {app_key, Application.get_env(:agent_link, app_key, :unset)}
+    ]
+
+    case first_ms(sources) do
+      {:ok, milliseconds} -> milliseconds
+      :unset -> default
+    end
+  end
+
+  defp env_setting(name) do
+    case System.get_env(name) do
+      nil -> :unset
+      value -> blank_as_unset(String.trim(value))
+    end
+  end
+
+  defp blank_as_unset(""), do: :unset
+  defp blank_as_unset(value), do: value
+
+  defp first_ms([]), do: :unset
+  defp first_ms([{_name, value} | rest]) when value in [:unset, nil], do: first_ms(rest)
+
+  defp first_ms([{name, value} | rest]) do
+    case milliseconds(value) do
+      {:ok, milliseconds} ->
+        {:ok, milliseconds}
+
+      :error ->
+        Logger.warning("transport keepalive #{name} ignored #{inspect(shown(value))}")
+        first_ms(rest)
+    end
+  end
+
+  defp milliseconds(value) when is_integer(value) and value > 0 and value <= @max_timer do
+    {:ok, value}
+  end
+
+  defp milliseconds(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {milliseconds, ""} -> milliseconds(milliseconds)
+      _other -> :error
+    end
+  end
+
+  defp milliseconds(_value), do: :error
+
+  defp shown(value) when is_binary(value) and byte_size(value) > 64 do
+    binary_part(value, 0, 64) <> "..."
+  end
+
+  defp shown(value), do: value
 
   defp up?(%{websocket: websocket}), do: not is_nil(websocket)
 

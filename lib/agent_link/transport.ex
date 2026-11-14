@@ -28,6 +28,14 @@ defmodule AgentLink.Transport do
   when the URL has no path, default `/agent`. The client relay passes `/acp`.
   A failed dial waits 500ms before the next one.
 
+  While the socket is up, the Mint client sends a WebSocket ping on a timer.
+  The default interval is 30 seconds. A pong clears the deadline. If none
+  arrives within 10 seconds, the socket fails with code 1006 and the dial
+  retries after the backoff. `AGENTLINK_WEBSOCKET_PING_INTERVAL` and
+  `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` set those durations, in milliseconds.
+  Each overrides the `:agent_link` application env when it is a positive
+  integer. The keys are `:websocket_ping_interval` and `:websocket_pong_timeout`.
+
   `endpoint/2` is the URL parser both relays share. It is not a callback.
   `AgentLink.Uplink` and `AgentLink.Relay.Client` dial through this behaviour.
   """
