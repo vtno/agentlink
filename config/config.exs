@@ -8,7 +8,9 @@ config :agent_link,
   agent_module: AgentLink.Agent.Process,
   access: AgentLink.Access.Single,
   cli: true,
-  agent_stop_timeout: 5_000
+  agent_stop_timeout: 5_000,
+  websocket_ping_interval: 30_000,
+  websocket_pong_timeout: 10_000
 
 config :logger, level: :info
 

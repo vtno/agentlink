@@ -19,7 +19,12 @@ defmodule AgentLink.TransportTest.Peer do
 
   @impl true
   def handle_control({payload, opts}, spy) do
-    if Keyword.get(opts, :opcode) == :pong, do: send(spy, {:pong, payload})
+    case Keyword.get(opts, :opcode) do
+      :pong -> send(spy, {:pong, payload})
+      :ping -> send(spy, {:ping, IO.iodata_to_binary(payload)})
+      _opcode -> :ok
+    end
+
     {:ok, spy}
   end
 
@@ -332,6 +337,201 @@ defmodule AgentLink.TransportTest do
     assert_receive {:pong, "z"}, 1_000
   end
 
+  test "a keepalive tick sends a ping" do
+    start_supervised!(Scheduler)
+    ctx = start_transport(scheduler: Scheduler, ping_interval: 30_000, pong_timeout: 10_000)
+    state = sync(ctx.transport)
+
+    assert Scheduler.scheduled(state.ping_timer) ==
+             {ctx.transport, {:keepalive_ping, state.ref}, 30_000}
+
+    :ok = Scheduler.fire(state.ping_timer)
+    assert_receive {:ping, ""}, 1_000
+    refute_received {:transport_closed, _, _}
+  end
+
+  test "a pong clears the keepalive deadline" do
+    start_supervised!(Scheduler)
+    ctx = start_transport(scheduler: Scheduler, ping_interval: 30_000, pong_timeout: 10_000)
+    suspend(ctx.socket)
+
+    :ok = Scheduler.fire(sync(ctx.transport).ping_timer)
+    armed = sync(ctx.transport)
+
+    assert Scheduler.scheduled(armed.pong_timer) ==
+             {ctx.transport, {:keepalive_expired, armed.ref}, 10_000}
+
+    :sys.resume(ctx.socket)
+    assert_receive {:ping, ""}, 1_000
+    await_cleared(ctx.transport)
+    cleared = sync(ctx.transport)
+    assert cleared.pong_timer == nil
+    assert cleared.ref == armed.ref
+    assert cleared.websocket != nil
+
+    send(ctx.transport, {:keepalive_expired, cleared.ref})
+    still = sync(ctx.transport)
+    assert still.ref == cleared.ref
+    assert still.websocket != nil
+    refute_received {:transport_closed, _, _}
+
+    :ok = WebSocket.send_message(ctx.transport, %{"n" => 1})
+    assert_receive {:received, payload}, 1_000
+    assert AgentLink.Frame.decode(payload) == {:ok, %{"n" => 1}}
+  end
+
+  test "a missed pong fails the socket and schedules another dial" do
+    start_supervised!(Scheduler)
+
+    ctx =
+      start_transport(
+        scheduler: Scheduler,
+        backoff: 60_000,
+        ping_interval: 30_000,
+        pong_timeout: 10_000
+      )
+
+    suspend(ctx.socket)
+    :ok = Scheduler.fire(sync(ctx.transport).ping_timer)
+    armed = sync(ctx.transport)
+    next_ping = armed.ping_timer
+    assert Scheduler.scheduled(armed.pong_timer) != nil
+    assert Scheduler.scheduled(next_ping) != nil
+
+    :ok = Scheduler.fire(armed.pong_timer)
+    failed = sync(ctx.transport)
+    assert await_closed() == {1006, "keepalive pong timeout"}
+    assert failed.conn == nil
+    assert failed.websocket == nil
+    assert failed.ping_timer == nil
+    assert failed.pong_timer == nil
+    assert Scheduler.scheduled(next_ping) == nil
+    assert Scheduler.scheduled(armed.pong_timer) == nil
+
+    assert Scheduler.scheduled(failed.timer) ==
+             {ctx.transport, {:connect, failed.connect_token}, 60_000}
+
+    :ok = Scheduler.fire(failed.timer)
+    assert await_dial().path == "/agent"
+    await_socket()
+    assert sync(ctx.transport).websocket != nil
+    refute_received {:transport_closed, _, _}
+  end
+
+  test "a keepalive timer from the previous socket is ignored" do
+    start_supervised!(Scheduler)
+
+    ctx =
+      start_transport(
+        scheduler: Scheduler,
+        backoff: 60_000,
+        ping_interval: 30_000,
+        pong_timeout: 10_000
+      )
+
+    old = sync(ctx.transport)
+    :ok = WebSocket.reconnect(ctx.transport, ctx.url)
+    assert await_dial().path == "/agent"
+    await_socket()
+    refute_received {:transport_closed, _, _}
+
+    up = sync(ctx.transport)
+    assert up.ref != old.ref
+    assert up.websocket != nil
+    assert Scheduler.scheduled(old.ping_timer) == nil
+
+    assert Scheduler.scheduled(up.ping_timer) ==
+             {ctx.transport, {:keepalive_ping, up.ref}, 30_000}
+
+    send(ctx.transport, {:keepalive_ping, old.ref})
+    send(ctx.transport, {:keepalive_expired, old.ref})
+    kept = sync(ctx.transport)
+    assert kept.ref == up.ref
+    assert kept.websocket != nil
+    assert kept.ping_timer == up.ping_timer
+    assert kept.pong_timer == nil
+    refute_received {:transport_closed, _, _}
+
+    :ok = WebSocket.send_message(ctx.transport, %{"n" => 1})
+    assert_receive {:received, payload}, 1_000
+    assert AgentLink.Frame.decode(payload) == {:ok, %{"n" => 1}}
+  end
+
+  test "keepalive timings follow opts, then the environment, then application config" do
+    start_supervised!(Scheduler)
+
+    previous = %{
+      interval: Application.get_env(:agent_link, :websocket_ping_interval),
+      timeout: Application.get_env(:agent_link, :websocket_pong_timeout),
+      interval_env: System.get_env("AGENTLINK_WEBSOCKET_PING_INTERVAL"),
+      timeout_env: System.get_env("AGENTLINK_WEBSOCKET_PONG_TIMEOUT")
+    }
+
+    on_exit(fn ->
+      restore_env("AGENTLINK_WEBSOCKET_PING_INTERVAL", previous.interval_env)
+      restore_env("AGENTLINK_WEBSOCKET_PONG_TIMEOUT", previous.timeout_env)
+      AgentLink.TestHelpers.restore(:websocket_ping_interval, previous.interval)
+      AgentLink.TestHelpers.restore(:websocket_pong_timeout, previous.timeout)
+    end)
+
+    System.delete_env("AGENTLINK_WEBSOCKET_PING_INTERVAL")
+    System.delete_env("AGENTLINK_WEBSOCKET_PONG_TIMEOUT")
+    Application.delete_env(:agent_link, :websocket_ping_interval)
+    Application.delete_env(:agent_link, :websocket_pong_timeout)
+
+    defaults = sync(start_transport(scheduler: Scheduler).transport)
+    assert defaults.ping_interval == 30_000
+    assert defaults.pong_timeout == 10_000
+    assert ping_delay(defaults) == 30_000
+
+    Application.put_env(:agent_link, :websocket_ping_interval, 45_000)
+    Application.put_env(:agent_link, :websocket_pong_timeout, 9_000)
+    configured = sync(start_transport(scheduler: Scheduler).transport)
+    assert configured.ping_interval == 45_000
+    assert configured.pong_timeout == 9_000
+
+    System.put_env("AGENTLINK_WEBSOCKET_PING_INTERVAL", "12000")
+    System.put_env("AGENTLINK_WEBSOCKET_PONG_TIMEOUT", "4000")
+    from_env = sync(start_transport(scheduler: Scheduler).transport)
+    assert from_env.ping_interval == 12_000
+    assert from_env.pong_timeout == 4_000
+
+    from_opts =
+      sync(
+        start_transport(scheduler: Scheduler, ping_interval: 15_000, pong_timeout: 5_000).transport
+      )
+
+    assert from_opts.ping_interval == 15_000
+    assert from_opts.pong_timeout == 5_000
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        System.put_env("AGENTLINK_WEBSOCKET_PING_INTERVAL", "nope")
+        fallen = sync(start_transport(scheduler: Scheduler).transport)
+        assert fallen.ping_interval == 45_000
+        assert fallen.pong_timeout == 4_000
+      end)
+
+    assert log =~ "AGENTLINK_WEBSOCKET_PING_INTERVAL"
+    assert log =~ "nope"
+  end
+
+  test "a linux dial sets TCP_USER_TIMEOUT to the interval plus the pong timeout" do
+    ctx = start_transport(ping_interval: 20_000, pong_timeout: 5_000)
+    state = sync(ctx.transport)
+    socket = Mint.HTTP.get_socket(state.conn)
+
+    case :os.type() do
+      {:unix, :linux} ->
+        assert {:ok, opts} = :inet.getopts(socket, [:user_timeout, :keepalive])
+        assert opts[:user_timeout] == 25_000
+        assert opts[:keepalive] == false
+
+      _other ->
+        assert state.websocket != nil
+    end
+  end
+
   test "a frame written with the 101 is delivered" do
     payload = AgentLink.Frame.encode(%{"method" => "early"})
     port = start_raw_plane(text_frame(payload))
@@ -498,6 +698,12 @@ defmodule AgentLink.TransportTest do
       maybe_put(transport_opts, :default_path, Keyword.get(opts, :default_path, :omit))
 
     transport_opts = maybe_put(transport_opts, :preface, Keyword.get(opts, :preface, :omit))
+
+    transport_opts =
+      maybe_put(transport_opts, :ping_interval, Keyword.get(opts, :ping_interval, :omit))
+
+    transport_opts =
+      maybe_put(transport_opts, :pong_timeout, Keyword.get(opts, :pong_timeout, :omit))
 
     transport_opts =
       case Keyword.get(opts, :headers, [{"authorization", "Bearer sekret"}]) do
@@ -696,4 +902,30 @@ defmodule AgentLink.TransportTest do
   end
 
   defp sync(transport), do: :sys.get_state(transport)
+
+  defp ping_delay(state) do
+    {_dest, _message, delay} = Scheduler.scheduled(state.ping_timer)
+    delay
+  end
+
+  defp await_cleared(transport) do
+    AgentLink.TestHelpers.await(fn -> sync(transport).pong_timer == nil end)
+  end
+
+  defp suspend(pid) do
+    :sys.suspend(pid)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        try do
+          :sys.resume(pid)
+        catch
+          _, _ -> :ok
+        end
+      end
+    end)
+  end
+
+  defp restore_env(name, nil), do: System.delete_env(name)
+  defp restore_env(name, value), do: System.put_env(name, value)
 end

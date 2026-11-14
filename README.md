@@ -293,6 +293,16 @@ Code 4004 means `AgentLink.Access` rejected the hello. The uplink dials again on
 
 Any other close retries after 500 milliseconds. A failed dial does the same.
 
+### Relay keepalive
+
+The uplink and `agentlink connect` send a WebSocket ping on each open dial. The default interval is 30 seconds. If no pong arrives within 10 seconds, the relay closes the socket with code 1006 and dials again after 500 milliseconds.
+
+A path that dies just as a ping is sent is noticed after the pong timeout. A path that dies just after a pong is noticed after one interval plus the pong timeout. With the defaults, that is 10 seconds and 40 seconds.
+
+`AGENTLINK_WEBSOCKET_PING_INTERVAL` is the interval in milliseconds. `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` is the pong timeout in milliseconds. Each variable wins when it is a positive integer. Otherwise AgentLink uses the `:agent_link` application env. The keys are `:websocket_ping_interval` and `:websocket_pong_timeout`. The defaults are 30000 and 10000. A blank value is unset. Any other value is ignored, and AgentLink logs the key and a short prefix of the value.
+
+On Linux the dial sets `TCP_USER_TIMEOUT` to the interval plus the pong timeout. That aborts a ping write that stays unacknowledged. The sum matches a path that dies just after a pong: the next ping is one interval away, and the pong wait follows it. Other operating systems leave the option unset. `SO_KEEPALIVE` stays off. The idle time for that flag is `tcp_keepalive_time`, often 7200 seconds.
+
 ### Client socket
 
 A client connects to `ws://127.0.0.1:8090/acp`. The client sends the token as `Authorization: Bearer` or as `?token=`.
