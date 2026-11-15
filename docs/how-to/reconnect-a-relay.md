@@ -8,7 +8,7 @@ If the plane or the path to it is briefly down, leave the relay running. The upl
 
 A missed pong is one of those drops. The transport log contains `transport keepalive expired`. The socket is reported as code 1006 with the reason `keepalive pong timeout`. [Set the keepalive](set-the-keepalive.md) changes the interval and the timeout. [Reconnect and keepalive](../explanation/reconnect.md) describes the timer.
 
-The plane does not close an idle socket for inactivity. The uplink and `agentlink connect` answer a ping from the peer with a pong.
+The plane closes a socket when its ping gets no pong. A socket that sends no ACP traffic stays open while the pongs arrive. The uplink and `agentlink connect` send their own ping, and they answer a ping from the plane with a pong. A missed pong on the plane closes the socket with code 1001 and the reason `keepalive pong timeout`. The runtime then drops off `/status`. In-flight requests fail with `runtime disconnected`.
 
 After `runtime/select` succeeds, `agentlink connect` does not dial again. A closed plane socket stops that process with `plane closed`, and the status is 1. Start the command again from the editor.
 

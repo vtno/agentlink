@@ -40,7 +40,7 @@ An empty argument list is the same command as `agentlink`. A release binary with
 
 The listener binds `127.0.0.1` only. The scheme on that socket is HTTP, so the plane's own URL is `ws://127.0.0.1:<port>/agent`.
 
-There is no flag for the ping interval or the pong timeout. [Configuration](configuration.md) lists `AGENTLINK_WEBSOCKET_PING_INTERVAL` and `AGENTLINK_WEBSOCKET_PONG_TIMEOUT`. [Set the keepalive](../how-to/set-the-keepalive.md) is the procedure.
+There is no flag for the ping interval or the pong timeout. [Configuration](configuration.md) lists `AGENTLINK_WEBSOCKET_PING_INTERVAL` and `AGENTLINK_WEBSOCKET_PONG_TIMEOUT`. The plane reads those variables when a socket starts. [Set the keepalive](../how-to/set-the-keepalive.md) is the procedure.
 
 ## Where values come from
 

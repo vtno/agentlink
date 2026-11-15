@@ -7,16 +7,32 @@ defmodule AgentLink.AgentSocket do
   instance id is too long closes that new socket and leaves any holder up.
   Permanent rejections use `AgentLink.AgentSocketProtocol` close codes. Once registered, the socket
   routes ACP under the normalized name returned by the registry.
+
+  The socket sends a WebSocket ping on a timer. A missed pong closes it.
+  `AgentLink.Keepalive` owns that timer. The router passes the subject only,
+  so a listening plane reads the environment variable, then the application
+  env, then the defaults.
   """
 
   @behaviour WebSock
   require Logger
 
-  defstruct name: nil, subject: nil
+  defstruct name: nil, subject: nil, keepalive: nil
 
-  @doc "Wait for the uplink hello. The subject is whoever the router authenticated."
+  @doc """
+  Wait for the uplink hello. The subject is whoever the router authenticated.
+
+  `{subject, opts}` sets the keepalive. `:ping_interval` and `:pong_timeout`
+  are milliseconds. `:scheduler` defaults to `Process`. The router passes the
+  subject only. See `AgentLink.Keepalive`.
+  """
   @impl true
-  def init(%AgentLink.Access.Subject{} = subject), do: {:ok, %__MODULE__{subject: subject}}
+  def init(%AgentLink.Access.Subject{} = subject), do: init({subject, []})
+
+  def init({%AgentLink.Access.Subject{} = subject, opts}) when is_list(opts) do
+    keepalive = opts |> AgentLink.Keepalive.new() |> AgentLink.Keepalive.arm(self())
+    {:ok, %__MODULE__{subject: subject, keepalive: keepalive}}
+  end
 
   @doc """
   The first text frame must be agentlink.uplink. That claims the runtime name.
@@ -59,6 +75,16 @@ defmodule AgentLink.AgentSocket do
 
   def handle_in(_frame, state), do: {:ok, state}
 
+  @doc """
+  A pong clears the keepalive deadline. A ping does not. The server has
+  already answered that ping.
+  """
+  @impl true
+  def handle_control(frame, %__MODULE__{} = state) do
+    {:ok, keepalive} = AgentLink.Keepalive.handle_control(frame, state.keepalive)
+    {:ok, %{state | keepalive: keepalive}}
+  end
+
   @impl true
   def handle_info(:superseded, state) do
     Logger.info("agent socket superseded name=#{state.name} the same relay dialed again")
@@ -69,7 +95,18 @@ defmodule AgentLink.AgentSocket do
     {:push, [{:text, json}], state}
   end
 
-  def handle_info(_message, state), do: {:ok, state}
+  def handle_info(message, %__MODULE__{} = state) do
+    case AgentLink.Keepalive.handle_info(message, state.keepalive, self()) do
+      {:push, frames, keepalive} ->
+        {:push, frames, %{state | keepalive: keepalive}}
+
+      {:stop, reason, close, keepalive} ->
+        {:stop, reason, close, %{state | keepalive: keepalive}}
+
+      :ignore ->
+        {:ok, state}
+    end
+  end
 
   @impl true
   def terminate(reason, state) do

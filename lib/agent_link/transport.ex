@@ -35,6 +35,8 @@ defmodule AgentLink.Transport do
   `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` set those durations, in milliseconds.
   Each overrides the `:agent_link` application env when it is a positive
   integer. The keys are `:websocket_ping_interval` and `:websocket_pong_timeout`.
+  `AgentLink.AgentSocket` and `AgentLink.ClientSocket` read the same variables
+  and the same keys. A missed pong there closes the plane socket.
 
   `endpoint/2` is the URL parser both relays share. It is not a callback.
   `AgentLink.Uplink` and `AgentLink.Relay.Client` dial through this behaviour.

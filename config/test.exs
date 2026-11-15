@@ -10,7 +10,8 @@ config :agent_link,
   config_env: %{},
   cli: false,
   # Keep the real keepalive timer from firing during a test.
-  # Tests that cover it pass `:ping_interval` or set the env themselves.
+  # The dial and the plane sockets both read these keys.
+  # Tests that cover the timer pass an option or set the env themselves.
   websocket_ping_interval: 3_600_000,
   websocket_pong_timeout: 3_600_000
 
