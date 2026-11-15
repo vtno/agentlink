@@ -2,7 +2,7 @@ defmodule AgentLink.Agent.ProcessTest do
   @moduledoc """
   Direct tests for `AgentLink.Agent.Process`.
 
-  The executable is the OTP runtime. On Unix the file is `erlexec`. On
+  The executable is the OTP runtime. On Unix the file is `erl`. On
   Windows the file is `erl.exe`. The test compiles
   `agentlink_process_fixture.erl` with `:compile.file/2`. The fixture
   reads handshake lines from stdin. `ping`, `argv`, `cwd`, `env`, `echo`,
@@ -27,13 +27,44 @@ defmodule AgentLink.Agent.ProcessTest do
   alias AgentLink.Agent.Launch
   alias AgentLink.Agent.Process, as: AgentProcess
 
-  test "the agent environment omits AGENTLINK_WINDOWS_START" do
-    System.put_env("AGENTLINK_WINDOWS_START", "1")
-    on_exit(fn -> System.delete_env("AGENTLINK_WINDOWS_START") end)
+  test "the child inherits normal variables but not release or BEAM variables" do
+    names =
+      ~w(RELEASE_VSN RELEASE_COOKIE RELEASE_NEW_SETTING ROOTDIR BINDIR EMU PROGNAME ERL_AFLAGS ERL_FLAGS ERL_ZFLAGS ERL_LIBS ELIXIR_ERL_OPTIONS AGENTLINK_VM_MODE RELEASE_DISTRIBUTION_FLAG AGENTLINK_WINDOWS_START)
 
-    refute Enum.any?(AgentProcess.port_env(), fn {key, _value} ->
-             key == ~c"AGENTLINK_WINDOWS_START"
-           end)
+    previous = Map.new(names ++ ["AGENTLINK_ENV_PROBE"], &{&1, System.get_env(&1)})
+    System.put_env(Map.new(names, &{&1, "stale"}))
+    System.put_env("AGENTLINK_ENV_PROBE", "kept-é")
+
+    on_exit(fn ->
+      Enum.each(previous, fn
+        {key, nil} -> System.delete_env(key)
+        {key, value} -> System.put_env(key, value)
+      end)
+    end)
+
+    python = System.find_executable("python3")
+    code = "import json,os,sys; print(json.dumps({k:os.getenv(k) for k in sys.argv[1:]}))"
+
+    launch = %Launch{
+      command: python,
+      args: ["-c", code | names ++ ["AGENTLINK_ENV_PROBE", "PATH", "HOME"]]
+    }
+
+    assert {:ok, port} = AgentProcess.open(self(), launch, File.cwd!())
+    output = collect_env(port, "")
+    values = Jason.decode!(output)
+    assert Enum.all?(names, &(values[&1] == nil))
+    assert values["AGENTLINK_ENV_PROBE"] == "kept-é"
+    assert values["PATH"] == System.get_env("PATH")
+    assert values["HOME"] == System.get_env("HOME")
+  end
+
+  defp collect_env(port, output) do
+    receive do
+      {^port, {:data, data}} -> collect_env(port, output <> data)
+      {^port, {:exit_status, 0}} -> output
+      {^port, {:exit_status, status}} -> flunk("environment child exited #{status}")
+    end
   end
 
   setup_all do
@@ -390,10 +421,12 @@ defmodule AgentLink.Agent.ProcessTest do
     name =
       case :os.type() do
         {:win32, _} -> "erl.exe"
-        _ -> "erlexec"
+        _ -> "erl"
       end
 
-    Path.join([root, "erts-" <> version, "bin", name])
+    if name == "erl",
+      do: Path.join([root, "bin", name]),
+      else: Path.join([root, "erts-" <> version, "bin", name])
   end
 
   defp fixture_args(beam_dir, plain) do

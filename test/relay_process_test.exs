@@ -457,9 +457,11 @@ defmodule AgentLink.Relay.ProcessTest do
     name =
       case :os.type() do
         {:win32, _} -> "erl.exe"
-        _ -> "erlexec"
+        _ -> "erl"
       end
 
-    Path.join([root, "erts-" <> version, "bin", name])
+    if name == "erl",
+      do: Path.join([root, "bin", name]),
+      else: Path.join([root, "erts-" <> version, "bin", name])
   end
 end

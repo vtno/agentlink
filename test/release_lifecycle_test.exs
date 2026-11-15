@@ -31,8 +31,9 @@ defmodule AgentLink.ReleaseLifecycleTest do
   The plain Mix release from `mix release`.
 
   `mix test --only release` runs these tests. The default suite excludes
-  `:release`. Each test sets `RELEASE_SYS_CONFIG` and `HOME`. `:cli` is
-  `true`. `:agent_stop_timeout` in that config is `0`, so a hold fixture
+  `:release`. The test release's `env.sh` maps test variables to its config
+  and temporary directory. `:cli` is `true` in that config.
+  `:agent_stop_timeout` is `0`, so a hold fixture
   that ignores `SIGTERM` is `SIGKILL`ed without the default `5000` wait.
   The commands are `bin/agentlink`, `bin/agentlink plane`, `bin/agentlink relay`,
   and `bin/agentlink connect`. A process-group `SIGTERM` is sent only when
@@ -65,6 +66,19 @@ defmodule AgentLink.ReleaseLifecycleTest do
     assert bat =~ ":cli\n"
     assert bat =~ "setlocal DisableDelayedExpansion"
     assert bat =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
+    version = Mix.Project.config()[:version]
+    env_sh = Path.join(root, "_build/prod/rel/agentlink/releases/#{version}/env.sh")
+
+    File.write!(
+      env_sh,
+      """
+
+      [ -z "${AGENTLINK_TEST_SYS:-}" ] || export RELEASE_SYS_CONFIG="$AGENTLINK_TEST_SYS"
+      [ -z "${AGENTLINK_TEST_TMP:-}" ] || export RELEASE_TMP="$AGENTLINK_TEST_TMP"
+      """,
+      [:append]
+    )
+
     %{bin: bin}
   end
 
@@ -74,6 +88,38 @@ defmodule AgentLink.ReleaseLifecycleTest do
     File.mkdir_p!(Path.join(dir, "tmp"))
     on_exit(fn -> File.rm_rf!(dir) end)
     Map.put(context, :dir, dir)
+  end
+
+  test "a dirty shell boots this release with its own paths", %{bin: bin, dir: dir} do
+    expression =
+      ~S|IO.puts(Enum.join([System.get_env("RELEASE_VSN"), System.get_env("RELEASE_TMP"), System.get_env("RELEASE_VM_ARGS"), System.get_env("RELEASE_COOKIE"), System.get_env("RELEASE_EXTRA", "absent")], "\n"))|
+
+    stale = Path.join(dir, "stale")
+
+    {output, status} =
+      System.cmd(bin, ["eval", expression],
+        env: [
+          {"HOME", Path.join(dir, "home")},
+          {"RELEASE_VSN", "stale-version"},
+          {"RELEASE_TMP", stale},
+          {"RELEASE_VM_ARGS", stale},
+          {"RELEASE_COOKIE", "stale-cookie"},
+          {"RELEASE_EXTRA", "stale"}
+        ],
+        stderr_to_stdout: true
+      )
+
+    assert status == 0, output
+    version = Mix.Project.config()[:version]
+    root = Path.dirname(Path.dirname(bin))
+
+    assert String.split(String.trim(output), "\n") == [
+             version,
+             Path.join(root, "tmp"),
+             Path.join([root, "releases", version, "vm.args"]),
+             String.trim(File.read!(Path.join([root, "releases", "COOKIE"]))),
+             "absent"
+           ]
   end
 
   test "no arguments keep a sys.config plane", %{bin: bin, dir: dir} do
@@ -552,9 +598,8 @@ defmodule AgentLink.ReleaseLifecycleTest do
       {"AGENTLINK_TOKEN", "sekret"},
       {"RELEASE_DISTRIBUTION", "sname"},
       {"RELEASE_NODE", node},
-      {"RELEASE_COOKIE", "agentlinktest"},
-      {"RELEASE_SYS_CONFIG", sys},
-      {"RELEASE_TMP", Path.join(dir, "tmp")}
+      {"AGENTLINK_TEST_SYS", sys},
+      {"AGENTLINK_TEST_TMP", Path.join(dir, "tmp")}
     ]
   end
 

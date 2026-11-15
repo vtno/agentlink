@@ -75,7 +75,8 @@ defmodule AgentLink.Agent.Process do
 
   The port is `Port.open/2` with `{:spawn_executable, path}` and `:binary`,
   `:exit_status`, `:use_stdio`, `{:args, args}`, and `{:cd, cwd}`. `:env`
-  is the VM environment without `AGENTLINK_WINDOWS_START`. `:stderr_to_stdout`
+  inherits the VM environment except release and BEAM runtime variables and
+  `AGENTLINK_WINDOWS_START`. `:stderr_to_stdout`
   is omitted. `ErlangError` and `ArgumentError` from `Port.open/2` are
   returned as an error that names the path and the reason from the spawn.
   The OS decides that reason.
@@ -228,8 +229,16 @@ defmodule AgentLink.Agent.Process do
   @doc false
   def port_env do
     System.get_env()
-    |> Map.delete("AGENTLINK_WINDOWS_START")
-    |> Enum.map(fn {key, value} -> {:binary.bin_to_list(key), :binary.bin_to_list(value)} end)
+    |> Enum.map(fn {key, value} ->
+      name = String.upcase(key)
+
+      if String.starts_with?(name, "RELEASE_") or
+           name in ~w(ROOTDIR BINDIR EMU PROGNAME ERL_AFLAGS ERL_FLAGS ERL_ZFLAGS ERL_LIBS ELIXIR_ERL_OPTIONS AGENTLINK_VM_MODE AGENTLINK_WINDOWS_START) do
+        {:binary.bin_to_list(key), false}
+      else
+        {:binary.bin_to_list(key), :binary.bin_to_list(value)}
+      end
+    end)
   end
 
   defp open_command(command, args, cwd, finder, listener) do

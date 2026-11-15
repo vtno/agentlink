@@ -10,6 +10,12 @@ defmodule AgentLink.Release do
   after `start`. `AgentLink.CLI` reads
   `:init.get_plain_arguments/0` when `RELEASE_ROOT` is set.
 
+  Before loading `env.sh` or `env.bat`, the scripts clear inherited
+  `RELEASE_*` variables except `RELEASE_NODE` and `RELEASE_DISTRIBUTION`,
+  which select a node for commands such as `stop`, `remote`, `rpc`, and `pid`.
+  They also clear BEAM runtime and Windows scratch variables. The versioned
+  environment file can set release variables again.
+
   The Unix script calls `start` with `"$@"`. For `connect`, the scripts pass
   `-noinput` to the VM so the interactive shell does not take stdin. The Windows script places `%*`
   after `--` with delayed expansion off. The tail is not assigned with `set`.
@@ -80,9 +86,26 @@ defmodule AgentLink.Release do
         ""
       ])
 
-    with patched when is_binary(patched) <- replace_once(text, needle, replacement) do
+    with patched when is_binary(patched) <- reset_unix(text, nl),
+         patched when is_binary(patched) <- replace_once(patched, needle, replacement) do
       replace_catch_all(patched, nl)
     end
+  end
+
+  defp reset_unix(text, nl) do
+    marker = "SELF=$(readlink_f \"$0\")" <> nl
+
+    reset =
+      "for name in $(env | sed -n 's/^\\(RELEASE_[A-Za-z0-9_]*\\)=.*/\\1/p'); do" <>
+        nl <>
+        "  case \"$name\" in RELEASE_NODE|RELEASE_DISTRIBUTION) ;; *) unset \"$name\" ;; esac" <>
+        nl <>
+        "done" <>
+        nl <>
+        "unset ROOTDIR BINDIR EMU PROGNAME ERL_AFLAGS ERL_FLAGS ERL_ZFLAGS ERL_LIBS ELIXIR_ERL_OPTIONS AGENTLINK_VM_MODE AGENTLINK_WINDOWS_START" <>
+        nl
+
+    replace_once(text, marker, reset <> marker)
   end
 
   defp replace_catch_all(text, nl) do
@@ -121,9 +144,27 @@ defmodule AgentLink.Release do
   # that places `%*`, and the distribution flag is expanded before that.
   # `start_iex` jumps to `:start_plain` and keeps the original invocation.
   defp patch_bat(text) do
-    with patched when is_binary(patched) <- patch_bat_start(text) do
+    with patched when is_binary(patched) <- reset_bat(text),
+         patched when is_binary(patched) <- patch_bat_start(patched) do
       patch_bat_cli(patched)
     end
+  end
+
+  defp reset_bat(text) do
+    nl = newline(text)
+    marker = "setlocal enabledelayedexpansion" <> nl
+
+    reset =
+      "for /f \"delims==\" %%V in ('set RELEASE_ 2^>nul') do (" <>
+        nl <>
+        "  if /I not \"%%V\" == \"RELEASE_NODE\" if /I not \"%%V\" == \"RELEASE_DISTRIBUTION\" set \"%%V=\"" <>
+        nl <>
+        ")" <>
+        nl <>
+        "for %%V in (ROOTDIR BINDIR EMU PROGNAME ERL_AFLAGS ERL_FLAGS ERL_ZFLAGS ERL_LIBS ELIXIR_ERL_OPTIONS AGENTLINK_VM_MODE AGENTLINK_WINDOWS_START) do set \"%%V=\"" <>
+        nl
+
+    replace_once(text, marker, marker <> reset)
   end
 
   defp patch_bat_start(text) do
