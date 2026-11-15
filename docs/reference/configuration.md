@@ -84,7 +84,7 @@ A plane socket reads this order.
 
 `init/1` accepts `{subject, opts}`. `AgentLink.Router` calls `init/1` with the subject only, so a socket accepted by the listener skips the option row. `:scheduler` on that argument defaults to `Process`. It implements `send_after/3` and `cancel_timer/1`. The cancellation return value is ignored.
 
-A positive integer is greater than 0 and at most 4294967295. A string is accepted when the trimmed text parses as one integer in that range and contains nothing else. A missing variable, a nil, and a blank string are skipped, and they are not logged. Any other value is logged and then skipped. The warning starts with `transport keepalive` when the dial reads the value, and with `plane keepalive` when a plane socket reads the value. Then the source name, then `ignored`. A binary longer than 64 bytes keeps the first 64 bytes and then `...`.
+A positive integer is greater than 0 and at most 4294967295. A string is accepted when the trimmed text parses as one integer in that range and contains nothing else. A missing variable, a nil, and a blank string are skipped, and they are not logged. Any other value is logged and then skipped. When the dial reads a bad value, the warning starts with `transport keepalive`. When a plane socket reads a bad value, the warning starts with `plane keepalive`. The source name and `ignored` follow that prefix. A binary longer than 64 bytes keeps the first 64 bytes and then `...`.
 
 The agent relay forwards `:transport_opts` to the uplink. A caller inside the VM can set `:ping_interval` and `:pong_timeout` there. `agentlink connect` does not forward those options. Both processes still read the environment variables and the application env.
 

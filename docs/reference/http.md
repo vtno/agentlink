@@ -11,8 +11,6 @@ The plane serves these GET routes on the listen port. The default port is 8090. 
 
 A rejected token is status 401 and the body `unauthorized`. Any other path is status 404 and the body `not found`.
 
-`GET /acp` and `GET /agent` send a WebSocket ping while the socket is open. A missed pong closes the socket with code 1001 and the reason `keepalive pong timeout`. The interval and the timeout are in [Configuration](configuration.md#keepalive).
-
 The token is the `Authorization` header or the `token` query parameter. The header value is `Bearer <token>` or `bearer <token>`. When `token` is present and not empty, that value is used and the header is not read. [Security model](../explanation/security.md) describes the comparison.
 
 ## Status body

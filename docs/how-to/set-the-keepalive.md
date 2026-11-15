@@ -24,4 +24,4 @@ On Linux the dial sets `TCP_USER_TIMEOUT` to the interval plus the pong timeout,
 
 A valid value is not printed. An ignored value is the warning above. A missed pong on the dial logs `transport keepalive expired`. The uplink then dials again. After a runtime is selected, `agentlink connect` logs `client relay plane socket closed code=1006` and `plane closed`, and it exits with status 1.
 
-A missed pong on the plane logs `plane keepalive expired`. The socket closes with code 1001 and the reason `keepalive pong timeout`. The runtime drops off `/status`. A client with a request on that runtime receives JSON-RPC error `-32000` and the message `runtime disconnected`. A client socket that misses a pong is dropped through the same path as a client disconnect.
+A missed pong on the plane logs `plane keepalive expired`. The socket closes with code 1001 and the reason `keepalive pong timeout`. The runtime drops off `/status`. A client with a request on that runtime receives JSON-RPC error `-32000` and the message `runtime disconnected`. When a client socket misses a pong, the plane drops that client's sessions and queued prompts.
