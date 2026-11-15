@@ -689,40 +689,25 @@ defmodule AgentLink.ReleaseLifecycleTest do
   end
 
   defp await_hold!(port, pidfile, log) do
-    await_hold!(port, pidfile, log, System.monotonic_time(:millisecond) + 30_000)
-  end
+    step = fn log ->
+      receive do
+        {^port, {:data, data}} ->
+          {:continue, log <> data}
 
-  defp await_hold!(port, pidfile, log, deadline) do
-    receive do
-      {^port, {:data, data}} ->
-        await_hold!(port, pidfile, log <> data, deadline)
-
-      {^port, {:exit_status, status}} ->
-        flunk("release exited #{status} before the hold fixture reported\n#{shown(log)}")
-    after
-      0 ->
-        case File.read(pidfile) do
-          {:ok, line} ->
-            case Regex.run(~r/ready (\d+) (\d+)/, line) do
-              [_, parent, child] ->
-                {String.to_integer(parent), String.to_integer(child), log}
-
-              _ ->
-                await_hold_pending!(port, pidfile, log, deadline)
-            end
-
-          _ ->
-            await_hold_pending!(port, pidfile, log, deadline)
-        end
+        {^port, {:exit_status, status}} ->
+          flunk("release exited #{status} before the hold fixture reported\n#{shown(log)}")
+      after
+        0 ->
+          case AgentLink.TestHelpers.hold_pids(pidfile) do
+            nil -> {:pending, log}
+            {parent, child} -> {:done, {parent, child, log}}
+          end
+      end
     end
-  end
 
-  defp await_hold_pending!(port, pidfile, log, deadline) do
-    if System.monotonic_time(:millisecond) >= deadline do
-      flunk("hold fixture did not report pids before the deadline\n#{shown(log)}")
-    else
-      await_hold!(port, pidfile, log, deadline)
-    end
+    AgentLink.TestHelpers.bounded_wait!(log, 30_000, step, fn log ->
+      "hold fixture did not report pids before the deadline\n#{shown(log)}"
+    end)
   end
 
   defp await_running!(bin, env, port, os_pid, log) do

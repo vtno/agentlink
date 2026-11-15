@@ -83,7 +83,8 @@ defmodule AgentLink.Agent.ProcessTest do
 
     File.mkdir_p!(beam_dir)
     on_exit(fn -> File.rm_rf!(beam_dir) end)
-    compile_fixture!(beam_dir)
+    source = Path.expand("fixtures/agentlink_process_fixture.erl", __DIR__)
+    AgentLink.TestHelpers.compile_fixture!(source, beam_dir, :agentlink_process_fixture)
     exe = otp_executable()
     assert File.regular?(exe)
     %{beam_dir: beam_dir, exe: exe}
@@ -395,26 +396,6 @@ defmodule AgentLink.Agent.ProcessTest do
              {:error, "could not stat #{link}: :enoent"}
   end
 
-  defp compile_fixture!(beam_dir) do
-    source = Path.expand("fixtures/agentlink_process_fixture.erl", __DIR__)
-
-    case :compile.file(String.to_charlist(source), [
-           {:outdir, String.to_charlist(beam_dir)},
-           :return_errors,
-           :report_errors,
-           :report_warnings
-         ]) do
-      {:ok, :agentlink_process_fixture} ->
-        :ok
-
-      {:ok, :agentlink_process_fixture, _binary} ->
-        :ok
-
-      other ->
-        flunk("could not compile #{source}: #{inspect(other)}")
-    end
-  end
-
   defp fixture_args(beam_dir, plain) do
     ["-noshell", "-pa", beam_dir, "-run", "agentlink_process_fixture", "start", "--" | plain]
   end
@@ -569,30 +550,27 @@ defmodule AgentLink.Agent.ProcessTest do
   end
 
   defp ready_pids!(port) do
-    ready_pids!(port, "", System.monotonic_time(:millisecond) + 30_000)
-  end
+    step = fn line ->
+      case Regex.run(~r/^ready (\d+) (\d+)\n$/, line) do
+        [_, parent, child] ->
+          {:done, {String.to_integer(parent), String.to_integer(child)}}
 
-  defp ready_pids!(port, line, deadline) do
-    case Regex.run(~r/^ready (\d+) (\d+)\n$/, line) do
-      [_, parent, child] ->
-        {String.to_integer(parent), String.to_integer(child)}
+        _ ->
+          receive do
+            {^port, {:data, chunk}} ->
+              {:continue, line <> chunk}
 
-      _ ->
-        receive do
-          {^port, {:data, chunk}} ->
-            ready_pids!(port, line <> chunk, deadline)
-
-          {^port, {:exit_status, status}} ->
-            flunk("fixture exited #{status} before reporting pids: #{inspect(line)}")
-        after
-          0 ->
-            if System.monotonic_time(:millisecond) >= deadline do
-              flunk("fixture did not report pids before the deadline: #{inspect(line)}")
-            else
-              ready_pids!(port, line, deadline)
-            end
-        end
+            {^port, {:exit_status, status}} ->
+              flunk("fixture exited #{status} before reporting pids: #{inspect(line)}")
+          after
+            0 -> {:pending, line}
+          end
+      end
     end
+
+    AgentLink.TestHelpers.bounded_wait!("", 30_000, step, fn line ->
+      "fixture did not report pids before the deadline: #{inspect(line)}"
+    end)
   end
 
   defp stamp_eof?(stamp) do

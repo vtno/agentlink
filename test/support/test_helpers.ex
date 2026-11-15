@@ -1,5 +1,49 @@
 defmodule AgentLink.TestHelpers do
   @moduledoc "Shared test helpers."
+  import ExUnit.Assertions, only: [flunk: 1]
+
+  def bounded_wait!(state, timeout, step, message) do
+    bounded_wait_until!(state, System.monotonic_time(:millisecond) + timeout, step, message)
+  end
+
+  defp bounded_wait_until!(state, deadline, step, message) do
+    case step.(state) do
+      {:done, result} ->
+        result
+
+      {:continue, next} ->
+        bounded_wait_until!(next, deadline, step, message)
+
+      {:pending, next} ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk(message.(next))
+        else
+          bounded_wait_until!(next, deadline, step, message)
+        end
+    end
+  end
+
+  def hold_pids(pidfile) do
+    with {:ok, line} <- File.read(pidfile),
+         [_, parent, child] <- Regex.run(~r/ready (\d+) (\d+)/, line) do
+      {String.to_integer(parent), String.to_integer(child)}
+    else
+      _ -> nil
+    end
+  end
+
+  def compile_fixture!(source, dir, module) do
+    case :compile.file(String.to_charlist(source), [
+           {:outdir, String.to_charlist(dir)},
+           :return_errors,
+           :report_errors,
+           :report_warnings
+         ]) do
+      {:ok, ^module} -> :ok
+      {:ok, ^module, _} -> :ok
+      other -> flunk("could not compile #{source}: #{inspect(other)}")
+    end
+  end
 
   def otp_executable do
     root = to_string(:code.root_dir())
@@ -21,7 +65,8 @@ defmodule AgentLink.TestHelpers do
     File.mkdir_p!(dir)
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf!(dir) end)
     source = Path.expand("../fixtures/agentlink_stay_fixture.erl", __DIR__)
-    {:ok, :agentlink_stay_fixture} = :compile.file(~c"#{source}", [{:outdir, ~c"#{dir}"}])
+
+    compile_fixture!(source, dir, :agentlink_stay_fixture)
 
     {otp_executable(),
      [
@@ -40,8 +85,9 @@ defmodule AgentLink.TestHelpers do
      ]}
   end
 
-  def hold_fixture!(pidfile \\ "-", quiet \\ false) do
+  def hold_fixture!(pidfile \\ "-", quiet \\ false, childexe \\ nil) do
     {exe, args} = stay_fixture!()
+    childexe = childexe || exe
     # Keep the child readiness file alongside the compiled fixture.
     beam_dir = Enum.at(args, Enum.find_index(args, &(&1 == "-pa")) + 1)
     ready = Path.join(beam_dir, "child")
@@ -65,11 +111,12 @@ defmodule AgentLink.TestHelpers do
     """
 
     {System.find_executable("sh"),
-     ["-c", script, "agentlink-hold", ready, pidfile, to_string(quiet), exe, exe | args]}
+     ["-c", script, "agentlink-hold", ready, pidfile, to_string(quiet), childexe, exe | args]}
   end
 
-  def setsid_fixture! do
+  def setsid_fixture!(childexe \\ nil) do
     {exe, args} = stay_fixture!()
+    childexe = childexe || exe
     beam_dir = Enum.at(args, Enum.find_index(args, &(&1 == "-pa")) + 1)
     ready = Path.join(beam_dir, "grandchild")
 
@@ -92,7 +139,15 @@ defmodule AgentLink.TestHelpers do
     """
 
     {System.find_executable("sh"),
-     ["-c", script, "agentlink-setsid", ready, System.find_executable("setsid"), exe, exe | args]}
+     [
+       "-c",
+       script,
+       "agentlink-setsid",
+       ready,
+       System.find_executable("setsid"),
+       childexe,
+       exe | args
+     ]}
   end
 
   def launcher_fixture!(parent_file, child_file) do
