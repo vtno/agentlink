@@ -689,9 +689,13 @@ defmodule AgentLink.ReleaseLifecycleTest do
   end
 
   defp await_hold!(port, pidfile, log) do
+    await_hold!(port, pidfile, log, System.monotonic_time(:millisecond) + 30_000)
+  end
+
+  defp await_hold!(port, pidfile, log, deadline) do
     receive do
       {^port, {:data, data}} ->
-        await_hold!(port, pidfile, log <> data)
+        await_hold!(port, pidfile, log <> data, deadline)
 
       {^port, {:exit_status, status}} ->
         flunk("release exited #{status} before the hold fixture reported\n#{shown(log)}")
@@ -704,12 +708,20 @@ defmodule AgentLink.ReleaseLifecycleTest do
                 {String.to_integer(parent), String.to_integer(child), log}
 
               _ ->
-                await_hold!(port, pidfile, log)
+                await_hold_pending!(port, pidfile, log, deadline)
             end
 
           _ ->
-            await_hold!(port, pidfile, log)
+            await_hold_pending!(port, pidfile, log, deadline)
         end
+    end
+  end
+
+  defp await_hold_pending!(port, pidfile, log, deadline) do
+    if System.monotonic_time(:millisecond) >= deadline do
+      flunk("hold fixture did not report pids before the deadline\n#{shown(log)}")
+    else
+      await_hold!(port, pidfile, log, deadline)
     end
   end
 

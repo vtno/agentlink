@@ -48,18 +48,24 @@ defmodule AgentLink.TestHelpers do
 
     script = """
     trap '' TERM HUP PIPE
-    childfile=$1; pidfile=$2; quiet=$3; shift 3
-    "$@" wait "$childfile" &
+    childfile=$1; pidfile=$2; quiet=$3; childexe=$4; reader=$5; shift 5
+    mkfifo "$childfile" || exit 1
+    "$childexe" "$@" ready - > "$childfile" &
     child=$!
-    while [ ! -s "$childfile" ]; do :; done
+    if ! "$reader" "$@" read "$childfile" > /dev/null; then
+      rm -f "$childfile"
+      echo "hold fixture child exited or did not report readiness" >&2
+      exit 1
+    fi
+    rm -f "$childfile"
     line="ready $$ $child"
     [ "$pidfile" = - ] || printf '%s\\n' "$line" > "$pidfile"
     [ "$quiet" = true ] || printf '%s\\n' "$line"
-    exec "$@" wait -
+    exec "$reader" "$@" wait -
     """
 
     {System.find_executable("sh"),
-     ["-c", script, "agentlink-hold", ready, pidfile, to_string(quiet), exe | args]}
+     ["-c", script, "agentlink-hold", ready, pidfile, to_string(quiet), exe, exe | args]}
   end
 
   def setsid_fixture! do
@@ -69,19 +75,24 @@ defmodule AgentLink.TestHelpers do
 
     script = """
     trap '' TERM HUP PIPE
-    ready=$1; setsid=$2; shift 2
+    ready=$1; setsid=$2; childexe=$3; reader=$4; shift 4
+    mkfifo "$ready" || exit 1
     (
-      "$setsid" "$@" wait "$ready" &
+      "$setsid" "$childexe" "$@" ready - > "$ready" &
       wait
     ) &
-    while [ ! -s "$ready" ]; do :; done
-    read -r grandchild < "$ready"
+    grandchild=$("$reader" "$@" read "$ready") || {
+      rm -f "$ready"
+      echo "setsid fixture child exited or did not report readiness" >&2
+      exit 1
+    }
+    rm -f "$ready"
     printf 'ready %s %s\\n' "$$" "$grandchild"
     wait
     """
 
     {System.find_executable("sh"),
-     ["-c", script, "agentlink-setsid", ready, System.find_executable("setsid"), exe | args]}
+     ["-c", script, "agentlink-setsid", ready, System.find_executable("setsid"), exe, exe | args]}
   end
 
   def launcher_fixture!(parent_file, child_file) do
