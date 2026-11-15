@@ -33,7 +33,12 @@ AgentLink does not ship an orchestrator or an ACP driver. Use an ACP client to d
 
 ## Run an ACP session
 
-1. Send `initialize`, then `session/new`.
+1. Send `initialize`, then `session/new`. Omit `cwd`, or send null or `""`, to work in the relay workspace (`$HOME/.agentlink/workspace` on the user's machine, unless [the `:workdir` application setting](../../docs/reference/configuration.md#application-environment) overrides it); an explicit `cwd` is used as given, so send one only when the task needs a directory on the user's machine, and prefer a subdirectory of the workspace for scratch work. The plane stores the request `cwd` (the plane's workspace when `cwd` is missing, null, or `""`) and `session/list` can filter on that value.
+
+	```json
+	{"jsonrpc":"2.0","id":1,"method":"session/new","params":{}}
+	```
+
 2. Send `session/prompt` with the returned session ID. Read `session/update` notifications and answer `session/request_permission` requests.
 3. To stop a running turn, send the `session/cancel` notification. Answer pending permission requests as described in the [ACP specification](https://agentclientprotocol.com).
 4. Before closing a session with a running turn, send `session/cancel`. Send `session/close` to leave the session. The plane answers `session/close` and drops the client's subscription. It does not forward the request to the agent.
