@@ -3,6 +3,7 @@ defmodule AgentLink.Relay.ProcessTest do
   use ExUnit.Case, async: false
 
   alias AgentLink.FakeTransport
+  import AgentLink.TestHelpers, only: [otp_executable: 0]
 
   @plain ["spaced arg", ""]
   @replaced ["replaced", ""]
@@ -448,20 +449,5 @@ defmodule AgentLink.Relay.ProcessTest do
       other ->
         flunk("could not compile #{source}: #{inspect(other)}")
     end
-  end
-
-  defp otp_executable do
-    root = to_string(:code.root_dir())
-    version = to_string(:erlang.system_info(:version))
-
-    name =
-      case :os.type() do
-        {:win32, _} -> "erl.exe"
-        _ -> "erl"
-      end
-
-    if name == "erl",
-      do: Path.join([root, "bin", name]),
-      else: Path.join([root, "erts-" <> version, "bin", name])
   end
 end

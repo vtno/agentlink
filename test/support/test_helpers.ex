@@ -1,6 +1,21 @@
 defmodule AgentLink.TestHelpers do
   @moduledoc "Shared test helpers."
 
+  def otp_executable do
+    root = to_string(:code.root_dir())
+    version = to_string(:erlang.system_info(:version))
+
+    name =
+      case :os.type() do
+        {:win32, _} -> "erl.exe"
+        _ -> "erl"
+      end
+
+    if name == "erl",
+      do: Path.join([root, "bin", name]),
+      else: Path.join([root, "erts-" <> version, "bin", name])
+  end
+
   def await_down(ref, pid) do
     receive do
       {:DOWN, ^ref, :process, ^pid, reason} -> reason
