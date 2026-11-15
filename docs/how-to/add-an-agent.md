@@ -53,7 +53,7 @@ Install `@agentclientprotocol/codex-acp`. Set `command` to the `codex-acp` execu
 
 Do not use `@zed-industries/codex-acp`. That package is deprecated and fails prompts. Do not set `command` to `codex`. `codex app-server` speaks Codex's own protocol, not ACP.
 
-Sign in with the Codex CLI on the relay machine before you start the relay. The relay passes the process environment through, except `AGENTLINK_WINDOWS_START`, and the link file cannot hold an `env` object.
+Sign in with the Codex CLI on the relay machine before you start the relay. The agent inherits the VM environment except release and BEAM runtime variables and AgentLink Windows scratch variables. The link file cannot hold an `env` object.
 
 ## Claude Code
 

@@ -23,7 +23,7 @@ Values that select a plane, a target, or a token come from a flag, an environmen
 
 The dial timeout is 3000 milliseconds. The retry wait defaults to 500 milliseconds, and a shorter backoff is raised to 50. Neither value is an environment variable. The plane idle timeout is infinity. The plane sockets send a ping. [Reconnect and keepalive](../explanation/reconnect.md) describes those timers.
 
-The agent process receives the VM environment without `AGENTLINK_WINDOWS_START`. The link file cannot set variables. An `env` key is an error.
+The agent process inherits the VM environment except release and BEAM runtime variables and AgentLink Windows scratch variables. The link file cannot set variables. An `env` key is an error.
 
 ## Config file
 
