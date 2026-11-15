@@ -14,7 +14,7 @@ defmodule AgentLink.Agent.ProcessTest do
   exits, and the test waits until that pid's start time no longer matches.
   A fixture that ignores `SIGTERM` still writes `eof` to the stamp file
   after stdin closes. The hold fixture ignores `SIGTERM` and stdin EOF and
-  forks a child. `close/1` with `:agent_stop_timeout` set to `0` signals
+  starts a child in the same group. `close/1` with `:agent_stop_timeout` set to `0` signals
   `SIGKILL` to the process group. The test waits until both start times no
   longer match. A timer is not the success condition.
 
@@ -312,16 +312,13 @@ defmodule AgentLink.Agent.ProcessTest do
     Application.put_env(:agent_link, :agent_stop_timeout, 0)
     on_exit(fn -> AgentLink.TestHelpers.restore(:agent_stop_timeout, previous) end)
 
-    python = System.find_executable("python3")
-    assert is_binary(python)
-    script = Path.expand("fixtures/agentlink_hold_fixture.py", __DIR__)
-    File.chmod!(script, 0o755)
+    {command, args} = AgentLink.TestHelpers.hold_fixture!()
     dir = make_dir()
 
     assert {:ok, port} =
              AgentProcess.open(
                self(),
-               %Launch{command: python, args: [script]},
+               %Launch{command: command, args: args},
                dir,
                fn _command -> flunk("finder must not be called") end
              )
@@ -347,16 +344,13 @@ defmodule AgentLink.Agent.ProcessTest do
     Application.put_env(:agent_link, :agent_stop_timeout, 0)
     on_exit(fn -> AgentLink.TestHelpers.restore(:agent_stop_timeout, previous) end)
 
-    python = System.find_executable("python3")
-    assert is_binary(python)
-    script = Path.expand("fixtures/agentlink_setsid_fixture.py", __DIR__)
-    File.chmod!(script, 0o755)
+    {command, args} = AgentLink.TestHelpers.setsid_fixture!()
     dir = make_dir()
 
     assert {:ok, port} =
              AgentProcess.open(
                self(),
-               %Launch{command: python, args: [script]},
+               %Launch{command: command, args: args},
                dir,
                fn _command -> flunk("finder must not be called") end
              )

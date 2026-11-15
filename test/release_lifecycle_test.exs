@@ -239,15 +239,16 @@ defmodule AgentLink.ReleaseLifecycleTest do
   test "connect with stdin closed exits 0", %{bin: bin, dir: dir} do
     port_num = 18_466
     sys = write_sys!(dir, plane_config(port_num))
-    closer = write_closer!(dir)
-    python = System.find_executable("python3")
+    shell = System.find_executable("sh")
     stdbuf = System.find_executable("stdbuf")
 
     {port, _os_pid, _started} =
       boot_program!(
-        python,
+        shell,
         [
-          closer,
+          "-c",
+          ~s(exec 0<&-; exec "$@"),
+          "agentlink-closer",
           stdbuf,
           "-oL",
           "-eL",
@@ -639,8 +640,7 @@ defmodule AgentLink.ReleaseLifecycleTest do
     root = Path.join(dir, "home/.agentlink")
     File.mkdir_p!(root)
     pidfile = Path.join(dir, "pids")
-    script = Path.expand("fixtures/agentlink_hold_fixture.py", __DIR__)
-    File.chmod!(script, 0o755)
+    {command, args} = AgentLink.TestHelpers.hold_fixture!(pidfile, true)
 
     File.write!(
       Path.join(root, "agent.link.json"),
@@ -649,26 +649,12 @@ defmodule AgentLink.ReleaseLifecycleTest do
         "label" => "lifecycle",
         "program" => "fixture",
         "plane_url" => "ws://127.0.0.1:9/agent",
-        "command" => System.find_executable("python3"),
-        "args" => [script, pidfile, "quiet"]
+        "command" => command,
+        "args" => args
       })
     )
 
     pidfile
-  end
-
-  defp write_closer!(dir) do
-    path = Path.join(dir, "close_stdin.py")
-
-    File.write!(path, """
-    #!/usr/bin/env python3
-    import os, sys
-    os.close(0)
-    os.execv(sys.argv[1], sys.argv[1:])
-    """)
-
-    File.chmod!(path, 0o755)
-    path
   end
 
   @listen_deadline_ms 30_000

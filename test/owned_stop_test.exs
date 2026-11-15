@@ -138,16 +138,15 @@ defmodule AgentLink.OwnedStopTest do
   defp start_fixture! do
     dir = Path.join(System.tmp_dir!(), "agentlink-owned-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    script = Path.join(dir, "launcher.py")
     parent_file = Path.join(dir, "parent")
     child_file = Path.join(dir, "child")
-    File.write!(script, launcher_script())
+    {command, args} = AgentLink.TestHelpers.launcher_fixture!(parent_file, child_file)
 
     port =
-      Port.open({:spawn_executable, System.find_executable("python3")}, [
+      Port.open({:spawn_executable, command}, [
         :binary,
         :exit_status,
-        {:args, [script, parent_file, child_file]}
+        {:args, args}
       ])
 
     parent = read_pid!(parent_file)
@@ -170,19 +169,18 @@ defmodule AgentLink.OwnedStopTest do
   defp start_owner! do
     dir = Path.join(System.tmp_dir!(), "agentlink-owned-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    script = Path.join(dir, "launcher.py")
     parent_file = Path.join(dir, "parent")
     child_file = Path.join(dir, "child")
-    File.write!(script, launcher_script())
+    {command, args} = AgentLink.TestHelpers.launcher_fixture!(parent_file, child_file)
     parent = self()
 
     owner =
       spawn(fn ->
         port =
-          Port.open({:spawn_executable, System.find_executable("python3")}, [
+          Port.open({:spawn_executable, command}, [
             :binary,
             :exit_status,
-            {:args, [script, parent_file, child_file]}
+            {:args, args}
           ])
 
         {:os_pid, pid} = Port.info(port, :os_pid)
@@ -228,15 +226,14 @@ defmodule AgentLink.OwnedStopTest do
   defp start_unrelated! do
     dir = Path.join(System.tmp_dir!(), "agentlink-other-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    script = Path.join(dir, "other.py")
     pid_file = Path.join(dir, "pid")
-    File.write!(script, unrelated_script())
+    {command, args} = AgentLink.TestHelpers.stay_fixture!()
 
     port =
-      Port.open({:spawn_executable, System.find_executable("python3")}, [
+      Port.open({:spawn_executable, command}, [
         :binary,
         :exit_status,
-        {:args, [script, pid_file]}
+        {:args, args ++ ["unrelated", pid_file]}
       ])
 
     pid = read_pid!(pid_file)
@@ -254,42 +251,6 @@ defmodule AgentLink.OwnedStopTest do
     end)
 
     %{port: port, pid: pid, owned: owned}
-  end
-
-  defp launcher_script do
-    """
-    import os
-    import signal
-    import sys
-
-    parent_file, child_file = sys.argv[1], sys.argv[2]
-    pid = os.fork()
-    if pid == 0:
-        signal.signal(signal.SIGHUP, signal.SIG_IGN)
-        with open(child_file, "w") as handle:
-            handle.write(str(os.getpid()))
-        signal.pause()
-    else:
-        def die(_signum, _frame):
-            os._exit(0)
-
-        signal.signal(signal.SIGTERM, die)
-        with open(parent_file, "w") as handle:
-            handle.write(str(os.getpid()))
-        signal.pause()
-    """
-  end
-
-  defp unrelated_script do
-    """
-    import os
-    import signal
-    import sys
-
-    with open(sys.argv[1], "w") as handle:
-        handle.write(str(os.getpid()))
-    signal.pause()
-    """
   end
 
   defp read_pid!(path) do
