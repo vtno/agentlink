@@ -1,3 +1,7 @@
+if String.to_integer(System.otp_release()) < 29 do
+  Mix.raise("AgentLink requires Erlang/OTP 29+")
+end
+
 defmodule AgentLink.MixProject do
   use Mix.Project
 
@@ -5,7 +9,7 @@ defmodule AgentLink.MixProject do
     [
       app: :agent_link,
       version: "0.1.0",
-      elixir: "~> 1.17",
+      elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),

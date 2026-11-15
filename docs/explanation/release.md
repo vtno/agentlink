@@ -4,7 +4,7 @@ The published archive is a Mix release with its own Erlang runtime, so the machi
 
 ## One build, five runtimes
 
-`.tool-versions` pins OTP 29.1.2 and Elixir 1.20.4 for the workflows. `mix.exs` requires `~> 1.17`. The release workflow builds `MIX_ENV=prod mix release` once on Linux. `config/runtime.exs` is not in the repository, so the release uses the values compiled from `config/config.exs` and skips runtime configuration.
+`.tool-versions` pins OTP 29.1.2 and Elixir 1.20.4 for the workflows. `mix.exs` requires Elixir `~> 1.20` and Erlang/OTP 29. The release workflow builds `MIX_ENV=prod mix release` once on Linux. `config/runtime.exs` is not in the repository, so the release uses the values compiled from `config/config.exs` and skips runtime configuration.
 
 Each target downloads that artifact and replaces ERTS and the matching OTP applications with the prebuilt runtime from `erlef/setup-beam`. Project and dependency BEAM files stay as compiled. The packager keeps the relocatable `erl` script Mix wrote and removes the installation-specific `erl.ini`. It writes `runtime.json` only so the package step can see the ERTS version and the OTP application list, then deletes that file. The published archive does not contain `runtime.json`.
 

@@ -1,6 +1,6 @@
 # Contributing
 
-This repository is tested with Elixir 1.20.4 and Erlang 29.1.2. `mix.exs` requires `~> 1.17`.
+This repository requires Elixir 1.20 and Erlang/OTP 29. `.tool-versions` pins Elixir 1.20.4 and OTP 29.1.2.
 
 ## Format the code
 
