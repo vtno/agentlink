@@ -266,6 +266,123 @@ defmodule AgentLink.PlaneTest do
     assert :sys.get_state(AgentLink.Plane).clients[id].session_id == "ses_1"
   end
 
+  test "different sessions run together and questions reach their prompt owners" do
+    agent!("lab")
+    a = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    {b_pid, b} = spawn_client()
+
+    call(a, "session/prompt", %{"sessionId" => "a", "prompt" => []}, 1)
+    assert {:agent, %{"id" => a_prompt, "params" => %{"sessionId" => "a"}}} = from_agent!()
+    call(b, "session/prompt", %{"sessionId" => "b", "prompt" => []}, 2)
+    assert {:agent, %{"id" => b_prompt, "params" => %{"sessionId" => "b"}}} = from_agent!()
+
+    call(a, "session/prompt", %{"sessionId" => "a", "prompt" => []}, 3)
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/prompt"}}
+
+    agent_ask("b", "question-b", "session/request_permission")
+    agent_ask("a", "question-a", "session/request_permission")
+
+    AgentLink.Plane.agent_frame(
+      "lab",
+      Jason.encode!(%{
+        "id" => "ambiguous",
+        "method" => "session/request_permission",
+        "params" => %{}
+      })
+    )
+
+    assert %{"method" => "session/request_permission", "params" => %{"sessionId" => "b"}} =
+             client_reply!(b_pid)
+
+    assert %{"method" => "session/request_permission", "params" => %{"sessionId" => "a"}} =
+             reply!()
+
+    assert {:agent,
+            %{
+              "id" => "ambiguous",
+              "error" => %{"message" => "no app is attached to this session"}
+            }} =
+             from_agent!()
+
+    AgentLink.Plane.agent_frame("lab", Jason.encode!(%{"id" => b_prompt, "result" => %{}}))
+    assert %{"id" => 2, "result" => %{}} = client_reply!(b_pid)
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/prompt"}}
+
+    AgentLink.Plane.agent_frame("lab", Jason.encode!(%{"id" => a_prompt, "result" => %{}}))
+    assert %{"id" => 1, "result" => %{}} = reply!()
+
+    assert {:agent, %{"method" => "session/prompt", "params" => %{"sessionId" => "a"}}} =
+             from_agent!()
+  end
+
+  test "missing and non-binary session IDs share a queue separate from sessions" do
+    agent!("lab")
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    call(id, "session/prompt", %{"prompt" => []}, 1)
+    assert {:agent, %{"id" => first}} = from_agent!()
+    call(id, "session/prompt", %{"sessionId" => 42, "prompt" => []}, 2)
+    call(id, "session/prompt", %{"sessionId" => "a", "prompt" => []}, 3)
+    assert {:agent, %{"params" => %{"sessionId" => "a"}}} = from_agent!()
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/prompt"}}
+    AgentLink.Plane.agent_frame("lab", Jason.encode!(%{"id" => first, "result" => %{}}))
+    assert %{"id" => 1} = reply!()
+    assert {:agent, %{"params" => %{"sessionId" => 42}}} = from_agent!()
+  end
+
+  test "dropping one client preserves the other session and discards its own queue" do
+    agent!("lab")
+    {a_pid, a} = spawn_client()
+    b = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+    call(a, "session/prompt", %{"sessionId" => "a", "prompt" => []}, 1)
+    assert {:agent, %{"id" => a_prompt}} = from_agent!()
+    call(b, "session/prompt", %{"sessionId" => "b", "prompt" => []}, 2)
+    assert {:agent, %{"id" => b_prompt}} = from_agent!()
+    call(a, "session/prompt", %{"sessionId" => "a", "prompt" => []}, 3)
+    call(b, "session/prompt", %{"sessionId" => "a", "prompt" => []}, 4)
+    agent_ask("a", "question-a", "session/request_permission")
+    agent_ask("b", "question-b", "session/request_permission")
+    assert %{"method" => "session/request_permission"} = client_reply!(a_pid)
+    assert %{"id" => b_question} = reply!()
+    disconnect_client!(a_pid, a)
+    assert {:agent, %{"id" => "question-a", "error" => %{"code" => -32000}}} = from_agent!()
+    slot = :sys.get_state(AgentLink.Plane).slots["lab"]
+    assert [%{client_id: ^b}] = :queue.to_list(slot.prompt_queue["a"])
+    assert %{^b_question => %{client_id: ^b}} = slot.fan_pending
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/prompt"}}
+    AgentLink.Plane.client_frame(b, Jason.encode!(%{"id" => b_question, "result" => %{}}))
+    assert {:agent, %{"id" => "question-b", "result" => %{}}} = from_agent!()
+    agent_ask("b", "another-b", "session/request_permission")
+    assert %{"method" => "session/request_permission"} = reply!()
+    AgentLink.Plane.agent_frame("lab", Jason.encode!(%{"id" => b_prompt, "result" => %{}}))
+    assert %{"id" => 2, "result" => %{}} = reply!()
+    sync_agent()
+    refute_received {:agent, %{"method" => "session/prompt"}}
+    AgentLink.Plane.agent_frame("lab", Jason.encode!(%{"id" => a_prompt, "result" => %{}}))
+
+    assert {:agent, %{"method" => "session/prompt", "params" => %{"sessionId" => "a"}}} =
+             from_agent!()
+  end
+
+  test "slot drop fails queued prompts in every session" do
+    agent!("lab")
+    id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
+
+    for {session, req} <- [{"a", 1}, {"b", 2}] do
+      call(id, "session/prompt", %{"sessionId" => session, "prompt" => []}, req)
+      assert {:agent, %{"method" => "session/prompt"}} = from_agent!()
+      call(id, "session/prompt", %{"sessionId" => session, "prompt" => []}, req + 2)
+    end
+
+    AgentLink.Plane.runtime_down("lab")
+    replies = for _ <- 1..4, do: reply!()
+    assert Enum.sort(Enum.map(replies, & &1["id"])) == [1, 2, 3, 4]
+    assert Enum.all?(replies, &match?(%{"error" => %{"message" => "runtime disconnected"}}, &1))
+  end
+
   test "prompts run one at a time and the stop is broadcast" do
     id = AgentLink.Plane.register(self(), %AgentLink.Access.Subject{id: "admin", role: :admin})
     agent!("lab")
@@ -715,7 +832,7 @@ defmodule AgentLink.PlaneTest do
             }} = await_agent_event()
 
     assert [%{client_id: ^survivor}] =
-             :queue.to_list(:sys.get_state(AgentLink.Plane).slots["lab"].prompt_queue)
+             :queue.to_list(:sys.get_state(AgentLink.Plane).slots["lab"].prompt_queue["ses_1"])
 
     sync_agent()
     refute_received {:agent, %{"method" => "session/prompt"}}
@@ -746,7 +863,7 @@ defmodule AgentLink.PlaneTest do
     slot = :sys.get_state(AgentLink.Plane).slots["lab"]
     assert slot.fan_pending == %{}
     assert slot.agent_pending == %{}
-    refute slot.prompt_inflight
+    assert slot.prompt_inflight == MapSet.new()
   end
 
   for order <- [:reply_first, :down_first] do
@@ -821,7 +938,7 @@ defmodule AgentLink.PlaneTest do
     slot = :sys.get_state(AgentLink.Plane).slots["lab"]
     assert %{^fan_id => %{client_id: ^survivor}} = slot.fan_pending
     assert map_size(slot.fan_pending) == 1
-    assert slot.prompt_inflight
+    assert MapSet.member?(slot.prompt_inflight, "ses_1")
 
     AgentLink.Plane.client_frame(
       survivor,
@@ -844,7 +961,7 @@ defmodule AgentLink.PlaneTest do
     state = :sys.get_state(AgentLink.Plane)
     assert state.clients[survivor].session_id == "ses_1"
     assert state.slots["lab"].agent_pending == %{}
-    refute state.slots["lab"].prompt_inflight
+    assert state.slots["lab"].prompt_inflight == MapSet.new()
     sync_agent()
     refute_received {:agent, _}
   end
@@ -936,7 +1053,7 @@ defmodule AgentLink.PlaneTest do
         end
 
       slot = :sys.get_state(AgentLink.Plane).slots["lab"]
-      assert slot.prompt_inflight
+      assert MapSet.member?(slot.prompt_inflight, "ses_1")
       refute Map.has_key?(slot.agent_pending, prompt_id)
       assert %{client_id: ^survivor} = slot.agent_pending[next_id]
       assert slot.fan_pending == %{}
@@ -951,7 +1068,7 @@ defmodule AgentLink.PlaneTest do
       )
 
       assert %{"id" => 2, "result" => _} = reply!()
-      refute :sys.get_state(AgentLink.Plane).slots["lab"].prompt_inflight
+      assert :sys.get_state(AgentLink.Plane).slots["lab"].prompt_inflight == MapSet.new()
       sync_agent()
       refute_received {:agent, _}
     end
@@ -1007,7 +1124,7 @@ defmodule AgentLink.PlaneTest do
 
     for slot <- Map.values(:sys.get_state(AgentLink.Plane).slots) do
       assert slot.agent_pending == %{}
-      refute slot.prompt_inflight
+      assert slot.prompt_inflight == MapSet.new()
     end
   end
 
