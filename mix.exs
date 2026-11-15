@@ -1,18 +1,9 @@
+if String.to_integer(System.otp_release()) < 29 do
+  Mix.raise("AgentLink requires Erlang/OTP 29+")
+end
+
 defmodule AgentLink.MixProject do
   use Mix.Project
-
-  # OTP 27 rejects the Linux `user_timeout` inet option the uplink passes
-  # to `:gen_tcp.connect/4`, so the relay only runs on OTP 29.
-  required_otp = 29
-  otp_release = :erlang.system_info(:otp_release) |> List.to_string()
-
-  case Integer.parse(otp_release) do
-    {major, _rest} when major >= required_otp ->
-      :ok
-
-    _other ->
-      Mix.raise("AgentLink requires Erlang/OTP #{required_otp}. Found OTP #{otp_release}.")
-  end
 
   def project do
     [
