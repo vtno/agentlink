@@ -8,7 +8,7 @@ defmodule AgentLink.MixProject do
   def project do
     [
       app: :agent_link,
-      version: "0.1.0",
+      version: "0.1.0-beta.1",
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),

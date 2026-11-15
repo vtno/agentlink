@@ -109,4 +109,6 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           sha256sum agentlink-*.tar.gz agentlink-*.zip > SHA256SUMS
-          gh release create "$TAG" agentlink-*.tar.gz agentlink-*.zip SHA256SUMS --verify-tag --title "$TAG" --generate-notes
+          pre=()
+          if [[ "$TAG" == *-* ]]; then pre=(--prerelease); fi
+          gh release create "$TAG" agentlink-*.tar.gz agentlink-*.zip SHA256SUMS --verify-tag --title "$TAG" --generate-notes "${pre[@]}"
