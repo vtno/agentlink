@@ -57,7 +57,7 @@ The client relay sets `agentCapabilities.loadSession` to true on an `initialize`
 
 The plane forwards `session/new`. It answers `session/list`, `session/load`, `session/resume`, and `session/close` from the session directory and does not forward them.
 
-`session/list` is paged. A page has at most 50 rows. Each row has `sessionId`, `cwd`, `title`, and `updatedAt`. A further page includes `nextCursor`. A cursor that does not decode is JSON-RPC error `-32602` and the message `invalid cursor`. A `cwd` filter that is not a string is `-32602` and the message `invalid cwd`.
+`session/list` is paged. A page has at most 50 rows. Each row has `sessionId`, `cwd`, `title`, and `updatedAt`. A further page includes `nextCursor`. A string `cwd` returns only the rows with that `cwd`. Omit `cwd`, or send null, to return every row. A cursor that does not decode is JSON-RPC error `-32602` and the message `invalid cursor`. A `cwd` filter that is not a string is `-32602` and the message `invalid cwd`.
 
 For a known session, `session/load` sends the stored replay and then an empty result. An unknown session is JSON-RPC error `-32002` and the message `session not found`. `session/resume` joins a known session and does not replay. The same unknown-session error applies. `session/close` answers an empty result and drops that client from the session. The session stays in the directory, so a later `session/load` still replays. A second `session/close` for that session answers an empty result again. A load, resume, or close without a binary `sessionId` is `-32602` and the message `sessionId is required`.
 
@@ -65,7 +65,7 @@ The replay keeps the newest whole turns that fit 50 turns and 1,000,000 bytes. T
 
 A client opens a session with `session/new`, `session/load`, or `session/resume`.
 
-For `session/new` and `session/load`, the relay replaces a missing, null, or empty-string `cwd` with `$HOME/.agentlink/workspace` before the write to the agent. Any other `cwd` is unchanged. That path is on the agent's machine. The directory uses the plane machine's workspace when the request has no non-empty `cwd`.
+For `session/new` and `session/load`, the relay replaces a missing, null, or empty-string `cwd` with the relay workspace before the write to the agent. The default workspace is `$HOME/.agentlink/workspace`. [The `:workdir` application setting](configuration.md#application-environment) overrides it. Any other `cwd` is unchanged. That path is on the agent's machine. The directory uses the plane machine's workspace when the request has no non-empty `cwd`.
 
 ## Prompt and agent requests
 

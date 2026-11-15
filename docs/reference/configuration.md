@@ -54,7 +54,7 @@ The path is `$HOME/.agentlink/token`. It is read only when the token is still un
 
 A non-empty argument list replaces `:mode` and, when the flags are present, `:port`, `:cli_token`, and `:link_path`. `--link` sets `:link_path`. The default link path is `$HOME/.agentlink/agent.link.json`.
 
-`:workdir` overrides the agent workspace. The default is `$HOME/.agentlink/workspace`. There is no command-line flag for it.
+`:workdir` overrides the agent workspace. The default is `$HOME/.agentlink/workspace`. There is no command-line flag for it. A missing, null, or empty-string `cwd` on `session/new` and `session/load` uses this workspace. [Client and uplink protocol](protocol.md#session-methods) describes that fill.
 
 `:reaper_dir` overrides the reaper directory. There is no command-line flag for it. [Agent process](../agent.md#reaper) describes the file.
 
