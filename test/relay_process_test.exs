@@ -433,21 +433,6 @@ defmodule AgentLink.Relay.ProcessTest do
 
   defp compile_fixture!(beam_dir) do
     source = Path.expand("fixtures/agentlink_process_fixture.erl", __DIR__)
-
-    case :compile.file(String.to_charlist(source), [
-           {:outdir, String.to_charlist(beam_dir)},
-           :return_errors,
-           :report_errors,
-           :report_warnings
-         ]) do
-      {:ok, :agentlink_process_fixture} ->
-        :ok
-
-      {:ok, :agentlink_process_fixture, _binary} ->
-        :ok
-
-      other ->
-        flunk("could not compile #{source}: #{inspect(other)}")
-    end
+    AgentLink.TestHelpers.compile_fixture!(source, beam_dir, :agentlink_process_fixture)
   end
 end

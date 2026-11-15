@@ -859,37 +859,22 @@ defmodule AgentLink.LifecycleTest do
   end
 
   defp await_hold!(pidfile, agent) do
-    await_hold!(pidfile, agent, System.monotonic_time(:millisecond) + 30_000)
-  end
-
-  defp await_hold!(pidfile, agent, deadline) do
-    receive do
-      {:DOWN, _ref, :process, ^agent, reason} ->
-        flunk("agent relay exited before the hold fixture reported: #{inspect(reason)}")
-    after
-      0 ->
-        case File.read(pidfile) do
-          {:ok, line} ->
-            case Regex.run(~r/ready (\d+) (\d+)/, line) do
-              [_, parent, child] ->
-                {String.to_integer(parent), String.to_integer(child)}
-
-              _ ->
-                await_hold_pending!(pidfile, agent, deadline)
-            end
-
-          _ ->
-            await_hold_pending!(pidfile, agent, deadline)
-        end
+    step = fn _ ->
+      receive do
+        {:DOWN, _ref, :process, ^agent, reason} ->
+          flunk("agent relay exited before the hold fixture reported: #{inspect(reason)}")
+      after
+        0 ->
+          case AgentLink.TestHelpers.hold_pids(pidfile) do
+            nil -> {:pending, nil}
+            pids -> {:done, pids}
+          end
+      end
     end
-  end
 
-  defp await_hold_pending!(pidfile, agent, deadline) do
-    if System.monotonic_time(:millisecond) >= deadline do
-      flunk("hold fixture did not report pids before the deadline")
-    else
-      await_hold!(pidfile, agent, deadline)
-    end
+    AgentLink.TestHelpers.bounded_wait!(nil, 30_000, step, fn _ ->
+      "hold fixture did not report pids before the deadline"
+    end)
   end
 
   defp starttime!(pid) do
