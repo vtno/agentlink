@@ -569,14 +569,29 @@ defmodule AgentLink.Agent.ProcessTest do
   end
 
   defp ready_pids!(port) do
-    line = collect(port, "\n", "")
+    ready_pids!(port, "", System.monotonic_time(:millisecond) + 30_000)
+  end
 
+  defp ready_pids!(port, line, deadline) do
     case Regex.run(~r/^ready (\d+) (\d+)\n$/, line) do
       [_, parent, child] ->
         {String.to_integer(parent), String.to_integer(child)}
 
       _ ->
-        flunk("hold fixture did not report pids: #{inspect(line)}")
+        receive do
+          {^port, {:data, chunk}} ->
+            ready_pids!(port, line <> chunk, deadline)
+
+          {^port, {:exit_status, status}} ->
+            flunk("fixture exited #{status} before reporting pids: #{inspect(line)}")
+        after
+          0 ->
+            if System.monotonic_time(:millisecond) >= deadline do
+              flunk("fixture did not report pids before the deadline: #{inspect(line)}")
+            else
+              ready_pids!(port, line, deadline)
+            end
+        end
     end
   end
 
