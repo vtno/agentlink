@@ -29,8 +29,11 @@ defmodule AgentLink.LaunchTest do
     release = %{path: dir, name: name}
     assert AgentLink.Release.forward_start_args(release) == release
     script = File.read!(Path.join(bin, name))
-    assert script =~ "shift\n    start \"elixir\" --no-halt -- \"$@\""
-    assert script =~ "*)\n    start \"elixir\" --no-halt -- \"$@\""
+
+    assert length(String.split(script, "start \"elixir\" --no-halt --erl \"-noinput\" -- \"$@\"")) ==
+             3
+
+    assert length(String.split(script, "start \"elixir\" --no-halt -- \"$@\"")) == 3
     refute script =~ "Unknown command"
     assert script =~ "start_iex)\n    start \"iex\" --werl"
     bat = File.read!(Path.join(bin, name <> ".bat"))
@@ -48,6 +51,7 @@ defmodule AgentLink.LaunchTest do
     refute cli =~ "for /f"
     refute cli =~ "AGENTLINK_WINDOWS_START"
     assert cli =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
+    assert cli =~ "if \"%~1\" == \"connect\" set AGENTLINK_VM_MODE=-mode %RELEASE_MODE% -noinput"
 
     start =
       bat
@@ -59,6 +63,9 @@ defmodule AgentLink.LaunchTest do
     refute start =~ "for /f"
     assert start =~ "set AGENTLINK_WINDOWS_START=1"
     assert start =~ "--vm-args \"%RELEASE_VM_ARGS%\" -- %*"
+
+    assert start =~
+             "if \"%~2\" == \"connect\" set AGENTLINK_VM_MODE=-mode %RELEASE_MODE% -noinput"
 
     assert_raise RuntimeError, ~r/could not patch/, fn ->
       AgentLink.Release.forward_start_args(release)

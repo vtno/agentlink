@@ -1,3 +1,31 @@
+defmodule AgentLink.ReleaseLifecycleTest.Peer do
+  @behaviour WebSock
+
+  def init(spy) do
+    send(spy, {:socket, self()})
+    {:ok, spy}
+  end
+
+  def handle_in({payload, _}, spy) do
+    send(spy, {:request, Jason.decode!(payload)})
+    {:ok, spy}
+  end
+
+  def handle_info({:reply, message}, spy) do
+    {:push, {:text, Jason.encode!(message)}, spy}
+  end
+end
+
+defmodule AgentLink.ReleaseLifecycleTest.Plug do
+  def init(spy), do: spy
+
+  def call(conn, spy) do
+    conn
+    |> WebSockAdapter.upgrade(AgentLink.ReleaseLifecycleTest.Peer, spy, timeout: :infinity)
+    |> Plug.Conn.halt()
+  end
+end
+
 defmodule AgentLink.ReleaseLifecycleTest do
   @moduledoc """
   The plain Mix release from `mix release`.
@@ -31,8 +59,8 @@ defmodule AgentLink.ReleaseLifecycleTest do
     assert status == 0, output
     bin = Path.join(root, "_build/prod/rel/agentlink/bin/agentlink")
     script = File.read!(bin)
-    assert script =~ "shift\n    start \"elixir\" --no-halt -- \"$@\""
-    assert script =~ "*)\n    start \"elixir\" --no-halt -- \"$@\""
+    assert script =~ "start \"elixir\" --no-halt --erl \"-noinput\" -- \"$@\""
+    assert script =~ "start \"elixir\" --no-halt -- \"$@\""
     bat = File.read!(bin <> ".bat")
     assert bat =~ ":cli\n"
     assert bat =~ "setlocal DisableDelayedExpansion"
@@ -193,6 +221,78 @@ defmodule AgentLink.ReleaseLifecycleTest do
     refute shown(log) =~ "The agent relay on this machine is starting."
     refute shown(log) =~ "No link file"
     refute accept?(port_num)
+  end
+
+  test "connect reserves stdout for JSON-RPC", %{bin: bin, dir: dir} do
+    server =
+      start_supervised!({Bandit, plug: {AgentLink.ReleaseLifecycleTest.Plug, self()}, port: 0})
+
+    {:ok, {_address, port_num}} = ThousandIsland.listener_info(server)
+    sys = write_sys!(dir, connect_config(), :info)
+    stderr = Path.join(dir, "stderr")
+    wrapper = Path.expand("fixtures/connect_stdio.py", __DIR__)
+
+    {port, _pid, _started} =
+      boot_program!(
+        System.find_executable("python3"),
+        [
+          wrapper,
+          stderr,
+          bin,
+          "connect",
+          "--plane",
+          "ws://127.0.0.1:#{port_num}/acp",
+          "--token",
+          "sekret",
+          "--target",
+          "lab"
+        ],
+        env(dir, "lifejson", sys)
+      )
+
+    Port.command(
+      port,
+      Jason.encode!(%{"jsonrpc" => "2.0", "id" => 7, "method" => "initialize", "params" => %{}}) <>
+        "\n"
+    )
+
+    socket = receive do: ({:socket, socket} -> socket)
+    receive do: ({:request, %{"id" => "agentlink:runtime/list"}} -> :ok)
+
+    send(
+      socket,
+      {:reply,
+       %{
+         "jsonrpc" => "2.0",
+         "id" => "agentlink:runtime/list",
+         "result" => %{"runtimes" => [%{"name" => "lab"}]}
+       }}
+    )
+
+    receive do: ({:request, %{"id" => "agentlink:runtime/select"}} -> :ok)
+
+    send(
+      socket,
+      {:reply, %{"jsonrpc" => "2.0", "id" => "agentlink:runtime/select", "result" => %{}}}
+    )
+
+    receive do: ({:request, %{"id" => 7, "method" => "initialize"}} -> :ok)
+    send(socket, {:reply, %{"jsonrpc" => "2.0", "id" => 7, "result" => %{}}})
+
+    {status, stdout} = await_exit!(port, "")
+    assert status == 0
+
+    messages =
+      stdout
+      |> String.split("\n", trim: true)
+      |> Enum.map(fn line ->
+        assert {:ok, message} = Jason.decode(line), "invalid stdout: #{inspect(stdout)}"
+        message
+      end)
+
+    assert [%{"id" => 7, "result" => _}] = messages
+    assert File.read!(stderr) =~ "transport connected"
+    assert File.read!(stderr) =~ "client relay selected lab"
   end
 
   test "SIGTERM during connect exits 1", %{bin: bin, dir: dir} do

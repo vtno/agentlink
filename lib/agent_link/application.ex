@@ -61,6 +61,7 @@ defmodule AgentLink.Application do
   @impl true
   def start(_type, _args) do
     with :ok <- command(),
+         :ok <- connect_logger(),
          :ok <- prepare_token(),
          :ok <- prepare(),
          :ok <- install_connect_stop(),
@@ -68,6 +69,25 @@ defmodule AgentLink.Application do
       children
       |> start_supervisor()
       |> watch_connect()
+    end
+  end
+
+  defp connect_logger do
+    if Application.get_env(:agent_link, :mode) == :connect do
+      case :logger.get_handler_config(:default) do
+        {:ok, %{module: :logger_std_h, config: %{type: :standard_io}} = handler} ->
+          :ok = :logger.remove_handler(:default)
+
+          config =
+            handler |> Map.drop([:id, :module]) |> put_in([:config, :type], :standard_error)
+
+          :logger.add_handler(:default, :logger_std_h, config)
+
+        _ ->
+          :ok
+      end
+    else
+      :ok
     end
   end
 
