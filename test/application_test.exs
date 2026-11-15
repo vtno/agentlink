@@ -153,6 +153,7 @@ defmodule AgentLink.ApplicationTest do
     ]
 
     connect_env = Map.new(connect_keys, &{&1, Application.get_env(:agent_link, &1)})
+    {:ok, logger} = :logger.get_handler_config(:default)
 
     on_exit(fn ->
       Application.delete_env(:agent_link, :agent_listener)
@@ -161,6 +162,12 @@ defmodule AgentLink.ApplicationTest do
       if port, do: Application.put_env(:agent_link, :port, port)
       restore_link(link_path)
       Enum.each(connect_env, fn {key, value} -> AgentLink.TestHelpers.restore(key, value) end)
+      {:ok, current_logger} = :logger.get_handler_config(:default)
+
+      if current_logger != logger do
+        :ok = :logger.remove_handler(:default)
+        :ok = :logger.add_handler(:default, logger.module, Map.drop(logger, [:id, :module]))
+      end
 
       if pid = Process.whereis(AgentLink.Supervisor) do
         # :kill skips terminate/2. Linked child supervisors stop after they
@@ -421,6 +428,7 @@ defmodule AgentLink.ApplicationTest do
     put_connect(root, %{}, nil, nil, nil)
 
     assert {:ok, sup} = AgentLink.Application.start(:normal, [])
+    assert {:ok, %{config: %{type: :standard_error}}} = :logger.get_handler_config(:default)
 
     assert [{AgentLink.Relay.Client, _client, :worker, [AgentLink.Relay.Client]}] =
              Supervisor.which_children(sup)

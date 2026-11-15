@@ -1,3 +1,31 @@
+defmodule AgentLink.ReleaseLifecycleTest.Peer do
+  @behaviour WebSock
+
+  def init(spy) do
+    send(spy, {:socket, self()})
+    {:ok, spy}
+  end
+
+  def handle_in({payload, _}, spy) do
+    send(spy, {:request, Jason.decode!(payload)})
+    {:ok, spy}
+  end
+
+  def handle_info({:reply, message}, spy) do
+    {:push, {:text, Jason.encode!(message)}, spy}
+  end
+end
+
+defmodule AgentLink.ReleaseLifecycleTest.Plug do
+  def init(spy), do: spy
+
+  def call(conn, spy) do
+    conn
+    |> WebSockAdapter.upgrade(AgentLink.ReleaseLifecycleTest.Peer, spy, timeout: :infinity)
+    |> Plug.Conn.halt()
+  end
+end
+
 defmodule AgentLink.ReleaseLifecycleTest do
   @moduledoc """
   The plain Mix release from `mix release`.
@@ -31,8 +59,8 @@ defmodule AgentLink.ReleaseLifecycleTest do
     assert status == 0, output
     bin = Path.join(root, "_build/prod/rel/agentlink/bin/agentlink")
     script = File.read!(bin)
-    assert script =~ "shift\n    start \"elixir\" --no-halt -- \"$@\""
-    assert script =~ "*)\n    start \"elixir\" --no-halt -- \"$@\""
+    assert script =~ "start \"elixir\" --no-halt --erl \"-noinput\" -- \"$@\""
+    assert script =~ "start \"elixir\" --no-halt -- \"$@\""
     bat = File.read!(bin <> ".bat")
     assert bat =~ ":cli\n"
     assert bat =~ "setlocal DisableDelayedExpansion"
@@ -193,6 +221,85 @@ defmodule AgentLink.ReleaseLifecycleTest do
     refute shown(log) =~ "The agent relay on this machine is starting."
     refute shown(log) =~ "No link file"
     refute accept?(port_num)
+  end
+
+  test "connect reserves stdout for JSON-RPC", %{bin: bin, dir: dir} do
+    server =
+      start_supervised!({Bandit, plug: {AgentLink.ReleaseLifecycleTest.Plug, self()}, port: 0})
+
+    {:ok, {_address, port_num}} = ThousandIsland.listener_info(server)
+    sys = write_sys!(dir, connect_config(), :info)
+    stderr = Path.join(dir, "stderr")
+
+    {port, pid, started} =
+      boot_program!(
+        System.find_executable("sh"),
+        [
+          "-c",
+          ~s(bin=$1; stderr=$2; shift 2; exec "$bin" "$@" 2>"$stderr"),
+          "agentlink-test",
+          bin,
+          stderr,
+          "connect",
+          "--plane",
+          "ws://127.0.0.1:#{port_num}/acp",
+          "--token",
+          "sekret",
+          "--target",
+          "lab"
+        ],
+        env(dir, "lifejson", sys),
+        false
+      )
+
+    Port.command(
+      port,
+      Jason.encode!(%{"jsonrpc" => "2.0", "id" => 7, "method" => "initialize", "params" => %{}}) <>
+        "\n"
+    )
+
+    assert_receive {:socket, socket}, 30_000
+    assert_receive {:request, %{"id" => "agentlink:runtime/list"}}, 30_000
+
+    send(
+      socket,
+      {:reply,
+       %{
+         "jsonrpc" => "2.0",
+         "id" => "agentlink:runtime/list",
+         "result" => %{"runtimes" => [%{"name" => "lab"}]}
+       }}
+    )
+
+    assert_receive {:request, %{"id" => "agentlink:runtime/select"}}, 30_000
+
+    send(
+      socket,
+      {:reply, %{"jsonrpc" => "2.0", "id" => "agentlink:runtime/select", "result" => %{}}}
+    )
+
+    assert_receive {:request, %{"id" => 7, "method" => "initialize"}}, 30_000
+    send(socket, {:reply, %{"jsonrpc" => "2.0", "id" => 7, "result" => %{}}})
+
+    stdout = await_stdout!(port, "", System.monotonic_time(:millisecond) + 30_000)
+    signal_if_same!(pid, started, "-TERM")
+    {status, stdout} = await_exit!(port, stdout)
+    assert status == 1
+
+    assert String.ends_with?(stdout, "\n")
+
+    messages =
+      stdout
+      |> String.split("\n")
+      |> Enum.drop(-1)
+      |> Enum.map(fn line ->
+        assert {:ok, message} = Jason.decode(line), "invalid stdout: #{inspect(stdout)}"
+        message
+      end)
+
+    assert [%{"id" => 7, "result" => _}] = messages
+    assert File.read!(stderr) =~ "transport connected"
+    assert File.read!(stderr) =~ "client relay selected lab"
   end
 
   test "SIGTERM during connect exits 1", %{bin: bin, dir: dir} do
@@ -415,19 +522,21 @@ defmodule AgentLink.ReleaseLifecycleTest do
     end
   end
 
-  defp boot_program!(program, args, env) do
+  defp boot_program!(program, args, env, merge_stderr \\ true) do
     port =
-      Port.open({:spawn_executable, program}, [
-        :binary,
-        :exit_status,
-        :stderr_to_stdout,
-        {:args, args},
-        {:env,
-         Enum.map(env, fn {key, value} ->
-           {String.to_charlist(key),
-            if(value == false, do: false, else: String.to_charlist(value))}
-         end)}
-      ])
+      Port.open(
+        {:spawn_executable, program},
+        [
+          :binary,
+          :exit_status,
+          {:args, args},
+          {:env,
+           Enum.map(env, fn {key, value} ->
+             {String.to_charlist(key),
+              if(value == false, do: false, else: String.to_charlist(value))}
+           end)}
+        ] ++ if(merge_stderr, do: [:stderr_to_stdout], else: [])
+      )
 
     os_pid = port_os_pid(port)
     started = starttime!(os_pid)
@@ -603,17 +712,36 @@ defmodule AgentLink.ReleaseLifecycleTest do
     end
   end
 
-  defp await_status!(port, log) do
+  defp await_status!(port, log), do: elem(await_exit!(port, log), 0)
+
+  defp await_exit!(port, log) do
+    await_exit!(port, log, System.monotonic_time(:millisecond) + 30_000)
+  end
+
+  defp await_exit!(port, log, deadline) do
     receive do
-      {^port, {:data, data}} -> await_status!(port, log <> data)
-      {^port, {:exit_status, status}} -> status
+      {^port, {:data, data}} -> await_exit!(port, log <> data, deadline)
+      {^port, {:exit_status, status}} -> {status, log}
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        flunk("release did not exit\n#{shown(log)}")
     end
   end
 
-  defp await_exit!(port, log) do
-    receive do
-      {^port, {:data, data}} -> await_exit!(port, log <> data)
-      {^port, {:exit_status, status}} -> {status, log}
+  defp await_stdout!(port, stdout, deadline) do
+    if stdout
+       |> String.split("\n")
+       |> Enum.drop(-1)
+       |> Enum.any?(fn line -> match?({:ok, %{"id" => 7}}, Jason.decode(line)) end) do
+      stdout
+    else
+      receive do
+        {^port, {:data, data}} -> await_stdout!(port, stdout <> data, deadline)
+        {^port, {:exit_status, status}} -> flunk("release exited #{status}\n#{shown(stdout)}")
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          flunk("release did not write a response\n#{shown(stdout)}")
+      end
     end
   end
 

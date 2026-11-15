@@ -10,7 +10,8 @@ defmodule AgentLink.Release do
   after `start`. `AgentLink.CLI` reads
   `:init.get_plain_arguments/0` when `RELEASE_ROOT` is set.
 
-  The Unix script calls `start` with `"$@"`. The Windows script places `%*`
+  The Unix script calls `start` with `"$@"`. For `connect`, the scripts pass
+  `-noinput` to the VM so the interactive shell does not take stdin. The Windows script places `%*`
   after `--` with delayed expansion off. The tail is not assigned with `set`.
   `bin/agentlink.bat start` sets `AGENTLINK_WINDOWS_START=1` because `%*`
   still begins with `start`. `argv_from_launch/1` drops that one word only
@@ -70,7 +71,11 @@ defmodule AgentLink.Release do
       unix_lines(nl, [
         "  start)",
         "    shift",
-        "    start \"elixir\" --no-halt -- \"$@\"",
+        "    if [ \"${1:-}\" = connect ]; then",
+        "      start \"elixir\" --no-halt --erl \"-noinput\" -- \"$@\"",
+        "    else",
+        "      start \"elixir\" --no-halt -- \"$@\"",
+        "    fi",
         "    ;;",
         ""
       ])
@@ -90,7 +95,11 @@ defmodule AgentLink.Release do
     replacement =
       unix_lines(nl, [
         "  *)",
-        "    start \"elixir\" --no-halt -- \"$@\"",
+        "    if [ \"${1:-}\" = connect ]; then",
+        "      start \"elixir\" --no-halt --erl \"-noinput\" -- \"$@\"",
+        "    else",
+        "      start \"elixir\" --no-halt -- \"$@\"",
+        "    fi",
         "    ;;",
         ""
       ])
@@ -131,10 +140,12 @@ defmodule AgentLink.Release do
         ")#{nl}" <>
         "setlocal DisableDelayedExpansion#{nl}" <>
         "set AGENTLINK_WINDOWS_START=1#{nl}" <>
+        "set AGENTLINK_VM_MODE=-mode %RELEASE_MODE%#{nl}" <>
+        "if \"%~2\" == \"connect\" set AGENTLINK_VM_MODE=-mode %RELEASE_MODE% -noinput#{nl}" <>
         "\"%REL_VSN_DIR%\\%REL_EXEC%.bat\" %REL_EXTRA% ^#{nl}" <>
         "  --cookie \"%RELEASE_COOKIE%\" ^#{nl}" <>
         "  %RELEASE_DISTRIBUTION_FLAG% ^#{nl}" <>
-        "  --erl \"-mode %RELEASE_MODE%\" ^#{nl}" <>
+        "  --erl \"%AGENTLINK_VM_MODE%\" ^#{nl}" <>
         "  --erl-config \"%RELEASE_SYS_CONFIG%\" ^#{nl}" <>
         "  --boot \"%REL_VSN_DIR%\\%RELEASE_BOOT_SCRIPT%\" ^#{nl}" <>
         "  --boot-var RELEASE_LIB \"%RELEASE_ROOT%\\lib\" ^#{nl}" <>
@@ -173,10 +184,12 @@ defmodule AgentLink.Release do
       "  set RELEASE_DISTRIBUTION_FLAG=--!RELEASE_DISTRIBUTION! \"!RELEASE_NODE!\"#{nl}" <>
       ")#{nl}" <>
       "setlocal DisableDelayedExpansion#{nl}" <>
+      "set AGENTLINK_VM_MODE=-mode %RELEASE_MODE%#{nl}" <>
+      "if \"%~1\" == \"connect\" set AGENTLINK_VM_MODE=-mode %RELEASE_MODE% -noinput#{nl}" <>
       "\"%REL_VSN_DIR%\\elixir.bat\" --no-halt ^#{nl}" <>
       "  --cookie \"%RELEASE_COOKIE%\" ^#{nl}" <>
       "  %RELEASE_DISTRIBUTION_FLAG% ^#{nl}" <>
-      "  --erl \"-mode %RELEASE_MODE%\" ^#{nl}" <>
+      "  --erl \"%AGENTLINK_VM_MODE%\" ^#{nl}" <>
       "  --erl-config \"%RELEASE_SYS_CONFIG%\" ^#{nl}" <>
       "  --boot \"%REL_VSN_DIR%\\%RELEASE_BOOT_SCRIPT%\" ^#{nl}" <>
       "  --boot-var RELEASE_LIB \"%RELEASE_ROOT%\\lib\" ^#{nl}" <>
