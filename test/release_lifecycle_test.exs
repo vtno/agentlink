@@ -230,15 +230,16 @@ defmodule AgentLink.ReleaseLifecycleTest do
     {:ok, {_address, port_num}} = ThousandIsland.listener_info(server)
     sys = write_sys!(dir, connect_config(), :info)
     stderr = Path.join(dir, "stderr")
-    wrapper = Path.expand("fixtures/connect_stdio.py", __DIR__)
 
-    {port, _pid, _started} =
+    {port, pid, started} =
       boot_program!(
-        System.find_executable("python3"),
+        System.find_executable("sh"),
         [
-          wrapper,
-          stderr,
+          "-c",
+          ~s(bin=$1; stderr=$2; shift 2; exec "$bin" "$@" 2>"$stderr"),
+          "agentlink-test",
           bin,
+          stderr,
           "connect",
           "--plane",
           "ws://127.0.0.1:#{port_num}/acp",
@@ -247,7 +248,8 @@ defmodule AgentLink.ReleaseLifecycleTest do
           "--target",
           "lab"
         ],
-        env(dir, "lifejson", sys)
+        env(dir, "lifejson", sys),
+        false
       )
 
     Port.command(
@@ -256,8 +258,8 @@ defmodule AgentLink.ReleaseLifecycleTest do
         "\n"
     )
 
-    socket = receive do: ({:socket, socket} -> socket)
-    receive do: ({:request, %{"id" => "agentlink:runtime/list"}} -> :ok)
+    assert_receive {:socket, socket}, 30_000
+    assert_receive {:request, %{"id" => "agentlink:runtime/list"}}, 30_000
 
     send(
       socket,
@@ -269,22 +271,27 @@ defmodule AgentLink.ReleaseLifecycleTest do
        }}
     )
 
-    receive do: ({:request, %{"id" => "agentlink:runtime/select"}} -> :ok)
+    assert_receive {:request, %{"id" => "agentlink:runtime/select"}}, 30_000
 
     send(
       socket,
       {:reply, %{"jsonrpc" => "2.0", "id" => "agentlink:runtime/select", "result" => %{}}}
     )
 
-    receive do: ({:request, %{"id" => 7, "method" => "initialize"}} -> :ok)
+    assert_receive {:request, %{"id" => 7, "method" => "initialize"}}, 30_000
     send(socket, {:reply, %{"jsonrpc" => "2.0", "id" => 7, "result" => %{}}})
 
-    {status, stdout} = await_exit!(port, "")
-    assert status == 0
+    stdout = await_stdout!(port, "", System.monotonic_time(:millisecond) + 30_000)
+    signal_if_same!(pid, started, "-TERM")
+    {status, stdout} = await_exit!(port, stdout)
+    assert status == 1
+
+    assert String.ends_with?(stdout, "\n")
 
     messages =
       stdout
-      |> String.split("\n", trim: true)
+      |> String.split("\n")
+      |> Enum.drop(-1)
       |> Enum.map(fn line ->
         assert {:ok, message} = Jason.decode(line), "invalid stdout: #{inspect(stdout)}"
         message
@@ -515,19 +522,21 @@ defmodule AgentLink.ReleaseLifecycleTest do
     end
   end
 
-  defp boot_program!(program, args, env) do
+  defp boot_program!(program, args, env, merge_stderr \\ true) do
     port =
-      Port.open({:spawn_executable, program}, [
-        :binary,
-        :exit_status,
-        :stderr_to_stdout,
-        {:args, args},
-        {:env,
-         Enum.map(env, fn {key, value} ->
-           {String.to_charlist(key),
-            if(value == false, do: false, else: String.to_charlist(value))}
-         end)}
-      ])
+      Port.open(
+        {:spawn_executable, program},
+        [
+          :binary,
+          :exit_status,
+          {:args, args},
+          {:env,
+           Enum.map(env, fn {key, value} ->
+             {String.to_charlist(key),
+              if(value == false, do: false, else: String.to_charlist(value))}
+           end)}
+        ] ++ if(merge_stderr, do: [:stderr_to_stdout], else: [])
+      )
 
     os_pid = port_os_pid(port)
     started = starttime!(os_pid)
@@ -703,17 +712,36 @@ defmodule AgentLink.ReleaseLifecycleTest do
     end
   end
 
-  defp await_status!(port, log) do
+  defp await_status!(port, log), do: elem(await_exit!(port, log), 0)
+
+  defp await_exit!(port, log) do
+    await_exit!(port, log, System.monotonic_time(:millisecond) + 30_000)
+  end
+
+  defp await_exit!(port, log, deadline) do
     receive do
-      {^port, {:data, data}} -> await_status!(port, log <> data)
-      {^port, {:exit_status, status}} -> status
+      {^port, {:data, data}} -> await_exit!(port, log <> data, deadline)
+      {^port, {:exit_status, status}} -> {status, log}
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        flunk("release did not exit\n#{shown(log)}")
     end
   end
 
-  defp await_exit!(port, log) do
-    receive do
-      {^port, {:data, data}} -> await_exit!(port, log <> data)
-      {^port, {:exit_status, status}} -> {status, log}
+  defp await_stdout!(port, stdout, deadline) do
+    if stdout
+       |> String.split("\n")
+       |> Enum.drop(-1)
+       |> Enum.any?(fn line -> match?({:ok, %{"id" => 7}}, Jason.decode(line)) end) do
+      stdout
+    else
+      receive do
+        {^port, {:data, data}} -> await_stdout!(port, stdout <> data, deadline)
+        {^port, {:exit_status, status}} -> flunk("release exited #{status}\n#{shown(stdout)}")
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          flunk("release did not write a response\n#{shown(stdout)}")
+      end
     end
   end
 
