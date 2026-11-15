@@ -234,9 +234,9 @@ defmodule AgentLink.Agent.Process do
 
       if String.starts_with?(name, "RELEASE_") or
            name in ~w(ROOTDIR BINDIR EMU PROGNAME ERL_AFLAGS ERL_FLAGS ERL_ZFLAGS ERL_LIBS ELIXIR_ERL_OPTIONS AGENTLINK_VM_MODE AGENTLINK_WINDOWS_START) do
-        {:binary.bin_to_list(key), false}
+        {String.to_charlist(key), false}
       else
-        {:binary.bin_to_list(key), :binary.bin_to_list(value)}
+        {String.to_charlist(key), String.to_charlist(value)}
       end
     end)
   end
