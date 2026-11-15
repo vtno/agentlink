@@ -29,6 +29,9 @@ defmodule AgentLink.LaunchTest do
     release = %{path: dir, name: name}
     assert AgentLink.Release.forward_start_args(release) == release
     script = File.read!(Path.join(bin, name))
+    assert script =~ "RELEASE_NODE|RELEASE_DISTRIBUTION"
+    assert script =~ "unset ROOTDIR BINDIR EMU PROGNAME"
+    assert :binary.match(script, "for name in $(env") < :binary.match(script, "SELF=$(readlink_f")
 
     assert length(String.split(script, "start \"elixir\" --no-halt --erl \"-noinput\" -- \"$@\"")) ==
              3
@@ -37,6 +40,13 @@ defmodule AgentLink.LaunchTest do
     refute script =~ "Unknown command"
     assert script =~ "start_iex)\n    start \"iex\" --werl"
     bat = File.read!(Path.join(bin, name <> ".bat"))
+    assert bat =~ "for /f \"delims==\" %%V in ('set RELEASE_ 2^>nul')"
+    assert bat =~ "if /I not \"%%V\" == \"RELEASE_NODE\""
+    assert bat =~ "if /I not \"%%V\" == \"RELEASE_DISTRIBUTION\""
+
+    assert :binary.match(bat, "for /f \"delims==\"") <
+             :binary.match(bat, "if not defined RELEASE_VSN")
+
     refute bat =~ "AGENTLINK_START_TAIL"
     assert bat =~ "for /f \"tokens=1,2\""
     assert bat =~ "if not \"!REL_EXTRA!\" == \"--no-halt\" goto start_plain"
@@ -74,6 +84,7 @@ defmodule AgentLink.LaunchTest do
 
   defp unix_script do
     """
+    SELF=$(readlink_f "$0")
     case $1 in
       start)
         start "elixir" --no-halt
@@ -98,6 +109,7 @@ defmodule AgentLink.LaunchTest do
 
   defp bat_script do
     """
+    setlocal enabledelayedexpansion
     if not defined RELEASE_VSN (for /f "tokens=1,2" %%K in ('type "!RELEASE_ROOT!\releases\start_erl.data"') do (set ERTS_VSN=%%K) && (set RELEASE_VSN=%%L))
     echo Usage: %~nx0 COMMAND [ARGS]
     echo.
