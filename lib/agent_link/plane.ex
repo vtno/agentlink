@@ -66,6 +66,10 @@ defmodule AgentLink.Plane do
   def register(pid, %AgentLink.Access.Subject{} = subject) when is_pid(pid),
     do: GenServer.call(__MODULE__, {:register, pid, subject})
 
+  @doc "Drop the cached slot before a new uplink is published, so the next app initializes it fresh."
+  def runtime_reset(name) when is_binary(name),
+    do: GenServer.call(__MODULE__, {:runtime_reset, name})
+
   @impl true
   def handle_call({:register, pid, subject}, _from, %__MODULE__{} = state) do
     id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
@@ -80,16 +84,15 @@ defmodule AgentLink.Plane do
     {:reply, id, state}
   end
 
+  def handle_call({:runtime_reset, name}, _from, %__MODULE__{} = state),
+    do: {:reply, :ok, drop_slot(state, name, "runtime reconnected")}
+
   @doc "Text from an app. Route it as ACP from that client."
   def client_frame(client_id, text), do: GenServer.cast(__MODULE__, {:frame, client_id, text})
 
   @doc "Text from the agent socket. Route it as ACP from that agent."
   def agent_frame(name, text) when is_binary(name) and is_binary(text),
     do: GenServer.cast(__MODULE__, {:agent_frame, name, text})
-
-  @doc "A new uplink registered this name. Drop the cached slot so the next app initializes it fresh."
-  def runtime_reset(name) when is_binary(name),
-    do: GenServer.cast(__MODULE__, {:runtime_reset, name})
 
   @doc "The agent socket closed. Fail whatever was still waiting on it."
   def runtime_down(name) when is_binary(name),
@@ -137,9 +140,6 @@ defmodule AgentLink.Plane do
 
     {:noreply, state}
   end
-
-  def handle_cast({:runtime_reset, name}, %__MODULE__{} = state),
-    do: {:noreply, drop_slot(state, name, "runtime reconnected")}
 
   def handle_cast({:runtime_down, name}, %__MODULE__{} = state),
     do: {:noreply, drop_slot(state, name, "runtime disconnected")}

@@ -170,6 +170,8 @@ defmodule AgentLink.Registry do
   defp remember(%__MODULE__{} = state, pid, %AgentLink.Registry.Uplink{} = uplink) do
     state = drop_pid(state, pid)
     ref = Process.monitor(pid)
+    :ets.delete(@table, uplink.name)
+    :ok = AgentLink.Plane.runtime_reset(uplink.name)
     :ets.insert(@table, {uplink.name, uplink})
 
     Logger.info(
@@ -177,7 +179,6 @@ defmodule AgentLink.Registry do
     )
 
     AgentLink.Setup.Watch.connected(uplink.name, uplink.label)
-    AgentLink.Plane.runtime_reset(uplink.name)
     %{state | pids: Map.put(state.pids, pid, {ref, uplink.name})}
   end
 

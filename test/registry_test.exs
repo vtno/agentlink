@@ -3,7 +3,36 @@ defmodule AgentLink.RegistryTest do
 
   setup do
     start_supervised!(AgentLink.Registry)
+    start_supervised!(AgentLink.Plane)
     :ok
+  end
+
+  test "registration publishes the uplink only after the plane resets its slot" do
+    registry = Process.whereis(AgentLink.Registry)
+    plane = Process.whereis(AgentLink.Plane)
+    parent = self()
+
+    dead = spawn(fn -> :ok end)
+    ref = Process.monitor(dead)
+    AgentLink.TestHelpers.await_down(ref, dead)
+    :ets.insert(:agent_link_runtimes, {"lab", %AgentLink.Registry.Uplink{name: "lab", pid: dead}})
+
+    :sys.replace_state(plane, fn state ->
+      %{state | slots: Map.put(state.slots, "lab", %AgentLink.AgentSlot{name: "lab"})}
+    end)
+
+    :ok = :sys.suspend(plane)
+    on_exit(fn -> if Process.alive?(plane), do: :sys.resume(plane) end)
+    :erlang.trace(registry, true, [:send])
+
+    task = Task.async(fn -> hello(parent, "lab", "Bench") end)
+
+    assert_receive {:trace, ^registry, :send, {:"$gen_call", _, {:runtime_reset, "lab"}}, _}
+    assert AgentLink.Registry.pid("lab") == nil
+    assert :ok = :sys.resume(plane)
+    assert {:ok, "lab"} = Task.await(task)
+    assert AgentLink.Registry.pid("lab") == parent
+    assert :sys.get_state(plane).slots["lab"] == nil
   end
 
   test "register, list, and pid" do
