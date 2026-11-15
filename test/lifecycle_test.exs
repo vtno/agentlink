@@ -441,13 +441,13 @@ defmodule AgentLink.LifecycleTest do
   end
 
   test "two reapers in one directory keep separate records" do
-    python = System.find_executable("python3")
+    {exe, args} = AgentLink.TestHelpers.stay_fixture!()
 
     port =
-      Port.open({:spawn_executable, python}, [
+      Port.open({:spawn_executable, exe}, [
         :binary,
         :exit_status,
-        {:args, ["-c", pause_script()]}
+        {:args, args ++ ["wait", "-"]}
       ])
 
     {:os_pid, other} = Port.info(port, :os_pid)
@@ -575,13 +575,13 @@ defmodule AgentLink.LifecycleTest do
   end
 
   test "an absent retain during init still blocks the next open" do
-    python = System.find_executable("python3")
+    {exe, args} = AgentLink.TestHelpers.stay_fixture!()
 
     port =
-      Port.open({:spawn_executable, python}, [
+      Port.open({:spawn_executable, exe}, [
         :binary,
         :exit_status,
-        {:args, ["-c", pause_script()]}
+        {:args, args ++ ["wait", "-"]}
       ])
 
     {:os_pid, other} = Port.info(port, :os_pid)
@@ -786,10 +786,7 @@ defmodule AgentLink.LifecycleTest do
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     pidfile = Path.join(dir, "pids")
-    script = Path.expand("fixtures/agentlink_hold_fixture.py", __DIR__)
-    File.chmod!(script, 0o755)
-    python = System.find_executable("python3")
-    assert is_binary(python)
+    {command, args} = AgentLink.TestHelpers.hold_fixture!(pidfile, true)
 
     body =
       Jason.encode!(%{
@@ -797,8 +794,8 @@ defmodule AgentLink.LifecycleTest do
         "label" => "lifecycle",
         "program" => "fixture",
         "plane_url" => "ws://127.0.0.1:9/agent",
-        "command" => python,
-        "args" => [script, pidfile, "quiet"]
+        "command" => command,
+        "args" => args
       })
 
     path = Path.join(dir, "agent.link.json")
@@ -911,15 +908,6 @@ defmodule AgentLink.LifecycleTest do
     end
   end
 
-  defp pause_script do
-    """
-    import signal
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    while True:
-        signal.pause()
-    """
-  end
-
   defp pairs(binary) do
     {:agentlink_reaper, 1, records} = :erlang.binary_to_term(binary, [:safe])
     records
@@ -952,21 +940,7 @@ defmodule AgentLink.LifecycleTest do
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     pidfile = Path.join(dir, "pids")
-    script = Path.join(dir, "sticky.py")
-
-    File.write!(script, """
-    #!/usr/bin/env python3
-    import signal
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    while True:
-        signal.pause()
-    """)
-
-    File.chmod!(script, 0o755)
-    python = System.find_executable("python3")
-    assert is_binary(python)
+    {command, args} = AgentLink.TestHelpers.stay_fixture!()
 
     body =
       Jason.encode!(%{
@@ -974,8 +948,8 @@ defmodule AgentLink.LifecycleTest do
         "label" => "lifecycle",
         "program" => "fixture",
         "plane_url" => "ws://127.0.0.1:9/agent",
-        "command" => python,
-        "args" => [script]
+        "command" => command,
+        "args" => args ++ ["sticky", "-"]
       })
 
     path = Path.join(dir, "agent.link.json")
