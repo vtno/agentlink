@@ -20,7 +20,7 @@ The directory is capped. It keeps the newest whole turns that fit 50 turns and 1
 
 The agent should see one `initialize`. Later clients on that runtime receive the cached result, and each client still keeps the `clientCapabilities` from its own request. The agent therefore does not change personality every time an editor connects. The cost is that the agent never sees a later client's capabilities. File and terminal requests are checked against the client that owns the in-flight prompt, using that client's own capabilities, not the cached agent result.
 
-The plane runs one `session/prompt` at a time per agent. A second prompt waits. An agent question goes to the client that has the matching prompt in flight, because that is the client that can answer it. If none match, or more than one match, the plane tells the agent that no app is attached.
+The plane forwards one `session/prompt` at a time per session, so a prompt in one session does not block another. Prompts without a binary `sessionId` share a separate queue. An agent question goes to the client that has the matching prompt in flight, because that is the client that can answer it. If none match, or more than one match, the plane tells the agent that no app is attached.
 
 ## What the client relay rewrites
 

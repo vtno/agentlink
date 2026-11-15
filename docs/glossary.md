@@ -30,7 +30,7 @@ Agent. The stdio behaviour. `open/3` takes the owner, an `AgentLink.Agent.Launch
 
 Client. One app already connected to the plane. Not `AgentLink.Relay.Client`, and not `AgentLink.ClientSocket`. Its capabilities are the `clientCapabilities` from that app's own `initialize`.
 
-Slot. The plane's session state for one connected agent. Prompt queue, the in-flight turn, and the cached `initialize`. The cache is the agent's reply, not the client's capabilities.
+Slot. The plane's state for one connected agent. `AgentLink.AgentSlot.prompt_queue` holds queues keyed by session ID, and `prompt_inflight` holds the session IDs with a prompt in flight. Both use `nil` for prompts without a binary session ID. The slot also holds the cached `initialize`. The cache is the agent's reply, not the client's capabilities.
 
 History. `AgentLink.Plane.History` is the replay buffer for one session. It keeps the newest whole turns that fit a turn limit and a byte limit. The newest turn stays even when that turn alone is larger than `:max_bytes`. A `user_message_chunk` starts a turn. Updates before the first one are one turn. The session process calls it when the plane broadcasts a live update. An update that is not a map is not appended.
 

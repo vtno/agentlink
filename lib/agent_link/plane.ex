@@ -9,8 +9,8 @@ defmodule AgentLink.AgentSlot do
     :name,
     agent_pending: %{},
     fan_pending: %{},
-    prompt_queue: :queue.new(),
-    prompt_inflight: false,
+    prompt_queue: %{},
+    prompt_inflight: MapSet.new(),
     next_agent_id: 1_000_000,
     next_fan_id: 1,
     init_sent: false,
@@ -44,8 +44,9 @@ defmodule AgentLink.Plane do
   `client does not support this method`. A disconnect calls
   `AgentLink.Plane.Sessions.disconnect/1`, declines that client's outstanding
   questions, and drops its queued prompts and initialize waiters. The active
-  prompt releases the slot only when the agent replies. One agent process
-  runs one prompt at a time.
+  prompt releases its session only when the agent replies. The plane forwards
+  one prompt per session at a time. Prompts without a binary `sessionId`
+  share a separate queue and can run alongside prompts with a session ID.
   """
 
   use GenServer
@@ -191,13 +192,11 @@ defmodule AgentLink.Plane do
 
       message["method"] == "session/prompt" ->
         with_runtime(state, client_id, message, fn state, slot, client_id, message ->
-          slot = %{
-            slot
-            | prompt_queue:
-                :queue.in(%{client_id: client_id, message: message}, slot.prompt_queue)
-          }
-
-          pump(state, slot)
+          key = session_of(message)
+          queue = Map.get(slot.prompt_queue, key, :queue.new())
+          queue = :queue.in(%{client_id: client_id, message: message}, queue)
+          slot = %{slot | prompt_queue: Map.put(slot.prompt_queue, key, queue)}
+          pump(state, slot, key)
         end)
 
       true ->
@@ -509,7 +508,8 @@ defmodule AgentLink.Plane do
         })
       end
 
-      pump(state, %{slot | prompt_inflight: false})
+      slot = %{slot | prompt_inflight: MapSet.delete(slot.prompt_inflight, session_id)}
+      pump(state, slot, session_id)
     else
       {state, slot}
     end
@@ -640,27 +640,34 @@ defmodule AgentLink.Plane do
     end
   end
 
-  defp pump(state, %AgentLink.AgentSlot{prompt_inflight: true} = slot), do: {state, slot}
+  defp pump(state, slot, key) do
+    if MapSet.member?(slot.prompt_inflight, key) do
+      {state, slot}
+    else
+      case :queue.out(Map.get(slot.prompt_queue, key, :queue.new())) do
+        {:empty, _queue} ->
+          {state, %{slot | prompt_queue: Map.delete(slot.prompt_queue, key)}}
 
-  defp pump(state, slot) do
-    case :queue.out(slot.prompt_queue) do
-      {:empty, queue} ->
-        {state, %{slot | prompt_queue: queue}}
+        {{:value, item}, queue} ->
+          queues =
+            if :queue.is_empty(queue),
+              do: Map.delete(slot.prompt_queue, key),
+              else: Map.put(slot.prompt_queue, key, queue)
 
-      {{:value, %{client_id: client_id}}, queue} ->
-        if client_runtime(state, client_id) != slot.name do
-          pump(state, %{slot | prompt_queue: queue})
-        else
-          dequeue(state, slot, queue)
-        end
+          slot = %{slot | prompt_queue: queues}
+
+          if client_runtime(state, item.client_id) != slot.name do
+            pump(state, slot, key)
+          else
+            dequeue(state, slot, key, item)
+          end
+      end
     end
   end
 
-  defp dequeue(state, slot, queue) do
-    {{:value, item}, ^queue} = :queue.out(slot.prompt_queue)
+  defp dequeue(state, slot, key, item) do
     text = prompt_text(item.message)
     session_id = session_of(item.message)
-    slot = %{slot | prompt_queue: queue}
 
     if is_binary(session_id) and text != "" do
       publish(slot, session_id, %{
@@ -673,9 +680,9 @@ defmodule AgentLink.Plane do
     {state, slot} = forward(state, slot, item.client_id, item.message, :prompt)
 
     if Map.has_key?(slot.agent_pending, agent_id) do
-      {state, %{slot | prompt_inflight: true}}
+      {state, %{slot | prompt_inflight: MapSet.put(slot.prompt_inflight, key)}}
     else
-      pump(state, slot)
+      pump(state, slot, key)
     end
   end
 
@@ -688,12 +695,18 @@ defmodule AgentLink.Plane do
     end)
 
     # Keep agent_pending and prompt_inflight until the agent's terminal reply.
-    # Declining the questions unblocks it; pumping now could overlap two prompts.
+    # Declining the questions unblocks it; pumping now could overlap prompts in that session.
+    queues =
+      Enum.reduce(slot.prompt_queue, %{}, fn {key, queue}, acc ->
+        queue = :queue.filter(&(&1.client_id != client_id), queue)
+        if :queue.is_empty(queue), do: acc, else: Map.put(acc, key, queue)
+      end)
+
     %{
       slot
       | fan_pending: Map.new(remaining),
         init_waiters: Enum.reject(slot.init_waiters, &(&1.client_id == client_id)),
-        prompt_queue: :queue.filter(&(&1.client_id != client_id), slot.prompt_queue)
+        prompt_queue: queues
     }
   end
 
@@ -719,7 +732,7 @@ defmodule AgentLink.Plane do
       reply(state, waiter.client_id, waiter.id, error)
     end)
 
-    drain_queue(slot.prompt_queue, state, reason)
+    Enum.each(slot.prompt_queue, fn {_key, queue} -> drain_queue(queue, state, reason) end)
   end
 
   defp drain_queue(queue, state, reason) do

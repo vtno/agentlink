@@ -69,7 +69,7 @@ For `session/new` and `session/load`, the relay replaces a missing, null, or emp
 
 ## Prompt and agent requests
 
-The agent runs one `session/prompt` at a time. Further prompts wait. An agent request goes to the client that has the matching `session/prompt` in flight. The plane applies the capability rules below to that client. When no client matches, or more than one client matches, the plane answers the agent with JSON-RPC error `-32000` and the message `no app is attached to this session`.
+The plane forwards one `session/prompt` at a time per session. Prompts for different sessions can be in flight together. Prompts without a binary `sessionId` share a separate queue. An agent request goes to the client that has the matching `session/prompt` in flight. The plane applies the capability rules below to that client. When no client matches, or more than one client matches, the plane answers the agent with JSON-RPC error `-32000` and the message `no app is attached to this session`.
 
 The plane forwards an agent file or terminal request only in these cases.
 
