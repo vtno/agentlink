@@ -26,8 +26,12 @@ defmodule AgentLink.Agent.ProcessTest do
 
   alias AgentLink.Agent.Launch
   alias AgentLink.Agent.Process, as: AgentProcess
+  import AgentLink.TestHelpers, only: [otp_executable: 0]
 
-  test "the child inherits normal variables but not release or BEAM variables" do
+  test "the child inherits normal variables but not release or BEAM variables", %{
+    beam_dir: beam_dir,
+    exe: exe
+  } do
     names =
       ~w(RELEASE_VSN RELEASE_COOKIE RELEASE_NEW_SETTING ROOTDIR BINDIR EMU PROGNAME ERL_AFLAGS ERL_FLAGS ERL_ZFLAGS ERL_LIBS ELIXIR_ERL_OPTIONS AGENTLINK_VM_MODE RELEASE_DISTRIBUTION_FLAG AGENTLINK_WINDOWS_START)
 
@@ -42,28 +46,31 @@ defmodule AgentLink.Agent.ProcessTest do
       end)
     end)
 
-    python = System.find_executable("python3")
-    code = "import json,os,sys; print(json.dumps({k:os.getenv(k) for k in sys.argv[1:]}))"
+    dir = make_dir()
+    shell = System.find_executable("sh")
 
-    launch = %Launch{
-      command: python,
-      args: ["-c", code | names ++ ["AGENTLINK_ENV_PROBE", "PATH", "HOME"]]
-    }
+    script = """
+    for name in ROOTDIR BINDIR EMU PROGNAME; do
+      eval "present=\\${$name+x}"
+      export "AGENTLINK_CAPTURE_$name=${present:-unset}"
+    done
+    exec "$@"
+    """
 
-    assert {:ok, port} = AgentProcess.open(self(), launch, File.cwd!())
-    output = collect_env(port, "")
-    values = Jason.decode!(output)
-    assert Enum.all?(names, &(values[&1] == nil))
-    assert values["AGENTLINK_ENV_PROBE"] == "kept-é"
-    assert values["PATH"] == System.get_env("PATH")
-    assert values["HOME"] == System.get_env("HOME")
-  end
+    args = ["-c", script, "agentlink-env", exe | fixture_args(beam_dir, [])]
+    {port, _os_pid, _stamp} = opened!(shell, args, dir, refuse_finder(shell))
 
-  defp collect_env(port, output) do
-    receive do
-      {^port, {:data, data}} -> collect_env(port, output <> data)
-      {^port, {:exit_status, 0}} -> output
-      {^port, {:exit_status, status}} -> flunk("environment child exited #{status}")
+    for name <- names do
+      key =
+        if name in ~w(ROOTDIR BINDIR EMU PROGNAME), do: "AGENTLINK_CAPTURE_#{name}", else: name
+
+      exchange(port, "env #{key}\n", "unset\n")
+    end
+
+    exchange(port, "env AGENTLINK_ENV_PROBE\n", "kept-é\n")
+
+    for name <- ["PATH", "HOME"] do
+      exchange(port, "env #{name}\n", (System.get_env(name) || "unset") <> "\n")
     end
   end
 
@@ -412,21 +419,6 @@ defmodule AgentLink.Agent.ProcessTest do
       other ->
         flunk("could not compile #{source}: #{inspect(other)}")
     end
-  end
-
-  defp otp_executable do
-    root = to_string(:code.root_dir())
-    version = to_string(:erlang.system_info(:version))
-
-    name =
-      case :os.type() do
-        {:win32, _} -> "erl.exe"
-        _ -> "erl"
-      end
-
-    if name == "erl",
-      do: Path.join([root, "bin", name]),
-      else: Path.join([root, "erts-" <> version, "bin", name])
   end
 
   defp fixture_args(beam_dir, plain) do
