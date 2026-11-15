@@ -16,12 +16,12 @@ Values that select a plane, a target, or a token come from a flag, an environmen
 | `RELEASE_NODE` | The release script | Erlang node name. Required when distribution is not `none`. Must differ for each release on one machine. |
 | `RELEASE_ROOT` | The CLI | When set, arguments are the release boot arguments, and the words after the first bare `--` are kept. |
 | `RELEASE_TMP` | The reaper | Reaper record directory when `:reaper_dir` is unset. When this variable is also unset, the directory is `$HOME/.agentlink/run`. |
-| `AGENTLINK_WEBSOCKET_PING_INTERVAL` | Uplink and `agentlink connect` | Ping interval in milliseconds. Read when the dial process starts. [Keepalive](#keepalive) has the accepted values. |
-| `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` | Uplink and `agentlink connect` | Pong timeout in milliseconds. Read when the dial process starts. [Keepalive](#keepalive) has the accepted values. |
+| `AGENTLINK_WEBSOCKET_PING_INTERVAL` | Uplink, `agentlink connect`, and the plane sockets | Ping interval in milliseconds. The dial reads it when the dial process starts. A plane socket reads it when that socket starts. [Keepalive](#keepalive) has the accepted values. |
+| `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` | Uplink, `agentlink connect`, and the plane sockets | Pong timeout in milliseconds. The dial reads it when the dial process starts. A plane socket reads it when that socket starts. [Keepalive](#keepalive) has the accepted values. |
 
 `AGENTLINK_BIN` and `OPENCODE_BIN` are read by the test suite, not by a running `agentlink` process. [Contributing](../../CONTRIBUTING.md) has the commands.
 
-The dial timeout is 3000 milliseconds. The retry wait defaults to 500 milliseconds, and a shorter backoff is raised to 50. Neither value is an environment variable. The plane idle timeout is infinity. [Reconnect and keepalive](../explanation/reconnect.md) describes those timers and the ping.
+The dial timeout is 3000 milliseconds. The retry wait defaults to 500 milliseconds, and a shorter backoff is raised to 50. Neither value is an environment variable. The plane idle timeout is infinity. The plane sockets send a ping. [Reconnect and keepalive](../explanation/reconnect.md) describes those timers.
 
 The agent process receives the VM environment without `AGENTLINK_WINDOWS_START`. The link file cannot set variables. An `env` key is an error.
 
@@ -62,7 +62,9 @@ A non-empty argument list replaces `:mode` and, when the flags are present, `:po
 
 ## Keepalive
 
-The uplink and `agentlink connect` read the ping interval and the pong timeout when the dial process starts. There is no command-line flag. The first accepted source wins.
+The uplink and `agentlink connect` read the ping interval and the pong timeout when the dial process starts. `AgentLink.AgentSocket` and `AgentLink.ClientSocket` read them when the socket starts. There is no command-line flag. The first accepted source wins.
+
+The dial reads this order.
 
 | Source | Ping interval | Pong timeout |
 | --- | --- | --- |
@@ -71,10 +73,21 @@ The uplink and `agentlink connect` read the ping interval and the pong timeout w
 | `:agent_link` application env | `:websocket_ping_interval` | `:websocket_pong_timeout` |
 | Built-in default | `30000` | `10000` |
 
-A positive integer is greater than 0 and at most 4294967295. A string is accepted when the trimmed text parses as one integer in that range and contains nothing else. A missing variable, a nil, and a blank string are skipped, and they are not logged. Any other value is logged and then skipped. The warning starts with `transport keepalive`, then the source name, then `ignored`. A binary longer than 64 bytes keeps the first 64 bytes and then `...`.
+A plane socket reads this order.
+
+| Source | Ping interval | Pong timeout |
+| --- | --- | --- |
+| Option on `AgentLink.AgentSocket.init/1` and `AgentLink.ClientSocket.init/1` | `:ping_interval` | `:pong_timeout` |
+| Environment variable | `AGENTLINK_WEBSOCKET_PING_INTERVAL` | `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` |
+| `:agent_link` application env | `:websocket_ping_interval` | `:websocket_pong_timeout` |
+| Built-in default | `30000` | `10000` |
+
+`init/1` accepts `{subject, opts}`. `AgentLink.Router` calls `init/1` with the subject only, so a socket accepted by the listener skips the option row. `:scheduler` on that argument defaults to `Process`. It implements `send_after/3` and `cancel_timer/1`. The cancellation return value is ignored.
+
+A positive integer is greater than 0 and at most 4294967295. A string is accepted when the trimmed text parses as one integer in that range and contains nothing else. A missing variable, a nil, and a blank string are skipped, and they are not logged. Any other value is logged and then skipped. When the dial reads a bad value, the warning starts with `transport keepalive`. When a plane socket reads a bad value, the warning starts with `plane keepalive`. The source name and `ignored` follow that prefix. A binary longer than 64 bytes keeps the first 64 bytes and then `...`.
 
 The agent relay forwards `:transport_opts` to the uplink. A caller inside the VM can set `:ping_interval` and `:pong_timeout` there. `agentlink connect` does not forward those options. Both processes still read the environment variables and the application env.
 
-`config/test.exs` sets both application keys to 3600000. That keeps the timer from firing during a test. A test that covers the timer passes a start option or sets the variable itself.
+`config/test.exs` sets both application keys to 3600000. That keeps the timer from firing during a test. A test that covers the timer passes a start option, passes an `init/1` option, or sets the variable itself.
 
-On Linux the dial sets `TCP_USER_TIMEOUT` to the interval plus the pong timeout, and not above 2147483647. Other operating systems leave the option unset. The dial does not enable `SO_KEEPALIVE`. [Set the keepalive](../how-to/set-the-keepalive.md) is the procedure. [Reconnect and keepalive](../explanation/reconnect.md) explains the ping timer and `TCP_USER_TIMEOUT`.
+On Linux the dial sets `TCP_USER_TIMEOUT` to the interval plus the pong timeout, and not above 2147483647. Other operating systems leave the option unset. The dial does not enable `SO_KEEPALIVE`. The plane sockets do not set `TCP_USER_TIMEOUT`. [Set the keepalive](../how-to/set-the-keepalive.md) is the procedure. [Reconnect and keepalive](../explanation/reconnect.md) explains the ping timer and `TCP_USER_TIMEOUT`.

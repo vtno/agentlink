@@ -15,6 +15,8 @@ defmodule AgentLink.Transport.WebSocket do
   `AGENTLINK_WEBSOCKET_PONG_TIMEOUT` win when they are positive integers.
   Otherwise the `:agent_link` keys `:websocket_ping_interval` and
   `:websocket_pong_timeout` are used. The defaults are 30000 and 10000.
+  `AgentLink.Keepalive.milliseconds/6` resolves one duration.
+  `AgentLink.AgentSocket` and `AgentLink.ClientSocket` read the same sources.
 
   On Linux the dial sets `TCP_USER_TIMEOUT` to the interval plus the pong
   timeout, so a ping write that stays unacked is aborted on that scale.
@@ -28,9 +30,6 @@ defmodule AgentLink.Transport.WebSocket do
   @connect_timeout 3_000
   @default_ping_interval 30_000
   @default_pong_timeout 10_000
-
-  # `Process.send_after/3` rejects a larger timeout.
-  @max_timer 4_294_967_295
 
   # `setsockopt` takes a signed 32-bit millisecond value on the OTP we ship.
   @max_user_timeout 2_147_483_647
@@ -587,65 +586,9 @@ defmodule AgentLink.Transport.WebSocket do
   defp cancel_scheduled(_state, nil), do: :ok
   defp cancel_scheduled(state, timer), do: state.scheduler.cancel_timer(timer)
 
-  # Option, then environment variable, then application env, then `default`.
-  # A blank value is skipped. Any other value that is not a positive integer
-  # up to `@max_timer` is logged and skipped. The log keeps a short prefix of
-  # a long binary so a mistaken paste cannot fill the line.
   defp keepalive_ms(opts, opt_key, app_key, env_name, default) do
-    sources = [
-      {opt_key, Keyword.get(opts, opt_key, :unset)},
-      {env_name, env_setting(env_name)},
-      {app_key, Application.get_env(:agent_link, app_key, :unset)}
-    ]
-
-    case first_ms(sources) do
-      {:ok, milliseconds} -> milliseconds
-      :unset -> default
-    end
+    AgentLink.Keepalive.milliseconds(opts, opt_key, app_key, env_name, default)
   end
-
-  defp env_setting(name) do
-    case System.get_env(name) do
-      nil -> :unset
-      value -> blank_as_unset(String.trim(value))
-    end
-  end
-
-  defp blank_as_unset(""), do: :unset
-  defp blank_as_unset(value), do: value
-
-  defp first_ms([]), do: :unset
-  defp first_ms([{_name, value} | rest]) when value in [:unset, nil], do: first_ms(rest)
-
-  defp first_ms([{name, value} | rest]) do
-    case milliseconds(value) do
-      {:ok, milliseconds} ->
-        {:ok, milliseconds}
-
-      :error ->
-        Logger.warning("transport keepalive #{name} ignored #{inspect(shown(value))}")
-        first_ms(rest)
-    end
-  end
-
-  defp milliseconds(value) when is_integer(value) and value > 0 and value <= @max_timer do
-    {:ok, value}
-  end
-
-  defp milliseconds(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {milliseconds, ""} -> milliseconds(milliseconds)
-      _other -> :error
-    end
-  end
-
-  defp milliseconds(_value), do: :error
-
-  defp shown(value) when is_binary(value) and byte_size(value) > 64 do
-    binary_part(value, 0, 64) <> "..."
-  end
-
-  defp shown(value), do: value
 
   defp up?(%{websocket: websocket}), do: not is_nil(websocket)
 
