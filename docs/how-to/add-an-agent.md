@@ -21,6 +21,36 @@ Install OpenCode so `opencode` is on `PATH`.
 }
 ```
 
+## Cursor
+
+Install the Cursor CLI so `agent` is on `PATH`. Sign in on the relay machine before you start the relay. See the [Cursor ACP guide](https://cursor.com/docs/cli/acp) for authentication.
+
+```json
+{
+	"name": "cursor",
+	"label": "this machine",
+	"program": "cursor",
+	"plane_url": "ws://127.0.0.1:8090/agent",
+	"command": "agent",
+	"args": ["acp"]
+}
+```
+
+## pi
+
+Install [pi-acp](https://github.com/svkozak/pi-acp) and pi on the relay machine. Put both `pi-acp` and `pi` on `PATH`, and configure pi for your model provider.
+
+```json
+{
+	"name": "pi",
+	"label": "this machine",
+	"program": "pi",
+	"plane_url": "ws://127.0.0.1:8090/agent",
+	"command": "pi-acp",
+	"args": []
+}
+```
+
 ## Kimi
 
 Install the Kimi Code CLI so `kimi` is on `PATH`. The ACP argument is the same shape as OpenCode.
