@@ -33,7 +33,7 @@ defmodule AgentLink.MixProject do
 
   defp deps do
     [
-      {:bandit, "~> 1.6"},
+      {:bandit, "~> 1.14.1"},
       {:websock_adapter, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:plug, "~> 1.16"},
