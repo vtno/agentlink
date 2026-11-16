@@ -117,7 +117,7 @@ Each guide is one task.
 - [Start a plane](docs/how-to/start-a-plane.md) runs the listener on its own.
 - [Run a relay](docs/how-to/run-a-relay.md) opens an agent, including a second agent with `--link`.
 - [Connect a client](docs/how-to/connect-a-client.md) points an editor at the plane.
-- [Add an agent](docs/how-to/add-an-agent.md) sets `command` and `args` for OpenCode, Codex, Claude Code, or Kimi.
+- [Add an agent](docs/how-to/add-an-agent.md) sets `command` and `args` for OpenCode, Cursor, pi, Kimi, Codex, or Claude Code.
 - [Reach a plane on another machine](docs/how-to/reach-another-machine.md) uses an ssh tunnel, Tailscale, or a TLS proxy.
 - [Reconnect a relay](docs/how-to/reconnect-a-relay.md) covers a dropped dial and a parked uplink.
 - [Set the keepalive](docs/how-to/set-the-keepalive.md) sets the ping interval and the pong timeout.
