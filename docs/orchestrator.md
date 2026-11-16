@@ -21,7 +21,7 @@ Choose a route in [Reach a plane on another machine](how-to/reach-another-machin
 Then start the relay on the user's machine.
 
 1. Set `AGENTLINK_TOKEN`, or put the same token in `$HOME/.agentlink/token` with mode `0600`.
-2. Create the link file. Set `name`, `command`, `args`, and `plane_url`. [Add an agent](how-to/add-an-agent.md) has the command for OpenCode, Codex, Claude Code, and Kimi. [Link file](reference/link-file.md) lists the fields.
+2. Create the link file. Set `name`, `command`, `args`, and `plane_url`. [Add an agent](how-to/add-an-agent.md) has the command for OpenCode, Cursor, pi, Kimi, Codex, and Claude Code. [Link file](reference/link-file.md) lists the fields.
 3. Run `agentlink relay`.
 
 For several relays, give each link a distinct slug. `Lab Box` and `lab-box` are the same name. [Run a relay](how-to/run-a-relay.md) shows `--link`.

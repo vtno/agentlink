@@ -6,7 +6,7 @@ Run the relay on the machine that has the agent. The relay reads a link file, op
 
 [Set the token](set-the-token.md) on this machine. Use the same token as the plane.
 
-Create `$HOME/.agentlink/agent.link.json`. [Add an agent](add-an-agent.md) has `command` and `args` for OpenCode, Codex, Claude Code, and Kimi. [Link file](../reference/link-file.md) lists every field. For a plane on this same machine, `plane_url` is `ws://127.0.0.1:8090/agent`. For a plane elsewhere, set `plane_url` from [Reach a plane on another machine](reach-another-machine.md).
+Create `$HOME/.agentlink/agent.link.json`. [Add an agent](add-an-agent.md) has `command` and `args` for OpenCode, Cursor, pi, Kimi, Codex, and Claude Code. [Link file](../reference/link-file.md) lists every field. For a plane on this same machine, `plane_url` is `ws://127.0.0.1:8090/agent`. For a plane elsewhere, set `plane_url` from [Reach a plane on another machine](reach-another-machine.md).
 
 ```sh
 agentlink relay
