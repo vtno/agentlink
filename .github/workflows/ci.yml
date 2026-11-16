@@ -23,6 +23,8 @@ jobs:
             _build
           key: ${{ runner.os }}-beam-${{ hashFiles('.tool-versions', 'mix.lock') }}
       - run: mix deps.get --check-locked
+      - run: mix deps.audit
+      - run: mix hex.audit
       - run: mix format --check-formatted
       - run: mix compile --warnings-as-errors
       - run: mix test

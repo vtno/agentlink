@@ -39,7 +39,8 @@ defmodule AgentLink.MixProject do
       {:plug, "~> 1.16"},
       {:mint, "~> 1.6"},
       {:mint_web_socket, "~> 1.0"},
-      {:floki, "~> 0.37", only: :test}
+      {:floki, "~> 0.37", only: :test},
+      {:mix_audit, "~> 2.1.5", only: [:dev, :test], runtime: false}
     ]
   end
 
